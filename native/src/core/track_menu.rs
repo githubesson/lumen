@@ -22,7 +22,7 @@ pub fn unique_tracks<T: Clone>(tracks: &[T], id: impl Fn(&T) -> &str) -> Vec<T> 
 
 /// `selectionCovers`: the tracks whose covers stack up for a selection, one
 /// per album first so the stack shows as many covers as it can.
-pub fn selection_covers(tracks: &[TrackListItem], max: usize) -> Vec<TrackListItem> {
+pub fn selection_covers(tracks: &[TrackListItem], max: usize) -> Vec<&TrackListItem> {
     let count = max.min(tracks.len());
     let mut seen = HashSet::new();
     let mut picked = std::collections::BTreeSet::new();
@@ -37,7 +37,7 @@ pub fn selection_covers(tracks: &[TrackListItem], max: usize) -> Vec<TrackListIt
         picked.insert(i);
         i += 1;
     }
-    picked.into_iter().map(|i| tracks[i].clone()).collect()
+    picked.into_iter().map(|i| &tracks[i]).collect()
 }
 
 /// `selectionArtists`: a selection's artists, each once, in list order.
@@ -99,8 +99,8 @@ mod tests {
         }
     }
 
-    fn ids(v: Vec<TrackListItem>) -> Vec<String> {
-        v.into_iter().map(|t| t.id).collect()
+    fn ids<'a>(v: impl IntoIterator<Item = &'a TrackListItem>) -> Vec<&'a str> {
+        v.into_iter().map(|t| t.id.as_str()).collect()
     }
 
     // track-menu.test.ts
@@ -141,6 +141,6 @@ mod tests {
     #[test]
     fn unique() {
         let v = [t("a", None, None), t("b", None, None), t("a", None, None)];
-        assert_eq!(ids(unique_tracks(&v, |t| t.id.as_str())), ["a", "b"]);
+        assert_eq!(ids(&unique_tracks(&v, |t| t.id.as_str())), ["a", "b"]);
     }
 }

@@ -35,15 +35,6 @@ pub enum ReleaseFilter {
     Singles,
 }
 
-impl ReleaseFilter {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ReleaseFilter::All => "all",
-            ReleaseFilter::Albums => "albums",
-            ReleaseFilter::Singles => "singles",
-        }
-    }
-}
 
 /// `RELEASE_FILTER_OPTIONS`, in order.
 pub const RELEASE_FILTER_OPTIONS: [(ReleaseFilter, &str); 3] =
@@ -72,12 +63,6 @@ pub struct ArtistRelease {
     pub versions: Option<Vec<ArtistRelease>>,
 }
 
-impl ArtistRelease {
-    /// The release's art (`albumArtUrl`).
-    pub fn art(&self, size: Option<u32>) -> Option<String> {
-        crate::api::media::album_art(&self.id, self.has_cover, self.cover_url.as_deref(), self.source, size, None)
-    }
-}
 
 /// The page a release opens.
 pub fn release_target(r: &ArtistRelease) -> EntityTarget {
@@ -293,17 +278,15 @@ pub fn has_release_filters(releases: &[ArtistRelease]) -> bool {
 
 /// Releases for a filter; everything when the split isn't available (a
 /// refresh can drop one of the kinds).
-pub fn filter_releases(releases: &[ArtistRelease], filter: ReleaseFilter) -> Vec<ArtistRelease> {
-    if filter == ReleaseFilter::All || !has_release_filters(releases) {
-        return releases.to_vec();
-    }
+pub fn filter_releases(releases: &[ArtistRelease], filter: ReleaseFilter) -> Vec<&ArtistRelease> {
+    let all = filter == ReleaseFilter::All || !has_release_filters(releases);
     releases
         .iter()
         .filter(|r| match filter {
+            _ if all => true,
             ReleaseFilter::Albums => r.kind == Some(ReleaseKind::Album),
             _ => matches!(r.kind, Some(ReleaseKind::Ep | ReleaseKind::Single)),
         })
-        .cloned()
         .collect()
 }
 
@@ -407,14 +390,15 @@ mod tests {
                 a.album.duration_ms = 3 * MIN;
             }),
         ]);
+        let filtered = |r: &[ArtistRelease], f| filter_releases(r, f).into_iter().cloned().collect::<Vec<_>>();
         assert!(has_release_filters(&r));
-        assert_eq!(ids(&filter_releases(&r, ReleaseFilter::Albums)), ["lp"]);
-        assert_eq!(ids(&filter_releases(&r, ReleaseFilter::Singles)), ["ep", "single"]);
-        assert_eq!(filter_releases(&r, ReleaseFilter::All), r);
-        assert!(!has_release_filters(&filter_releases(&r, ReleaseFilter::Albums)));
+        assert_eq!(ids(&filtered(&r, ReleaseFilter::Albums)), ["lp"]);
+        assert_eq!(ids(&filtered(&r, ReleaseFilter::Singles)), ["ep", "single"]);
+        assert_eq!(filtered(&r, ReleaseFilter::All), r);
+        assert!(!has_release_filters(&filtered(&r, ReleaseFilter::Albums)));
         let albums_only = tidal_artist_releases(&[album("lp", |_| {}), album("lp2", |_| {})]);
-        assert_eq!(filter_releases(&albums_only, ReleaseFilter::Singles), albums_only);
-        assert_eq!(filter_releases(&albums_only, ReleaseFilter::Albums), albums_only);
+        assert_eq!(filtered(&albums_only, ReleaseFilter::Singles), albums_only);
+        assert_eq!(filtered(&albums_only, ReleaseFilter::Albums), albums_only);
     }
 
     #[test]
@@ -588,8 +572,8 @@ mod tests {
     #[test]
     fn filter_options() {
         assert_eq!(
-            RELEASE_FILTER_OPTIONS.map(|(f, l)| (f.as_str(), l)),
-            [("all", "All"), ("albums", "Albums"), ("singles", "Singles & EPs")]
+            RELEASE_FILTER_OPTIONS,
+            [(ReleaseFilter::All, "All"), (ReleaseFilter::Albums, "Albums"), (ReleaseFilter::Singles, "Singles & EPs")]
         );
     }
 }

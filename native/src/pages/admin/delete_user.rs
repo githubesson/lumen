@@ -6,11 +6,14 @@ use std::collections::HashMap;
 
 use rune::{Cx, El, col, row, text};
 
-use super::requests::{self as rq, AdminUser, Disposition, OwnedPlaylist, UserDeparturePreview};
-use super::{Res, call, load, parts, users};
+use super::{call, parts, users};
+use crate::api::admin::{self as api, OwnedPlaylist, PlaylistDisposition, UserDeparturePreview};
+use crate::api::auth::AdminUser;
 use crate::app::App;
+use crate::resource::{Res, load};
 use crate::theme::Theme;
 use crate::ui::forms::{SelectOption, SelectVariant, select};
+use crate::ui::tooltip::TipExt;
 use crate::ui::{Btn, font, kit, line, tnum};
 
 const DELETE: &str = "delete";
@@ -31,8 +34,9 @@ fn st(app: &mut App) -> Option<&mut State> {
     app.pages.admin.users.delete.as_mut()
 }
 
-fn preview_res(app: &mut App) -> &mut Res<UserDeparturePreview> {
-    &mut app.pages.admin.users.delete.as_mut().expect("delete dialog").preview
+/// The open dialog's preview; a reply for a dialog since closed finds none.
+fn preview_res(app: &mut App) -> Option<&mut Res<UserDeparturePreview>> {
+    st(app).map(|s| &mut s.preview)
 }
 
 /// Open a fresh dialog for `user` (its preview loads anew).
@@ -45,7 +49,7 @@ pub fn open(app: &mut App, user: AdminUser) {
 }
 
 fn load_preview(app: &mut App, id: String) {
-    load(app, preview_res, move |c| rq::user_departure_preview(c, &id), "Couldn't load their playlists.", |_| {});
+    load(app, preview_res, move |c| api::user_departure_preview(c, &id), "Couldn't load their playlists.", |_| {});
 }
 
 /// Ignored mid-request: the dialog is where its result or error shows up.
@@ -94,12 +98,15 @@ fn submit(app: &mut App) {
     if s.busy {
         return;
     }
-    let dispositions: Vec<Disposition> = preview
+    let dispositions: Vec<PlaylistDisposition> = preview
         .owned_playlists
         .iter()
         .map(|p| {
-            let c = choice_for(app, s, p);
-            Disposition { playlist_id: p.playlist_id.clone(), new_owner_id: (c != DELETE).then_some(c) }
+            let playlist_id = p.playlist_id.clone();
+            match choice_for(app, s, p) {
+                c if c == DELETE => PlaylistDisposition::Delete { playlist_id },
+                new_owner_id => PlaylistDisposition::Transfer { playlist_id, new_owner_id },
+            }
         })
         .collect();
     let user = s.user.clone();
@@ -108,7 +115,7 @@ fn submit(app: &mut App) {
         s.error = None;
     }
     let id = user.id.clone();
-    call(app, move |c| rq::delete_user(c, &id, &dispositions), move |app, r| {
+    call(app, move |c| api::delete_user(c, &id, &dispositions), move |app, r| {
         if let Some(s) = st(app) {
             s.busy = false;
         }
@@ -139,7 +146,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let s = app.pages.admin.users.delete.as_ref().filter(|s| s.open)?;
     let users_list = app.pages.admin.users.list.data.as_deref()?;
     let me = app.me().map(|m| m.id.clone());
-    let window = cx.layout_size("app").unwrap_or([1280.0, 820.0]);
+    let window = crate::shell::window_size(cx);
     let inner = (window[0] - 32.0).min(512.0) - 34.0;
     let mut body = col().padding(16.0).gap(12.0);
     if let Some(e) = s.error.as_deref().or(s.preview.error.as_deref()) {
@@ -192,7 +199,12 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                 row()
                     .gap(12.0)
                     .items_center()
-                    .child(line(p.name.clone(), style, t.c.popover_foreground).help(p.name.clone()).grow(1.0).min_w(0.0))
+                    .child(
+                        line(p.name.clone(), style, t.c.popover_foreground)
+                            .tip(&format!("admin-delete-name-{}", p.playlist_id), &p.name)
+                            .grow(1.0)
+                            .min_w(0.0),
+                    )
                     .child(control.w(220.0)),
             );
         }
@@ -217,18 +229,26 @@ pub fn scene_open(app: &mut App) {
     let Some(u) = app.pages.admin.users.list.data.as_ref().and_then(|l| l.iter().find(|u| u.username == "jonas")).cloned() else {
         return;
     };
-    open(app, u);
+    open(app, u.clone());
     // The mock's preview (none) lands first; the scene's goes over it.
     super::scenes::ready(app);
     if let Some(s) = st(app) {
         s.preview.data = Some(UserDeparturePreview {
+            user_id: u.id.clone(),
+            username: u.username.clone(),
             owned_playlists: vec![
                 OwnedPlaylist {
                     playlist_id: "pl-jonas-running".into(),
                     name: "Jonas's Running Mix — 170 BPM and Up".into(),
                     suggested_heir_id: Some("u-priya".into()),
+                    has_collaborators: true,
                 },
-                OwnedPlaylist { playlist_id: "pl-jonas-focus".into(), name: "Deep Focus".into(), suggested_heir_id: None },
+                OwnedPlaylist {
+                    playlist_id: "pl-jonas-focus".into(),
+                    name: "Deep Focus".into(),
+                    suggested_heir_id: None,
+                    has_collaborators: false,
+                },
             ],
         });
         s.preview.error = None;

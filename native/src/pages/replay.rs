@@ -14,7 +14,7 @@ mod tests;
 
 use std::cell::Cell;
 
-use rune::{Color, Cursor, Cx, El, Shadow, col, el, row, text};
+use rune::{Color, Cursor, Cx, El, col, el, row, text};
 
 use crate::api::stats::{ReplayData, generate_replay_playlist, get_replay_image};
 use crate::api::{TrackListItem, error_message};
@@ -29,6 +29,7 @@ use crate::core::replay::period::{
     Period, build_period_options, canonical_period_key, current_year, parse_period_key, period_key, period_label, period_title,
 };
 use crate::route::Location;
+use crate::shell::Bp;
 use crate::theme::Theme;
 use crate::ui::blocks::play_list_button;
 use crate::ui::kit::error_banner;
@@ -254,20 +255,6 @@ fn generate_playlist(app: &mut App) {
     );
 }
 
-/// `name` in `dir`, numbered when a file already has it (as a browser saves
-/// a download).
-fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
-    let first = dir.join(name);
-    if !first.exists() {
-        return first;
-    }
-    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
-    (1..1000)
-        .map(|n| dir.join(if ext.is_empty() { format!("{stem} ({n})") } else { format!("{stem} ({n}).{ext}") }))
-        .find(|p| !p.exists())
-        .unwrap_or(first)
-}
-
 /// `onDownloadImage`: the server renders the period's share card; it lands
 /// in the downloads folder, as the browser saves it.
 fn share_image(app: &mut App) {
@@ -283,8 +270,7 @@ fn share_image(app: &mut App) {
     app.net.run(
         move || {
             let bytes = get_replay_image(&client, params.from.as_deref(), params.to.as_deref(), Some(&params.title))?;
-            let dir = dirs::download_dir().unwrap_or_else(std::env::temp_dir);
-            std::fs::write(unique_path(&dir, &name), bytes).map_err(|e| crate::api::ApiError::transport(e.to_string()))
+            crate::core::downloads::save_to_downloads(&name, &bytes).map(|_| ()).map_err(|e| crate::api::ApiError::transport(e.to_string()))
         },
         |app, result| {
             app.pages.replay.downloading = false;
@@ -343,13 +329,8 @@ fn panel_width(app: &App, t: &Theme, cx: &mut Cx<App>, window_w: f32) -> f32 {
     if let Some([w, _]) = cx.layout_size("replay-results") {
         return w;
     }
-    let narrow = window_w <= 760.0;
-    let mut w = window_w - if narrow { 8.0 } else { 16.0 + t.layout.sidebar_w() + 8.0 };
-    if app.ui.lyrics_open && !narrow {
-        w -= 8.0 + if t.layout == crate::theme::Layout::Wide { 320.0 } else { 280.0 };
-    }
-    // The main pane's border, the content's scrollbar gutter, `.view`'s padding.
-    w - 2.0 - 10.0 - 2.0 * t.pad()
+    // Less `.view`'s padding.
+    crate::shell::content_estimate(app, t, window_w) - 2.0 * t.pad()
 }
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
@@ -362,7 +343,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let calendar = data.and_then(|d| replay_calendar(&d.activity, d.bucket, &request.range, now));
     let no_tracks = data.is_none() || s.queue.is_empty();
 
-    let head = head(t, s, now, no_tracks, window_w <= 760.0);
+    let head = head(t, s, now, no_tracks, Bp::of(window_w) == Bp::Narrow);
     let mut under = row().w_full().flex_wrap().items_center().gaps(8.0, 12.0).child(pills(app, t));
     if let Some(label) = range_label(calendar.as_ref(), request, now) {
         under = under.child(exact(text(label).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground), 17.4));
@@ -380,7 +361,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         // All time may come back by month: until it says, the days tile
         // names nothing.
         let unit_known = request.monthly.is_none();
-        results = results.min_h(s.last_h.get()).child(placeholder::view(app, t, chart_bucket, unit_known, panel));
+        results = results.min_h(s.last_h.get()).child(placeholder::view(t, chart_bucket, unit_known, panel));
     } else if let Some(d) = data {
         if let Some([_, h]) = cx.layout_size("replay-results") {
             s.last_h.set(h);
@@ -455,10 +436,7 @@ fn pills(app: &App, t: &Theme) -> El {
             .focusable(true)
             .on_press(move |app: &mut App| set_period(app, period));
         if active {
-            pill = pill.box_shadow(Shadow { x: 0.0, y: 1.0, blur: 3.0, spread: 0.0, color: Color::BLACK.alpha(0.1), inset: false }).box_shadow(
-                Shadow { x: 0.0, y: 1.0, blur: 2.0, spread: -1.0, color: Color::BLACK.alpha(0.1), inset: false },
-            );
-            pill = if t.dark() { crate::ui::css_border(pill.fill(t.c.input_bg), 1.0, t.c.input, r) } else { pill.fill(t.c.background) };
+            pill = crate::ui::kit::segment_lit(t, pill, r);
         } else {
             pill = pill.hover(Color::TRANSPARENT).hover_motion(crate::ui::motion::ease(120.0), crate::ui::motion::ease(120.0));
         }

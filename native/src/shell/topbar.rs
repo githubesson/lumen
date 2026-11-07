@@ -50,6 +50,7 @@ fn crumbs(app: &App, loc: &Location) -> Vec<Crumb> {
     {
         let name = app
             .playlists
+            .data
             .as_ref()
             .and_then(|ps| ps.iter().find(|x| x.id == id))
             .map(|x| x.name.clone())
@@ -140,7 +141,7 @@ fn search_icon(t: &Theme) -> El {
         .label("Search library, albums, tracks… Ctrl+K")
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .on_press(|app: &mut App| app.ui.palette_open = true)
+        .on_press(crate::overlays::palette::open)
         .child(ico(&i::SEARCH, 14.0, t.c.muted_foreground))
 }
 

@@ -4,7 +4,7 @@
 
 use crate::api::search::search_entity_id;
 use crate::api::stats::ReplayAlbum;
-use crate::api::{ApiResult, Client, SearchAlbum, SearchArtist, TrackDetail, TrackListItem, TrackSource};
+use crate::api::{ApiResult, Client, TrackDetail, TrackListItem, TrackSource};
 use crate::core::track::{TrackRef, is_tidal_track};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -26,6 +26,13 @@ impl EntityTarget {
     pub fn tidal(id: &str) -> EntityTarget {
         EntityTarget { kind: EntityKind::Tidal, id: id.to_string() }
     }
+
+    /// The library route an album target opens: its own album page, or
+    /// TIDAL's release (`?tidalAlbum=`).
+    pub fn album_href(&self) -> String {
+        let param = if self.kind == EntityKind::Tidal { "tidalAlbum" } else { "album" };
+        format!("/library?view=albums&{param}={}", urlencoding::encode(&self.id))
+    }
 }
 
 fn non_empty(s: Option<&str>) -> Option<&str> {
@@ -41,6 +48,13 @@ pub fn track_album_target(track: &impl TrackRef) -> Option<EntityTarget> {
         return non_empty(track.track_source_album_id()).map(EntityTarget::tidal);
     }
     non_empty(track.track_album_id()).map(EntityTarget::local)
+}
+
+/// [`track_album_target`] when it's a library album: one with a page to
+/// describe it and tracks to play through (a TIDAL track's release has
+/// neither here).
+pub fn library_album_target(track: &impl TrackRef) -> Option<EntityTarget> {
+    track_album_target(track).filter(|t| t.kind != EntityKind::Tidal)
 }
 
 /// `resolveTrackAlbumTarget`: [`track_album_target`], falling back to the
@@ -88,18 +102,10 @@ pub fn search_entity_target(id: &str, source: Option<TrackSource>, source_id: Op
     }
 }
 
-pub fn search_album_target(a: &SearchAlbum) -> EntityTarget {
-    search_entity_target(&a.album.id, Some(a.source), a.source_id.as_deref())
-}
-
-pub fn search_artist_target(a: &SearchArtist) -> EntityTarget {
-    search_entity_target(&a.artist.id, Some(a.source), a.source_id.as_deref())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{ApiError, Album};
+    use crate::api::{Album, ApiError, SearchAlbum};
     use crate::core::artist_releases::{library_artist_releases, release_target, tidal_artist_releases};
 
     fn row(f: impl FnOnce(&mut TrackListItem)) -> TrackListItem {

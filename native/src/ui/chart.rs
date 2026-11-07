@@ -4,114 +4,42 @@
 
 use rune::{El, col, el, row, text};
 
+use crate::api::stats::{ReplayActivityBucket, ReplayBucket};
+use crate::core::dates::{self, MONTHS_LONG, MONTHS_SHORT, WEEKDAYS_SHORT};
+use crate::core::replay::figures::{activity_bucket_label, activity_chart_scale};
 use crate::theme::Theme;
 use crate::ui::{font, tooltip};
 
-/// `ReplayBucket`: what one bar counts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Bucket {
-    #[default]
-    Day,
-    Week,
-    Month,
+/// A bucket's start (`new Date(b.bucket_start)`): the instant, read in UTC
+/// for its labels as the web reads it.
+fn bucket_ms(b: &ReplayActivityBucket) -> i64 {
+    dates::parse(&b.bucket_start).unwrap_or(0)
 }
 
-/// One bar: `bucket_start` (an ISO date at UTC midnight) and its plays.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Bar {
-    pub start: String,
-    pub plays: u64,
+/// "Sep 4"
+fn month_day(p: &dates::Parts) -> String {
+    format!("{} {}", MONTHS_SHORT[p.month as usize - 1], p.day)
 }
 
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MONTHS_LONG: [&str; 12] =
-    ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-
-/// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (m as i64 + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
-}
-
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-/// The UTC day of an ISO timestamp ("2026-09-04T00:00:00Z"), in days since the epoch.
-pub fn utc_day(iso: &str) -> Option<i64> {
-    let date = iso.get(0..10)?;
-    let mut it = date.split('-');
-    let y: i64 = it.next()?.parse().ok()?;
-    let m: u32 = it.next()?.parse().ok()?;
-    let d: u32 = it.next()?.parse().ok()?;
-    Some(days_from_civil(y, m, d))
-}
-
-fn md(day: i64) -> String {
-    let (_, m, d) = civil_from_days(day);
-    format!("{} {d}", MONTHS[(m - 1) as usize])
-}
-
-fn mdy(day: i64) -> String {
-    let (y, m, d) = civil_from_days(day);
-    format!("{} {d}, {y}", MONTHS[(m - 1) as usize])
-}
-
-/// `activityBucketLabel(date, bucket, "verbose")`: "Sep 4", or "Sep 26" for a month.
-pub fn bucket_label(day: i64, bucket: Bucket) -> String {
+/// The bar's tooltip date (`tooltipFor`, in UTC): "Fri, Sep 4, 2026",
+/// "Week of Sep 4 – Sep 10, 2026", "September 2026".
+pub fn bucket_tooltip(start_ms: i64, bucket: ReplayBucket) -> String {
+    let p = dates::utc_parts(start_ms);
     match bucket {
-        Bucket::Day | Bucket::Week => md(day),
-        Bucket::Month => {
-            let (y, m, _) = civil_from_days(day);
-            format!("{} {:02}", MONTHS[(m - 1) as usize], y.rem_euclid(100))
+        ReplayBucket::Day => format!("{}, {}, {}", WEEKDAYS_SHORT[p.weekday as usize], month_day(&p), p.year),
+        ReplayBucket::Week => {
+            let end = dates::utc_parts(start_ms + 6 * dates::DAY_MS);
+            format!("Week of {} – {}, {}", month_day(&p), month_day(&end), end.year)
         }
+        ReplayBucket::Month => format!("{} {}", MONTHS_LONG[p.month as usize - 1], p.year),
     }
 }
 
-/// The bar's tooltip date: "Thu, Sep 4, 2026", "Week of Sep 4 – Sep 10, 2026",
-/// "September 2026".
-pub fn bucket_tooltip(day: i64, bucket: Bucket) -> String {
-    match bucket {
-        Bucket::Day => format!("{}, {}", WEEKDAYS[day.rem_euclid(7) as usize], mdy(day)),
-        Bucket::Week => format!("Week of {} – {}", md(day), mdy(day + 6)),
-        Bucket::Month => {
-            let (y, m, _) = civil_from_days(day);
-            format!("{} {y}", MONTHS_LONG[(m - 1) as usize])
-        }
-    }
-}
-
-/// `activityChartScale`: the tallest bar and how many bars per tick (six
-/// ticks at most).
-pub fn chart_scale(bars: &[Bar]) -> (u64, usize) {
-    let max = bars.iter().map(|b| b.plays).max().unwrap_or(0);
-    (max, bars.len().div_ceil(6).max(1))
-}
-
-/// `ActivityChart`, or its empty card.
-pub fn activity_chart(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket) -> El {
-    activity_chart_sized(t, key, bars, bucket, 140.0)
-}
-
-/// [`activity_chart`] `h` px tall instead of `.activity-chart`'s 140 (Home's
-/// `.board-chart` stretches it over the panel's room; Replay's bento sets 124).
-pub fn activity_chart_sized(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket, h: f32) -> El {
-    if bars.is_empty() {
+/// `ActivityChart` (or its empty card) `h` px tall instead of
+/// `.activity-chart`'s 140: Home's `.board-chart` stretches it over the
+/// panel's room, Replay's bento sets 124.
+pub fn activity_chart_sized(t: &Theme, key: &str, buckets: &[ReplayActivityBucket], bucket: ReplayBucket, h: f32) -> El {
+    if buckets.is_empty() {
         return crate::ui::css_border(el(), 1.0, t.c.border, t.radius_xl())
             .key(key)
             .w_full()
@@ -121,15 +49,15 @@ pub fn activity_chart_sized(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket, 
             .center()
             .child(text("No listening activity in this window.").font(font(14.0, 400.0)).color(t.c.muted_foreground));
     }
-    let (max, step) = chart_scale(bars);
+    let (max, step) = activity_chart_scale(buckets, 6);
     // `.activity-chart`: 140 px, padded 8 0 28; the bars sit on a hairline.
     let plot_h = (h - 8.0 - 28.0 - 1.0).max(0.0);
     let mut cols = row().key(format!("{key}-bars")).w_full().h(plot_h).gap(3.0).items_end().justify_center().role("img").label("Listening activity");
-    for (n, b) in bars.iter().enumerate() {
-        let day = utc_day(&b.start).unwrap_or(0);
+    for (n, b) in buckets.iter().enumerate() {
+        let start = bucket_ms(b);
         let pct = if max > 0 { b.plays as f32 / max as f32 } else { 0.0 };
         let plays = if b.plays == 1 { "1 play".to_string() } else { format!("{} plays", b.plays) };
-        let tip = format!("{} · {plays}", bucket_tooltip(day, bucket));
+        let tip = format!("{} · {plays}", bucket_tooltip(start, bucket));
         let ck = format!("{key}-col-{n}");
         let bar = el()
             .w_full()
@@ -140,7 +68,7 @@ pub fn activity_chart_sized(t: &Theme, key: &str, bars: &[Bar], bucket: Bucket, 
         let mut c = col().key(ck.clone()).grow(1.0).min_w(4.0).max_w(56.0).h_full().justify_end().hover_group().child(bar);
         if n % step == 0 {
             // `.activity-tick`: centred 22 px under the baseline's bottom.
-            let label = text(bucket_label(day, bucket)).font(font(12.0, 400.0)).color(t.c.muted_foreground);
+            let label = text(activity_bucket_label(start, bucket)).font(font(12.0, 400.0)).color(t.c.muted_foreground);
             c = c.child(el().pin(Some(-40.0), None, Some(-40.0), Some(-22.0)).h(17.4).center().child(label));
         }
         cols = cols.child(tooltip::tip(c, &ck, &tip));
@@ -154,13 +82,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dates() {
-        let d = utc_day("2026-09-04T00:00:00Z").unwrap();
-        assert_eq!(bucket_label(d, Bucket::Day), "Sep 4");
-        assert_eq!(bucket_tooltip(d, Bucket::Day), "Fri, Sep 4, 2026");
-        assert_eq!(bucket_tooltip(d, Bucket::Week), "Week of Sep 4 – Sep 10, 2026");
-        assert_eq!(bucket_tooltip(d, Bucket::Month), "September 2026");
-        assert_eq!(bucket_label(d, Bucket::Month), "Sep 26");
-        assert_eq!(chart_scale(&vec![Bar { start: String::new(), plays: 3 }; 13]), (3, 3));
+    fn tooltips() {
+        let d = dates::parse("2026-09-04T00:00:00Z").unwrap();
+        assert_eq!(bucket_tooltip(d, ReplayBucket::Day), "Fri, Sep 4, 2026");
+        assert_eq!(bucket_tooltip(d, ReplayBucket::Week), "Week of Sep 4 – Sep 10, 2026");
+        assert_eq!(bucket_tooltip(d, ReplayBucket::Month), "September 2026");
+        // `new Date(..)` keeps the instant: a bucket at another zone's
+        // midnight reads as the UTC day it falls in.
+        let east = dates::parse("2026-09-04T00:00:00+02:00").unwrap();
+        assert_eq!(bucket_tooltip(east, ReplayBucket::Day), "Thu, Sep 3, 2026");
+        assert_eq!(bucket_tooltip(dates::parse("2026-12-28T00:00:00Z").unwrap(), ReplayBucket::Week), "Week of Dec 28 – Jan 3, 2027");
     }
 }

@@ -7,6 +7,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
 use super::*;
+use crate::api::testing::{MockServer, Res};
 use crate::config::Config;
 
 const LAUNCH_TOKEN: &str = "launch-token-0123456789";
@@ -157,45 +158,49 @@ fn accepts_a_server_origin_only() {
     assert!(normalize_backend_url("not a url").unwrap_err().starts_with("Invalid URL:"));
 }
 
-/// A server answering `/api/health` with `body`.
-fn health_server(status: u16, body: &'static str) -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { continue };
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            loop {
-                let mut line = String::new();
-                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
-                    break;
-                }
-            }
-            let _ = write!(
-                stream,
-                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-        }
-    });
-    port
+/// A server answering `/api/health` with `body`, and its `host:port`.
+fn health_server(status: u16, body: &str) -> (MockServer, String) {
+    let server = MockServer::start(vec![Res::new(status).header("Content-Type", "application/json").body(body)]);
+    let host = server.base().trim_start_matches("http://").to_string();
+    (server, host)
+}
+
+/// The address as typed, read as `new URL(...)` reads it.
+#[test]
+fn reads_a_typed_server_address() {
+    let origin = |s: &str| server_address(s).map(|u| u.origin().ascii_serialization());
+    assert_eq!(origin("music.example.com"), Ok("https://music.example.com".into()));
+    assert_eq!(origin(" HTTP://Music.Example.com:80/library?x=1 "), Ok("http://music.example.com".into()));
+    assert_eq!(origin("http://localhost:8080"), Ok("http://localhost:8080".into()));
+    assert_eq!(origin("https://h.com:443"), Ok("https://h.com".into()));
+    assert_eq!(origin("[::1]:4000"), Ok("https://[::1]:4000".into()));
+    // What a hand-rolled reading got wrong: names in other scripts, short IPv4 forms.
+    assert_eq!(origin("bücher.example"), Ok("https://xn--bcher-kva.example".into()));
+    assert_eq!(origin("http://127.1:4000"), Ok("http://127.0.0.1:4000".into()));
+    assert_eq!(server_address("music.example.com:4000").map(|u| url_host(&u).to_string()), Ok("music.example.com:4000".into()));
+    assert_eq!(origin(""), Err("Enter your server's address.".into()));
+    assert_eq!(origin("ftp://x.com"), Err("The address must start with http:// or https://.".into()));
+    assert_eq!(origin("https://me:pw@x.com"), Err("Leave the username and password out of the address.".into()));
+    for bad in ["bad host", "x.com:99999", "mailto:me", "javascript:alert(1)"] {
+        assert_eq!(origin(bad), Err("That doesn't look like a web address.".into()), "{bad}");
+    }
 }
 
 #[test]
 fn tests_a_server_address() {
-    let lumen = health_server(200, r#"{"ok":true}"#);
-    assert_eq!(test_server(&format!("http://127.0.0.1:{lumen}/library?x=1")), Ok(format!("http://127.0.0.1:{lumen}")));
-    let other = health_server(200, r#"{"status":"fine"}"#);
-    assert_eq!(test_server(&format!("http://127.0.0.1:{other}")), Err(format!("127.0.0.1:{other} answered, but it isn't a Lumen server.")));
-    let failing = health_server(500, r#"{"ok":true}"#);
-    assert!(test_server(&format!("http://127.0.0.1:{failing}")).unwrap_err().ends_with("isn't a Lumen server."));
+    let (_lumen, lumen) = health_server(200, r#"{"ok":true}"#);
+    assert_eq!(test_server(&format!("http://{lumen}/library?x=1")), Ok(format!("http://{lumen}")));
+    let (_other, other) = health_server(200, r#"{"status":"fine"}"#);
+    assert_eq!(test_server(&format!("http://{other}")), Err(format!("{other} answered, but it isn't a Lumen server.")));
+    let (_failing, failing) = health_server(500, r#"{"ok":true}"#);
+    assert!(test_server(&format!("http://{failing}")).unwrap_err().ends_with("isn't a Lumen server."));
     let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     assert_eq!(
         test_server(&format!("http://127.0.0.1:{closed}")),
         Err(format!("Couldn't reach 127.0.0.1:{closed}. Check the address and that the server is running."))
     );
     // No scheme means https, which a plain HTTP server doesn't speak.
-    assert!(test_server(&format!("127.0.0.1:{lumen}")).unwrap_err().starts_with(&format!("Couldn't reach 127.0.0.1:{lumen}.")));
+    assert!(test_server(&lumen).unwrap_err().starts_with(&format!("Couldn't reach {lumen}.")));
     assert_eq!(test_server("  "), Err("Enter your server's address.".into()));
     assert_eq!(test_server("ftp://example.com"), Err("The address must start with http:// or https://.".into()));
     assert_eq!(test_server("https://me:pw@example.com"), Err("Leave the username and password out of the address.".into()));

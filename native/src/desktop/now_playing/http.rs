@@ -6,7 +6,6 @@
 use std::io::{BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc::Receiver;
-use std::time::SystemTime;
 
 /// Request headers past this size are refused (Node's 16 KB default).
 const MAX_HEAD: usize = 16 * 1024;
@@ -147,7 +146,7 @@ impl Conn {
     }
 
     fn write_tail(&mut self) -> std::io::Result<()> {
-        write!(self.out, "Date: {}\r\n", http_date(SystemTime::now()))?;
+        write!(self.out, "Date: {}\r\n", http_date(crate::core::dates::now_ms()))?;
         if self.keep_alive {
             self.out.write_all(b"Connection: keep-alive\r\nKeep-Alive: timeout=5\r\n")
         } else {
@@ -281,24 +280,20 @@ fn parse(head: &[u8]) -> Result<Request, ()> {
     Ok(Request { method: method.into(), target: target.into(), http10: version == "HTTP/1.0", headers })
 }
 
-/// An IMF-fixdate, as Node's `Date` header.
-pub fn http_date(time: SystemTime) -> String {
-    let secs = time.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let weekday = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][days.rem_euclid(7) as usize];
-    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    let name = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][(month - 1) as usize];
-    format!("{weekday}, {day:02} {name} {year} {:02}:{:02}:{:02} GMT", rem / 3600, rem % 3600 / 60, rem % 60)
+/// An IMF-fixdate, as Node's `Date` header, for `ms` since the epoch.
+pub fn http_date(ms: i64) -> String {
+    use crate::core::dates::{MONTHS_SHORT, WEEKDAYS_SHORT, utc_parts};
+    let p = utc_parts(ms);
+    format!(
+        "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
+        WEEKDAYS_SHORT[p.weekday as usize],
+        p.day,
+        MONTHS_SHORT[p.month as usize - 1],
+        p.year,
+        p.hour,
+        p.minute,
+        p.second
+    )
 }
 
 #[cfg(test)]
@@ -307,11 +302,9 @@ mod tests {
 
     #[test]
     fn writes_dates_as_node_does() {
-        let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_794_484_800);
-        assert_eq!(http_date(at), "Thu, 12 Nov 2026 12:00:00 GMT");
-        assert_eq!(http_date(SystemTime::UNIX_EPOCH), "Thu, 01 Jan 1970 00:00:00 GMT");
-        let leap = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(951_782_400);
-        assert_eq!(http_date(leap), "Tue, 29 Feb 2000 00:00:00 GMT");
+        assert_eq!(http_date(1_794_484_800_000), "Thu, 12 Nov 2026 12:00:00 GMT");
+        assert_eq!(http_date(0), "Thu, 01 Jan 1970 00:00:00 GMT");
+        assert_eq!(http_date(951_782_400_999), "Tue, 29 Feb 2000 00:00:00 GMT");
     }
 
     #[test]

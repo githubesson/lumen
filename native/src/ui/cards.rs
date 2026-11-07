@@ -4,37 +4,24 @@
 
 use std::rc::Rc;
 
-use rune::{Color, Cursor, El, PointerPress, Shadow, col, el, row, text};
+use rune::{Cursor, El, col, el, row, text};
 
 use crate::api::{Playlist, Visibility, media};
 use crate::app::App;
-use crate::images::{Cover, Images};
+use crate::images::Images;
 use crate::theme::{Density, Theme};
 use crate::ui::{font, ico, icons as i, line, motion};
+use crate::ui::ShadowMd;
 
 /// A press handler a card keeps (`onPlay`).
 pub type Action = Rc<dyn Fn(&mut App)>;
-/// `onContextMenu`: the press point in window points.
-pub type MenuAction = Rc<dyn Fn(&mut App, PointerPress)>;
 
 /// `CoverArt` filling its box's width as a square (`.card-art`):
 /// the image, the muted surface while it loads, or the letter.
 pub fn square_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, radius: f32) -> El {
-    // Cards run up to about 240 px wide (grid columns, shelves); smaller ones
-    // draw from the image's mips. The image rounds its own corners.
-    let base = el().w_full().aspect_ratio(1.0).radius(radius).fill(t.c.muted);
-    let state = url.map(|u| images.get_sized_lazy(u, 240.0, 240.0)).unwrap_or(Cover::Failed);
-    let base = crate::ui::widgets::load_when_shown(base, &state, url, 240.0, 240.0);
-    match state {
-        Cover::Ready(img) => base.child(el().w_full().h_full().radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
-        Cover::Loading => base,
-        Cover::Failed => {
-            let ch = label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
-            // `font-size: clamp(16px, 32%, 40px)`: a percentage of the
-            // inherited 14 px, so the letter is 16 px.
-            base.center().child(text(ch).font(font(16.0, 500.0)).color(t.c.muted_foreground))
-        }
-    }
+    // `font-size: clamp(16px, 32%, 40px)`: a percentage of the inherited
+    // 14 px, so the letter is 16 px.
+    crate::ui::widgets::cover(t, images, url, label, crate::ui::widgets::CoverBox::Square, radius, 16.0)
 }
 
 /// `.card`'s padding, gap and type for the density.
@@ -59,33 +46,31 @@ pub fn card_box(t: &Theme, key: &str) -> El {
 
 /// `.card-title` and `.card-sub`.
 pub fn card_text(t: &Theme, title: El, sub: Option<&str>) -> El {
-    let (_, _, sub_fs) = card_metrics(t);
     let (_, _, title_fs) = card_metrics(t);
     let mut c = col().w_full().min_w(0.0).child(crate::ui::exact(title.w_full(), title_fs * 1.45).shrink());
     if let Some(s) = sub {
-        let _ = sub_fs;
         c = c.child(crate::ui::exact(line(s, font(12.0, 400.0), t.c.muted_foreground), 17.4).shrink());
     }
     c
 }
 
+/// The round primary disc a play (or open) glyph sits in: `.card-play`,
+/// `.board-play`, `TopArtistGlyph`.
+pub fn disc(t: &Theme, icon: &'static rune::Icon, circle: f32, glyph: f32) -> El {
+    el().size(circle, circle).radius(999.0).fill(t.c.primary).center().child(ico(icon, glyph, t.c.primary_foreground))
+}
+
 /// `.card-play`: the round play button over the cover's corner, risen into
 /// view while the card is hovered.
 pub fn card_play(t: &Theme, key: &str, label: &str, on_play: Action) -> El {
-    let a = t.c.shadow_md_alpha;
-    el().key(key)
-        .size(32.0, 32.0)
-        .radius(999.0)
-        .fill(t.c.primary)
-        .center()
+    disc(t, &i::PLAY_FILLED, 32.0, 16.0)
+        .key(key)
         .role("button")
         .label(label)
         .cursor(Cursor::Pointer)
-        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .shadow_md(t)
         .group_opacity(0.0, 1.0)
         .press_scale(0.95)
-        .child(ico(&i::PLAY_FILLED, 16.0, t.c.primary_foreground))
         .on_press(move |app: &mut App| on_play(app))
 }
 
@@ -95,14 +80,11 @@ pub struct MediaCard {
     /// The page it opens (`to`).
     pub to: Option<String>,
     pub cover: Option<String>,
-    /// The placeholder's letter source (defaults to the title).
-    pub art_label: Option<String>,
     pub title: String,
     pub subtitle: Option<String>,
     /// Drawn over the cover (Replay's ranks).
     pub rank_badge: Option<El>,
     pub on_play: Option<Action>,
-    pub on_menu: Option<MenuAction>,
     pub play_label: Option<String>,
 }
 
@@ -112,12 +94,10 @@ impl MediaCard {
             key: key.into(),
             to: None,
             cover: None,
-            art_label: None,
             title: title.into(),
             subtitle: None,
             rank_badge: None,
             on_play: None,
-            on_menu: None,
             play_label: None,
         }
     }
@@ -127,10 +107,6 @@ impl MediaCard {
     }
     pub fn cover(mut self, url: Option<String>) -> Self {
         self.cover = url;
-        self
-    }
-    pub fn art_label(mut self, label: impl Into<String>) -> Self {
-        self.art_label = Some(label.into());
         self
     }
     pub fn subtitle(mut self, s: impl Into<String>) -> Self {
@@ -146,16 +122,11 @@ impl MediaCard {
         self.on_play = Some(Rc::new(f));
         self
     }
-    pub fn on_menu(mut self, f: impl Fn(&mut App, PointerPress) + 'static) -> Self {
-        self.on_menu = Some(Rc::new(f));
-        self
-    }
 
     /// The tile; size its width from the grid or shelf it sits in.
     pub fn build(self, app: &App, t: &Theme) -> El {
         let (_, _, title_fs) = card_metrics(t);
-        let label = self.art_label.clone().unwrap_or_else(|| self.title.clone());
-        let mut art = el().w_full().child(square_art(t, &app.images, self.cover.as_deref(), &label, t.radius_lg()));
+        let mut art = el().w_full().child(square_art(t, &app.images, self.cover.as_deref(), &self.title, t.radius_lg()));
         if let Some(b) = self.rank_badge {
             art = art.child(b);
         }
@@ -170,9 +141,6 @@ impl MediaCard {
         if let Some(href) = self.to {
             card = card.role("link").label(self.title.clone()).on_press(move |app: &mut App| app.navigate_to(&href));
         }
-        if let Some(menu) = self.on_menu {
-            card = card.on_secondary_press(move |app: &mut App, at, _| menu(app, at));
-        }
         card
     }
 }
@@ -180,23 +148,22 @@ impl MediaCard {
 /// A [`MediaCard`]'s height at `width` (`.card`: its padding, the square
 /// cover, the gap and the title and subtitle lines).
 pub fn media_card_height(t: &Theme, width: f32) -> f32 {
-    let (pad, gap, title_fs) = card_metrics(t);
-    width + gap + title_fs * 1.45 + 17.4 - 2.0 * pad + 2.0 * pad
+    let (_, gap, title_fs) = card_metrics(t);
+    width + gap + title_fs * 1.45 + 17.4
 }
 
 /// `.replay-rank`: a play-count rank over a card's cover corner
 /// ([`MediaCard::rank_badge`]).
 pub fn replay_rank(t: &Theme, rank: usize) -> El {
-    row()
-        .absolute(6.0, 6.0)
+    let style = crate::ui::tnum(font(12.0, 500.0));
+    el().absolute(6.0, 6.0)
         .min_w(20.0)
         .h(20.0)
         .px(6.0)
-        .items_center()
-        .justify_center()
         .radius(999.0)
         .fill(t.c.background)
-        .child(text(rank.to_string()).font(crate::ui::tnum(font(12.0, 500.0))).color(t.c.foreground))
+        .center()
+        .child(crate::ui::centred(text(rank.to_string()).font(style).color(t.c.foreground), style))
 }
 
 /// `MediaCardPlaceholders`: stand-ins for a loading row of cards, the same
@@ -271,15 +238,7 @@ pub fn top_artist_glyph(t: &Theme, action: Option<TopArtistAction>, circle: f32,
         TopArtistAction::Open => &i::ARROW_RIGHT,
         TopArtistAction::Play => &i::PLAY_FILLED,
     };
-    Some(
-        el().size(circle, circle)
-            .radius(999.0)
-            .fill(t.c.primary)
-            .center()
-            .group_opacity(0.0, 1.0)
-            .a11y_hidden()
-            .child(ico(icon, glyph, t.c.primary_foreground)),
-    )
+    Some(disc(t, icon, circle, glyph).group_opacity(0.0, 1.0).a11y_hidden())
 }
 
 /// `TopArtistName`'s press: open the artist's page, or play them.

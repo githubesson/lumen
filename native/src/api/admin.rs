@@ -9,16 +9,17 @@ use serde_json::json;
 
 use super::auth::{AdminUser, Invite};
 use super::client::{ApiResult, Behavior, Client, seg};
-use super::de::nullable;
+use super::de::{nullable, string_or_number};
 use super::types::{Role, TrackDetail};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct MusicRoot {
     /// Blank for the primary root, which has no row to pause or remove.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_number")]
     pub id: String,
-    pub path: String,
     #[serde(default)]
+    pub path: String,
+    #[serde(default, deserialize_with = "string_or_number")]
     pub label: String,
     #[serde(default)]
     pub enabled: bool,
@@ -45,7 +46,9 @@ pub struct IngestErrors {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct IngestError {
+    #[serde(default)]
     pub id: i64,
+    #[serde(default)]
     pub file_path: String,
     #[serde(default)]
     pub error: String,
@@ -59,6 +62,7 @@ pub struct IngestError {
 /// What deleting a user would orphan: the playlists they own.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct UserDeparturePreview {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub user_id: String,
     #[serde(default)]
     pub username: String,
@@ -68,6 +72,7 @@ pub struct UserDeparturePreview {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct OwnedPlaylist {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub playlist_id: String,
     #[serde(default)]
     pub name: String,
@@ -153,8 +158,15 @@ pub fn enable_user(c: &Client, id: &str) -> ApiResult<()> {
     c.post_void(&format!("/api/admin/users/{}/enable", seg(id)), None)
 }
 
+/// Read loosely: an answer without a playlist list owns none.
 pub fn user_departure_preview(c: &Client, id: &str) -> ApiResult<UserDeparturePreview> {
-    c.get(&format!("/api/admin/users/{}/departure-preview", seg(id)))
+    let v: serde_json::Value = c.get(&format!("/api/admin/users/{}/departure-preview", seg(id)))?;
+    Ok(serde_json::from_value(v).unwrap_or_default())
+}
+
+/// Disable the account (`disable`) or enable it again.
+pub fn set_user_disabled(c: &Client, id: &str, disable: bool) -> ApiResult<()> {
+    if disable { disable_user(c, id) } else { enable_user(c, id) }
 }
 
 /// Every playlist the user owns needs a disposition; a 409 (carrying a
@@ -262,6 +274,16 @@ mod tests {
                 { "action": "delete", "playlist_id": "p2" },
             ])
         );
+    }
+
+    #[test]
+    fn ids_read_loosely() {
+        let r: MusicRoot = serde_json::from_str(r#"{"id":7,"path":"/m","label":2026}"#).unwrap();
+        assert_eq!((r.id.as_str(), r.label.as_str()), ("7", "2026"));
+        let p: UserDeparturePreview = serde_json::from_str(r#"{"owned_playlists":[{"playlist_id":12,"name":"x"}]}"#).unwrap();
+        assert_eq!(p.owned_playlists[0].playlist_id, "12");
+        let e: IngestErrors = serde_json::from_str(r#"{"errors":null,"total":3}"#).unwrap();
+        assert_eq!((e.errors.len(), e.total), (0, 3));
     }
 
     #[test]

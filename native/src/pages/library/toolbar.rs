@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rune::{Color, Cursor, Cx, El, Shadow, el, row, text};
+use rune::{Color, Cursor, Cx, El, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
@@ -160,21 +160,7 @@ fn display_toggle(t: &Theme, current: Display) -> El {
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| super::set_display(app, value));
         if active {
-            let mut pill = el()
-                .key("lib-display-indicator")
-                .matched("lib-display-indicator")
-                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .radius(t.radius_md())
-                .motion(rune_motion::Spring::new(0.2, 0.0));
-            if t.dark() {
-                pill = pill.fill(t.c.input_bg).border(1.0, t.c.input);
-            } else {
-                pill = pill
-                    .fill(t.c.background)
-                    .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 3.0, spread: 0.0, color: Color::BLACK.alpha(0.1), inset: false })
-                    .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 2.0, spread: -1.0, color: Color::BLACK.alpha(0.1), inset: false });
-            }
-            b = b.child(pill);
+            b = b.child(crate::ui::kit::segment_indicator(t, "lib-display-indicator"));
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         b = b.child(ico(glyph, 14.0, ink).group_color(t.c.foreground));
@@ -199,7 +185,7 @@ pub fn empty_library(t: &Theme) -> El {
         .align(rune::Align::Center)
         .spans(vec![rune::Span::new(range.start, range.end).color(t.c.primary)])
         .link(rune::Link::new(range, "upload").role("button"))
-        .on_link(|app: &mut App, _id: &str, _tx: &mut rune::Tx| app.ui.upload_open = true);
+        .on_link(|app: &mut App, _id: &str, _tx: &mut rune::Tx| crate::overlays::upload::open(app));
     rune::col()
         .w_full()
         .px(24.0)

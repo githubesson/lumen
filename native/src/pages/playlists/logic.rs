@@ -12,7 +12,6 @@ pub use crate::core::playlist_details::{
     playlist_cover_size_error as cover_size_error, playlist_details_form as details_form,
 };
 pub use crate::core::playlist_permissions::{CollaboratorPermissions as CollaboratorRow, PlaylistPermissions as Permissions};
-pub use crate::core::playlist_tracks::PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS as AUTO_DOWNLOAD_REFRESH_MS;
 pub use crate::core::track_sort::SortKey;
 pub use crate::format::fmt_date;
 
@@ -46,19 +45,9 @@ pub fn subtitle(p: &Playlist) -> String {
     crate::core::playlist_details::playlist_subtitle(p.visibility, p.effective_role)
 }
 
-/// `playlistTidalQueued`: the server's count, else the rows still on TIDAL.
-pub fn tidal_queued(tracks: &[PlaylistTrackEntry], queued: Option<u32>) -> u32 {
-    queued.unwrap_or_else(|| tracks.iter().filter(|t| t.source == Some(crate::api::TrackSource::Tidal)).count() as u32)
-}
-
-/// `playlistAutoDownloadRefetchMs`: when to look again, or None.
-pub fn auto_download_refetch_ms(tracks: &[PlaylistTrackEntry], queued: Option<u32>, retry_at: Option<&str>, now_ms: i64) -> Option<u64> {
-    if tidal_queued(tracks, queued) > 0 {
-        return Some(AUTO_DOWNLOAD_REFRESH_MS);
-    }
-    let at = crate::core::dates::parse(retry_at?)?;
-    Some((at - now_ms).max(AUTO_DOWNLOAD_REFRESH_MS as i64) as u64)
-}
+pub use crate::core::playlist_tracks::{
+    playlist_auto_download_refetch_ms as auto_download_refetch_ms, playlist_tidal_queued as tidal_queued,
+};
 
 /// `removePlaylistEntry`: drop the row at `position`, moving later rows up.
 pub fn remove_entry(entries: &[PlaylistTrackEntry], position: u32) -> Vec<PlaylistTrackEntry> {
@@ -113,11 +102,6 @@ pub fn sort_for_display(items: &[PlaylistTrackEntry], key: SortKey, asc: bool) -
 /// `usePlaylistTrackKeys`' search key: title, artist and album, lowercased.
 pub fn search_key(t: &PlaylistTrackEntry) -> String {
     format!("{} {} {}", t.title, t.artist.as_deref().unwrap_or(""), t.album_title.as_deref().unwrap_or("")).to_lowercase()
-}
-
-/// CSS `60ch` at `size` px: sixty of the font's "0".
-pub fn ch60(size: f32) -> f32 {
-    60.0 * rune::text::advance("0", crate::ui::font(size, 400.0))
 }
 
 /// `pluralize`: "1 track", "9 tracks".
@@ -215,14 +199,5 @@ mod tests {
         assert_eq!(cover_size_error(Some(17 << 20)), Some("That image is over 16 MB. Choose a smaller one."));
         assert_eq!(cover_size_error(None), None);
         assert_eq!(pluralize(1, "track"), "1 track");
-    }
-
-    #[test]
-    fn refetches_while_queued_or_retrying() {
-        let mut rows = vec![entry(0, "a")];
-        assert_eq!(auto_download_refetch_ms(&rows, None, None, 0), None);
-        rows[0].source = Some(crate::api::TrackSource::Tidal);
-        assert_eq!(auto_download_refetch_ms(&rows, None, None, 0), Some(20_000));
-        assert_eq!(auto_download_refetch_ms(&rows, Some(0), Some("1970-01-01T00:01:00Z"), 0), Some(60_000));
     }
 }

@@ -1,13 +1,14 @@
 //! `CollaboratorsPanel.tsx`: the invite form (owner, collaborative
 //! playlists) and the list with each person's role and status.
 
-use rune::{Cursor, El, col, el, row, text};
+use rune::{El, col, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, field};
-use crate::ui::kit::{empty_state, error_banner};
-use crate::ui::{Btn, css_border, font, ico, icons as i, input_with, line, tnum};
+use crate::ui::forms::{SelectOption, SelectVariant, field, select};
+use crate::ui::kit::{self, empty_state, error_banner};
+use crate::ui::track_row::badge;
+use crate::ui::{Btn, font, icons as i, input_with, tnum};
 
 use crate::overlays::confirm::{self, Art, ConfirmSpec};
 use super::detail::{self, Detail, detail_mut};
@@ -19,13 +20,11 @@ pub struct State {
     pub role: CollaboratorRole,
     pub error: Option<String>,
     pub busy: bool,
-    /// Whose role the open role select changes.
-    role_target: Option<String>,
 }
 
 impl Default for State {
     fn default() -> Self {
-        State { role: CollaboratorRole::Editor, error: None, busy: false, role_target: None }
+        State { role: CollaboratorRole::Editor, error: None, busy: false }
     }
 }
 
@@ -106,9 +105,9 @@ fn remove(app: &mut App, c: &Collaborator, is_self: bool) {
 }
 
 fn set_role(app: &mut App, value: &str) {
-    let role = CollaboratorRole::parse(value);
+    let Some((user, role)) = value.split_once(SEP) else { return };
+    let (user, role) = (user.to_string(), CollaboratorRole::parse(role));
     let Some(d) = detail_mut(app) else { return };
-    let Some(user) = d.collab.role_target.take() else { return };
     let id = d.id.clone();
     let Some(client) = app.client.clone() else { return };
     app.net.run(
@@ -126,70 +125,26 @@ fn set_invite_role(app: &mut App, value: &str) {
     }
 }
 
-fn role_options() -> Vec<SelectOption> {
-    vec![SelectOption::new("editor", "Editor"), SelectOption::new("viewer", "Viewer")]
-}
+/// Between a collaborator's id and the role in a role select's values: the
+/// select says whose role it changes (`setRoleFor(c.user_id, role)`).
+const SEP: char = '\u{1f}';
 
-/// Chromium's menu-list arrow: a bold chevron.
-const SELECT_ARROW: rune::Icon = rune::Icon {
-    name: "select-arrow",
-    view: 10.0,
-    body: r#"<path d="M1.4 3.4L5 7L8.6 3.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>"#,
-};
-
-/// `NativeSelect`: a `<select class="input">`, as Chromium draws it (the
-/// value and its own arrow); it opens the app's listbox. Without a width
-/// it's as wide as its longest option.
-fn native_select(app: &App, t: &Theme, key: &str, value: CollaboratorRole, width: Option<f32>, target: Option<String>, on_change: fn(&mut App, &str)) -> El {
-    let open = app.select.as_ref().is_some_and(|s| s.key == key);
-    let label = if value == CollaboratorRole::Editor { "Editor" } else { "Viewer" };
-    let spec = OpenSelect::new(key, role_options(), value.as_str(), SelectVariant::Outlined, on_change);
-    let b = css_border(row(), 1.0, if open { t.c.focus_ring } else { t.c.input }, t.radius_lg())
-        .key(key)
-        .h(32.0)
-        .pl(15.0)
-        .pr(4.5)
-        .gap(4.0)
-        .items_center()
-        .radius(t.radius_lg())
-        .fill(t.c.input_bg)
-        .role("combobox")
-        .expanded(open)
-        .cursor(Cursor::Default)
-        .focusable(true)
-        .child(line(label, font(14.0, 400.0), t.c.foreground).grow(1.0).mb(2.0))
-        .child(ico(&SELECT_ARROW, 10.0, t.c.foreground))
-        .on_press(move |app: &mut App| {
-            if app.select.as_ref().is_some_and(|s| s.key == spec.key) {
-                app.select = None;
-                return;
-            }
-            if let Some(d) = detail_mut(app) {
-                d.collab.role_target = target.clone();
-            }
-            app.select = Some(spec.clone());
-        });
+/// `NativeSelect` with the two roles, `value` chosen; for `user`'s role, its
+/// values carry the user. Without a `width` it's as wide as its longest
+/// option, as a `<select>` is.
+fn role_select(app: &App, t: &Theme, key: &str, value: CollaboratorRole, user: Option<&str>, width: Option<f32>, on_change: fn(&mut App, &str)) -> El {
+    let tag = |role: &str| user.map_or_else(|| role.to_string(), |u| format!("{u}{SEP}{role}"));
+    let options = vec![SelectOption::new(tag("editor"), "Editor"), SelectOption::new(tag("viewer"), "Viewer")];
     let natural = || {
         let style = font(14.0, 400.0);
         rune::text::advance("Editor", style).max(rune::text::advance("Viewer", style)).ceil() + 42.0
     };
-    b.w(width.unwrap_or_else(natural))
+    select(app, t, key, &options, &tag(value.as_str()), SelectVariant::Native, "", false, on_change).w(width.unwrap_or_else(natural))
 }
 
-/// `.badge`: a 20 px pill.
-fn badge(t: &Theme, s: &str) -> El {
-    el().h(20.0)
-        .px(9.0)
-        .radius(999.0)
-        .fill(t.c.secondary)
-        .center()
-        .child(text(s.to_string()).font(font(12.0, 500.0)).color(t.c.secondary_foreground))
-}
-
-/// `.surface`: the card colour, a hairline and the large radius.
+/// [`kit::surface`] holding `e` across its width, clipped to its corners.
 pub fn surface(t: &Theme, e: El) -> El {
-    let r = t.radius_xl();
-    css_border(col(), 1.0, t.c.border, r).w_full().padding(1.0).radius(r).fill(t.c.card).clip_rounded(r).child(e.w_full())
+    kit::surface(t, 0.0).w_full().clip_rounded(t.radius_xl()).child(e.w_full())
 }
 
 pub fn view(app: &App, t: &Theme, d: &Detail, perms: &Permissions) -> El {
@@ -208,7 +163,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, perms: &Permissions) -> El {
             .gap(12.0)
             .items_end()
             .child(el().grow(1.0).min_w(0.0).child(field(t, "Invite by username", invite_field, None, None).w_full()))
-            .child(field(t, "Role", native_select(app, t, "playlist-invite-role", s.role, None, None, set_invite_role), None, None))
+            .child(field(t, "Role", role_select(app, t, "playlist-invite-role", s.role, None, None, set_invite_role), None, None))
             .child(if can_send { send.on_press(invite) } else { send });
         panel = panel.child(surface(t, form));
     }
@@ -243,7 +198,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, perms: &Permissions) -> El {
                     ),
             );
         if rowp.can_change_role {
-            r = r.child(native_select(app, t, &format!("collaborator-role-{}", c.user_id), c.role, Some(110.0), Some(c.user_id.clone()), set_role).label(format!("Role for {}", c.username)));
+            r = r.child(role_select(app, t, &format!("collaborator-role-{}", c.user_id), c.role, Some(&c.user_id), Some(110.0), set_role).label(format!("Role for {}", c.username)));
         } else {
             r = r.child(badge(t, c.role.as_str()));
         }
@@ -260,7 +215,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, perms: &Permissions) -> El {
             );
         }
         if n > 0 {
-            r = r.child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert());
+            r = crate::ui::css_border_top(r, 1.0, t.c.border);
         }
         list = list.child(r);
     }

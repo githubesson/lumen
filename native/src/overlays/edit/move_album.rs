@@ -1,11 +1,14 @@
 //! `MoveToAlbumDialog.tsx`: an admin tool that moves a track into an existing
 //! album picked from a searchable list (no near-duplicate album from a typo).
 
-use rune::{Cursor, Cx, El, Span, TextEdit, col, el, rich, row, text};
+use std::time::Duration;
+
+use rune::{Cursor, El, Span, TextEdit, col, el, rich, row, text};
 
 use super::{Which, reset};
 use crate::api::{Album, TrackListItem};
 use crate::app::App;
+use crate::core::entity_labels::library_album_subtitle;
 use crate::theme::Theme;
 use crate::ui::forms::search_input;
 use crate::ui::kit::{Dialog, error_banner, scroll_area_fit};
@@ -27,14 +30,23 @@ fn search(app: &mut App) {
     s.search_gen += 1;
     let id = s.search_gen;
     let q = s.query.text.trim().to_string();
-    let wait = !q.is_empty() && !app.net.is_sync();
+    if q.is_empty() {
+        fetch(app, id, q);
+        return;
+    }
+    app.net.after(Duration::from_millis(220), move |app| {
+        if app.overlays.edit.search_gen == id {
+            fetch(app, id, q);
+        }
+    });
+}
+
+fn fetch(app: &mut App, id: u64, q: String) {
     let Some(client) = app.client.clone() else { return };
     app.net.run(
         move || {
-            if wait {
-                std::thread::sleep(std::time::Duration::from_millis(220));
-            }
-            crate::api::library::list_albums(&client, &crate::api::PageParams { limit: Some(50), q: (!q.is_empty()).then(|| q.clone()), ..Default::default() }).map(|(a, _)| a)
+            let params = crate::api::PageParams { limit: Some(50), q: (!q.is_empty()).then_some(q), ..Default::default() };
+            crate::api::library::list_albums(&client, &params).map(|(a, _)| a)
         },
         move |app, result| {
             let s = &mut app.overlays.edit;
@@ -53,6 +65,7 @@ fn search(app: &mut App) {
 }
 
 fn move_to(app: &mut App, album: Album) {
+    let Some(client) = app.client.clone() else { return };
     let s = &mut app.overlays.edit;
     let Some(track) = s.move_track.clone() else { return };
     if s.moving_id.is_some() || track.album_id.as_deref() == Some(album.id.as_str()) {
@@ -61,7 +74,6 @@ fn move_to(app: &mut App, album: Album) {
     s.moving_id = Some(album.id.clone());
     s.error = None;
     let nonce = s.nonce;
-    let Some(client) = app.client.clone() else { return };
     app.net.run(
         move || crate::api::library::update_track(&client, &track.id, &crate::api::library::move_to_album_patch(&album.id)),
         move |app, result| {
@@ -69,35 +81,19 @@ fn move_to(app: &mut App, album: Album) {
             if s.nonce != nonce {
                 return;
             }
+            s.moving_id = None;
             match result {
                 Ok(_) => {
-                    s.moving_id = None;
                     crate::pages::library_changed(app);
                     super::close(app);
                 }
-                Err(e) => {
-                    s.moving_id = None;
-                    s.error = Some(crate::overlays::error_message(&e, "Move failed."));
-                }
+                Err(e) => s.error = Some(crate::overlays::error_message(&e, "Move failed.")),
             }
         },
     );
 }
 
-/// `albumSubtitle`.
-fn subtitle(a: &Album) -> String {
-    let artist = crate::format::display_text(a.artist_name.as_deref(), "");
-    let artist = if !artist.is_empty() {
-        artist
-    } else if a.is_compilation {
-        "Various Artists".into()
-    } else {
-        "Unknown artist".into()
-    };
-    format!("{artist} · {}", crate::overlays::palette::pluralize(a.track_count as u64, "track"))
-}
-
-pub fn view(app: &App, t: &Theme, window: [f32; 2], _cx: &mut Cx<App>) -> El {
+pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
     let s = &app.overlays.edit;
     let mut body = col().w_full().padding(16.0).gap(12.0);
     if let Some(track) = &s.move_track {
@@ -146,7 +142,7 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2], _cx: &mut Cx<App>) -> El {
                             .grow(1.0)
                             .min_w(0.0)
                             .child(line(a.title.clone(), font(14.0, 500.0), t.c.popover_foreground))
-                            .child(line(subtitle(a), tnum(font(12.0, 400.0)), t.c.muted_foreground)),
+                            .child(line(library_album_subtitle(a, true), tnum(font(12.0, 400.0)), t.c.muted_foreground)),
                     );
                 if current {
                     b = b.child(text("Current").font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground));

@@ -26,6 +26,7 @@ pub const MINI_PLAYER_PANEL_SIZE: (f64, f64) = (780.0, 344.0);
 pub enum PanelAnchor {
     #[default]
     Top,
+    #[cfg_attr(not(windows), allow(dead_code))]
     Bottom,
 }
 
@@ -59,6 +60,7 @@ struct State {
     mini: bool,
     panel_open: bool,
     anchor: PanelAnchor,
+    #[cfg_attr(not(windows), allow(dead_code))]
     normal_bounds: Option<Rect>,
 }
 
@@ -104,13 +106,6 @@ pub fn toggle_maximize(tx: &mut Tx) -> bool {
     false
 }
 
-pub fn is_maximized() -> bool {
-    #[cfg(windows)]
-    return super::win32::is_maximized();
-    #[cfg(not(windows))]
-    false
-}
-
 /// `window:close`.
 pub fn close(tx: &mut Tx) {
     tx.close_window();
@@ -132,6 +127,7 @@ pub fn mini_player_panel_open() -> bool {
 }
 
 /// `boundsAroundCenter`: `size` centred on `bounds`, kept inside `area`.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn bounds_around_center(bounds: Rect, size: (i32, i32), area: Rect) -> Rect {
     let cx = bounds.x as f64 + bounds.w as f64 / 2.0;
     let cy = bounds.y as f64 + bounds.h as f64 / 2.0;
@@ -142,6 +138,7 @@ pub fn bounds_around_center(bounds: Rect, size: (i32, i32), area: Rect) -> Rect 
 
 /// Grow downward, unless the window is parked near the bottom of the screen
 /// and there is room above it instead.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn panel_anchor(bounds: Rect, panel_height: i32, area: Rect) -> PanelAnchor {
     let growth = panel_height - bounds.h;
     let fits_below = bounds.y + bounds.h + growth <= area.y + area.h;
@@ -150,6 +147,7 @@ pub fn panel_anchor(bounds: Rect, panel_height: i32, area: Rect) -> PanelAnchor 
 }
 
 /// The mini player's bounds with its panel `open` (or shut), pinned at `anchor`.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn panel_bounds(bounds: Rect, size: (i32, i32), anchor: PanelAnchor, area: Rect, open: bool) -> Rect {
     let mut y = if anchor == PanelAnchor::Bottom { bounds.y + bounds.h - size.1 } else { bounds.y };
     if open {
@@ -160,12 +158,14 @@ pub fn panel_bounds(bounds: Rect, size: (i32, i32), anchor: PanelAnchor, area: R
 }
 
 /// Logical points to physical pixels at `scale`.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn physical(size: (f64, f64), scale: f64) -> (i32, i32) {
     ((size.0 * scale).round() as i32, (size.1 * scale).round() as i32)
 }
 
 /// A resize edge of the frameless window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Edge {
     Left,
     Right,
@@ -180,6 +180,7 @@ pub enum Edge {
 /// Chromium's `GetHTComponentForFrame` with Electron's frameless metrics:
 /// a `border`-wide strip inside the window resizes, `corner` long at each
 /// corner. `(x, y)` is relative to the window's top left.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn frame_edge(x: i32, y: i32, w: i32, h: i32, border: i32, corner: i32) -> Option<Edge> {
     Some(if x < border {
         if y < corner {

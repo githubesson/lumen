@@ -450,31 +450,6 @@ pub struct PlaybackActivity {
 /// `local_album`, `tidal_artist`, …) continues; empty means exhausted.
 pub type SearchOffsets = std::collections::BTreeMap<String, u64>;
 
-/// The body of `PUT /api/activity` (`PlaybackActivityInput`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct PlaybackActivityInput {
-    pub device_id: String,
-    pub device_name: String,
-    pub track_id: String,
-    pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artist: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub album: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub album_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cover_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duration_sec: Option<f64>,
-    pub position_sec: f64,
-    pub is_playing: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub volume: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub muted: Option<bool>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CollaboratorRole {
@@ -553,6 +528,7 @@ pub struct TrackPatch {
     pub album_artist: Option<String>,
 }
 
+#[cfg(test)]
 impl TrackPatch {
     pub fn is_empty(&self) -> bool {
         *self == TrackPatch::default()
@@ -572,6 +548,7 @@ pub struct AlbumPatch {
     pub is_compilation: Option<bool>,
 }
 
+#[cfg(test)]
 impl AlbumPatch {
     pub fn is_empty(&self) -> bool {
         *self == AlbumPatch::default()

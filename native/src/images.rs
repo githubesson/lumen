@@ -1,6 +1,6 @@
 //! Cover art: fetched with the session on a worker, decoded, and kept by URL.
 //! `CoverArt` in the web app shows the muted surface (and the entity's
-//! initial once a fetch fails) until the image decodes; [`Images::get_sized`]
+//! initial once a fetch fails) until the image decodes; [`Images::get_sized_lazy`]
 //! gives the view what it needs to do the same.
 //!
 //! Covers are decoded and resized on the worker to the device pixels they're
@@ -15,9 +15,9 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use rune::{Image, ImageCache};
 
@@ -216,10 +216,15 @@ impl<J: Task> Stack<J> {
 }
 
 struct Shared {
+    /// Keyed by size and path, not server: [`Images::set_client`] clears it.
     decoded: Mutex<Lru<Slot>>,
     encoded: Mutex<Lru<Arc<[u8]>>>,
     /// A cover finished since the app last looked ([`Images::take_arrived`]).
     arrived: AtomicBool,
+    /// Moves with each server ([`Images::set_client`]): a job for an
+    /// earlier one keeps its cover to itself, or a path both servers have
+    /// would show the old server's cover.
+    generation: AtomicU64,
 }
 
 pub struct Images {
@@ -247,6 +252,7 @@ impl Images {
                 decoded: Mutex::new(Lru::new(DECODED_BUDGET)),
                 encoded: Mutex::new(Lru::new(ENCODED_BUDGET)),
                 arrived: AtomicBool::new(false),
+                generation: AtomicU64::new(0),
             }),
             jobs: Stack::new(),
             client: Arc::default(),
@@ -269,6 +275,8 @@ impl Images {
     /// The server covers are fetched from (its session included).
     pub fn set_client(&self, client: Option<Client>) {
         *self.client.lock().unwrap() = client;
+        // Before the clear: a job checks it under the same lock it writes in.
+        self.shared.generation.fetch_add(1, Ordering::AcqRel);
         self.shared.decoded.lock().unwrap().clear();
         self.shared.encoded.lock().unwrap().clear();
     }
@@ -295,14 +303,9 @@ impl Images {
     }
 
     /// The cover at `url` drawn `w`×`h` points: decoded at those device
-    /// pixels, cropped to fill them as `object-fit: cover` does.
-    pub fn get_sized(&self, url: &str, w: f32, h: f32) -> Cover {
-        self.request(url, Some(self.sized(w, h)), true)
-    }
-
-    /// [`Images::get_sized`] for a cover that may be off screen: its fetch
-    /// waits behind every cover on screen until [`Images::want_sized`] says
-    /// it shows (`CoverArt`'s `loading="lazy"`).
+    /// pixels, cropped to fill them as `object-fit: cover` does. It may be
+    /// off screen: its fetch waits behind every cover on screen until
+    /// [`Images::want_sized`] says it shows (`CoverArt`'s `loading="lazy"`).
     pub fn get_sized_lazy(&self, url: &str, w: f32, h: f32) -> Cover {
         self.request(url, Some(self.sized(w, h)), false)
     }
@@ -349,6 +352,7 @@ impl Images {
         self.shared.decoded.lock().unwrap().put(key.clone(), Slot::Loading, 64);
         let job = Job {
             client,
+            generation: self.shared.generation.load(Ordering::Acquire),
             url: url.to_string(),
             key: key.clone(),
             size,
@@ -375,6 +379,8 @@ impl Drop for Images {
 
 struct Job {
     client: Client,
+    /// [`Shared::generation`] when it was asked for.
+    generation: u64,
     url: String,
     key: String,
     size: Option<(u32, u32, f32)>,
@@ -397,7 +403,7 @@ impl Task for Job {
     /// The slot is forgotten, so the row asks again if it shows again.
     fn dropped(self) {
         let mut decoded = self.shared.decoded.lock().unwrap();
-        if matches!(decoded.get(&self.key), Some(Slot::Loading)) {
+        if self.current() && matches!(decoded.get(&self.key), Some(Slot::Loading)) {
             decoded.remove(&self.key);
         }
     }
@@ -409,9 +415,20 @@ impl Job {
             Some(bytes) => self.decode(&bytes),
             None => (Slot::Failed, 64),
         };
-        self.shared.decoded.lock().unwrap().put(self.key.clone(), slot, bytes);
+        let mut decoded = self.shared.decoded.lock().unwrap();
+        if !self.current() {
+            return;
+        }
+        decoded.put(self.key.clone(), slot, bytes);
+        drop(decoded);
         self.shared.arrived.store(true, Ordering::Release);
         self.waker.wake();
+    }
+
+    /// Still for the server the cache holds covers of. Ask with `decoded`
+    /// locked: [`Images::set_client`] moves on before it clears that.
+    fn current(&self) -> bool {
+        self.shared.generation.load(Ordering::Acquire) == self.generation
     }
 
     /// The cover's encoded bytes: memory, then disk while fresh, then the
@@ -426,26 +443,25 @@ impl Job {
         if let Some((bytes, expires)) = &stale
             && *expires > now_secs()
         {
-            let b: Arc<[u8]> = Arc::from(bytes.clone());
-            self.shared.encoded.lock().unwrap().put(mem_key, b.clone(), bytes.len());
-            return Some(b);
+            self.shared.encoded.lock().unwrap().put(mem_key, bytes.clone(), bytes.len());
+            return Some(bytes.clone());
         }
         match self.client.bytes_reply(&self.url) {
             Ok(reply) if !reply.body.is_empty() => {
-                let b: Arc<[u8]> = Arc::from(reply.body.clone());
-                self.shared.encoded.lock().unwrap().put(mem_key, b.clone(), reply.body.len());
-                if let (Some(f), Some(age)) = (&file, max_age(reply.cache_control.as_deref())) {
-                    write_disk(f, &reply.body, now_secs() + age);
+                let max_age = max_age(reply.cache_control.as_deref());
+                let b: Arc<[u8]> = Arc::from(reply.body);
+                self.shared.encoded.lock().unwrap().put(mem_key, b.clone(), b.len());
+                if let (Some(f), Some(age)) = (&file, max_age) {
+                    write_disk(f, &b, now_secs() + age);
                 }
                 Some(b)
             }
-            _ => stale.map(|(bytes, _)| Arc::from(bytes)),
+            _ => stale.map(|(bytes, _)| bytes),
         }
     }
 
     fn decode(&self, bytes: &[u8]) -> (Slot, usize) {
-        let svg = bytes.iter().take(512).copied().collect::<Vec<u8>>();
-        let svg = String::from_utf8_lossy(&svg).contains("<svg");
+        let svg = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).contains("<svg");
         if svg {
             let pt = self.size.map_or(UNSIZED_MAX as f32 / self.scale, |(_, _, pt)| pt);
             let px = (pt * self.scale) as usize;
@@ -456,7 +472,8 @@ impl Job {
             // A format the decoder here lacks: hand it to Rune's.
             return (Self::ready(self.cache.load(bytes.to_vec())), 256 * 256 * 16 / 3);
         };
-        let rgba = img.to_rgba8();
+        // A cover that's RGBA already (most PNGs) isn't copied.
+        let rgba = img.into_rgba8();
         let (iw, ih) = rgba.dimensions();
         let (out, w, h) = match self.size {
             Some((w, h, _)) => (cover_fill(&rgba, w, h), w, h),
@@ -493,15 +510,16 @@ fn cover_fill(src: &image::RgbaImage, w: u32, h: u32) -> image::RgbaImage {
     let k = (w as f32 / iw as f32).max(h as f32 / ih as f32);
     let (cw, ch) = (((w as f32 / k).round() as u32).clamp(1, iw), ((h as f32 / k).round() as u32).clamp(1, ih));
     let (x, y) = ((iw - cw) / 2, (ih - ch) / 2);
-    let view = image::imageops::crop_imm(src, x, y, cw, ch).to_image();
+    let view = image::imageops::crop_imm(src, x, y, cw, ch);
     if (cw, ch) == (w, h) {
-        return view;
+        return view.to_image();
     }
-    image::imageops::resize(&view, w, h, image::imageops::FilterType::Lanczos3)
+    // Resized from the crop in place, not a copy of it (the same pixels).
+    image::imageops::resize(&*view, w, h, image::imageops::FilterType::Lanczos3)
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    (crate::core::dates::now_ms() / 1000).max(0) as u64
 }
 
 /// `max-age` from `Cache-Control`; None when the reply mustn't be stored.
@@ -519,27 +537,20 @@ fn disk_name(key: &str) -> String {
 }
 
 /// A cached file: 8 bytes of expiry (unix seconds, little-endian), then the body.
-fn read_disk(path: &PathBuf) -> Option<(Vec<u8>, u64)> {
+fn read_disk(path: &PathBuf) -> Option<(Arc<[u8]>, u64)> {
     let data = std::fs::read(path).ok()?;
     if data.len() < 8 {
         return None;
     }
     let expires = u64::from_le_bytes(data[..8].try_into().ok()?);
-    Some((data[8..].to_vec(), expires))
+    Some((Arc::from(&data[8..]), expires))
 }
 
 fn write_disk(path: &PathBuf, body: &[u8], expires: u64) {
-    let Some(dir) = path.parent() else { return };
-    if std::fs::create_dir_all(dir).is_err() {
-        return;
-    }
     let mut data = Vec::with_capacity(body.len() + 8);
     data.extend_from_slice(&expires.to_le_bytes());
     data.extend_from_slice(body);
-    let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, &data).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    }
+    let _ = crate::config::write_atomic(path, &data);
 }
 
 /// Keep the disk cache under its budget: oldest files out first.
@@ -655,6 +666,14 @@ mod tests {
         assert!(stack.reorder("c", false));
         let order: Vec<u32> = stack.jobs.lock().unwrap().iter().rev().map(|p| p.0).collect();
         assert_eq!(order, vec![0, 1, 3, 2]);
+    }
+
+    #[test]
+    fn cover_fill_resizes_the_crop_in_place() {
+        let src = image::RgbaImage::from_fn(300, 200, |x, y| image::Rgba([(x * 7 % 256) as u8, (y * 13 % 256) as u8, ((x + y) % 256) as u8, 255]));
+        let copied = image::imageops::crop_imm(&src, 50, 0, 200, 200).to_image();
+        let expected = image::imageops::resize(&copied, 64, 64, image::imageops::FilterType::Lanczos3);
+        assert!(cover_fill(&src, 64, 64) == expected, "the same pixels as from a copy");
     }
 
     #[test]

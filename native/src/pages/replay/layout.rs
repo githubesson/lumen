@@ -1,6 +1,12 @@
 //! `components/replay/bentoLayout.ts`, and the CSS grid the bento's
 //! `grid-template-areas` drive (`replay.css`): which cells each tile takes,
-//! the columns' widths, and the auto rows' heights where a tile spans two.
+//! the columns' widths, and the auto rows' heights where a tile spans two;
+//! and the tile sizes the loading bento shares with the results, so nothing
+//! moves when the data lands.
+
+use crate::theme::Theme;
+
+use super::bento::{Fit, LH14, PAD};
 
 /// `BentoTiles`: which of Replay's optional tiles a period has. The figures
 /// and the activity chart are always there once a period has plays; the rest
@@ -149,6 +155,64 @@ pub fn band_rows(rows: &[f32], tall: f32) -> Vec<f32> {
     let have: f32 = rows.iter().sum::<f32>() + (n - 1.0);
     let extra = ((tall - have) / n).max(0.0);
     rows.iter().map(|r| r + extra).collect()
+}
+
+
+/// The bento's areas at `fit` (four columns wide, else two), the column
+/// count, and the width of the tile a name names (the hairlines between its
+/// columns included), in a panel `panel_w` wide. The placeholder lays out
+/// the same way, so nothing moves when the data lands.
+pub(super) fn arrange(tiles: BentoTiles, all_tracks: bool, fit: Fit, panel_w: f32) -> (Areas, usize, impl Fn(&str) -> f32) {
+    let (wide, narrow) = bento_areas(tiles, all_tracks);
+    let (areas, columns) = if fit.wide { (wide, 4) } else { (narrow, 2) };
+    let col_w = column(panel_w - 2.0, columns);
+    let all = cells(&areas);
+    let width = move |name: &str| all.iter().find(|c| c.name == name).map_or(0.0, |c| span_width(col_w, c.c1 - c.c0));
+    (areas, columns, width)
+}
+
+/// `.bento-feat`'s padding, gap and cover side, and its title's size and
+/// line height (all smaller on a phone).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Feat {
+    pub pad: f32,
+    pub gap: f32,
+    pub art: f32,
+    pub title_size: f32,
+    pub title_lh: f32,
+}
+
+impl Feat {
+    pub fn of(fit: Fit) -> Feat {
+        let (pad, gap, art) = if fit.small { (16.0, 16.0, 112.0) } else { (20.0, 20.0, 208.0) };
+        let (title_size, title_lh) = if fit.small { (20.0, 24.0) } else { (24.0, 28.8) };
+        Feat { pad, gap, art, title_size, title_lh }
+    }
+
+    /// The tile's height with a title of `lines` lines: the label, title,
+    /// artists, the plays line and the play button, or the cover when that's
+    /// taller, inside the padding.
+    pub fn need(self, lines: f32) -> f32 {
+        let body_h = LH14 + 6.0 + lines * self.title_lh + 2.0 + LH14 + 12.0 + LH14 + 16.0 + 40.0;
+        2.0 * self.pad + self.art.max(body_h)
+    }
+}
+
+/// `.bento-minis` in a tile `width` wide (the cards' own 8 px padding lines
+/// their covers up with the tile's edge) and its cards' column: four to the
+/// tile, eight when the tile spans a wide panel `alone`, two and a bit on a
+/// phone.
+pub(super) fn minis(t: &Theme, width: f32, alone: bool, fit: Fit) -> (f32, f32) {
+    let minis = width - 2.0 * PAD + 16.0;
+    let gap = t.gap();
+    let col_w = if fit.small {
+        (minis - 2.0 * gap) / 2.3
+    } else if alone && fit.wide {
+        (minis - 7.0 * gap) / 8.0
+    } else {
+        (minis - 3.0 * gap) / 4.0
+    };
+    (minis, col_w)
 }
 
 #[cfg(test)]

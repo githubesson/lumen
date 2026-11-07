@@ -9,10 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::client::{ApiResult, Behavior, Body, Client, Notify, query};
+use super::de::string_or_number;
 use super::types::{Me, Role};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct Invite {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub id: String,
     #[serde(default)]
     pub token: Option<String>,
@@ -32,7 +34,9 @@ pub struct Invite {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct AdminUser {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub id: String,
+    #[serde(default)]
     pub username: String,
     #[serde(default)]
     pub role: Role,

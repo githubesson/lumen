@@ -38,9 +38,6 @@ impl SearchType {
         SEARCH_TYPE_OPTIONS.iter().find(|(t, _)| t.as_str() == value).map(|(t, _)| *t)
     }
 
-    pub fn label(self) -> &'static str {
-        SEARCH_TYPE_OPTIONS.iter().find(|(t, _)| *t == self).map_or("", |(_, l)| l)
-    }
 }
 
 /// `SEARCH_TYPE_OPTIONS`: the type picker, in order.
@@ -173,22 +170,6 @@ pub fn search_tracks(c: &Client, params: &SearchParams) -> ApiResult<SearchRespo
     search(c, &search_tracks_params(params))
 }
 
-/// Where the next page starts (`nextPageParam`).
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct NextPage {
-    pub offset: u64,
-    pub search_offsets: Option<SearchOffsets>,
-}
-
-/// `nextPageParam`: search pages follow their cursors (none left means
-/// done); other lists page by offset until `loaded` reaches the total.
-pub fn next_page_param<T>(last: &Page<T>, loaded: u64) -> Option<NextPage> {
-    if let Some(offsets) = &last.next_offsets {
-        return (!offsets.is_empty()).then(|| NextPage { offset: loaded, search_offsets: Some(offsets.clone()) });
-    }
-    (loaded < last.total).then_some(NextPage { offset: loaded, search_offsets: None })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,21 +293,6 @@ mod tests {
         assert_eq!(param(&url, "local_offset"), None);
     }
 
-    // paging.test.ts
-    #[test]
-    fn next_page_param_follows_totals_and_cursors() {
-        let page = |total: u64, next: Option<SearchOffsets>| Page::<()> { total, next_offsets: next, ..Default::default() };
-        assert_eq!(next_page_param(&page(120, None), 50), Some(NextPage { offset: 50, search_offsets: None }));
-        assert_eq!(next_page_param(&page(120, None), 120), None);
-        assert_eq!(next_page_param(&page(0, None), 0), None);
-        let cursors = offsets(&[("local", 25), ("tidal", 10)]);
-        assert_eq!(
-            next_page_param(&page(25, Some(cursors.clone())), 35),
-            Some(NextPage { offset: 35, search_offsets: Some(cursors) })
-        );
-        assert_eq!(next_page_param(&page(100, Some(SearchOffsets::new())), 35), None);
-    }
-
     #[test]
     fn merges_warnings_once_each() {
         let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -343,6 +309,5 @@ mod tests {
     fn search_types_round_trip() {
         assert_eq!(SearchType::parse("track"), Some(SearchType::Track));
         assert_eq!(SearchType::parse("songs"), None);
-        assert_eq!(SearchType::Track.label(), "Songs");
     }
 }

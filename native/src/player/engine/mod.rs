@@ -5,6 +5,9 @@
 //! and fills a ring buffer the [`mixer`] plays from in the output device's
 //! callback ([`output`]). [`EngineAdapter`] drives it all from the UI
 //! thread, as the player core's [`AudioAdapter`].
+//!
+//! The callback never waits or allocates: the mixer's events and the voices
+//! it lets go of leave through rings made up front ([`mixer::Outbox`]).
 
 pub mod decoder;
 pub mod hls;
@@ -23,7 +26,7 @@ use crate::api::Client;
 use crate::net::LateWaker;
 
 use super::adapter::{AdapterEvent, AudioAdapter};
-use mixer::{MixVoice, Mixer, MixerCmd};
+use mixer::{MixVoice, Mixer, MixerCmd, Outbox};
 use output::{OutputCmd, OutputShared};
 
 /// The output's sample rate and channel count; voices decode to it.
@@ -113,12 +116,11 @@ pub enum EngineEvent {
     Error { id: u64, detail: String },
     Played { seq: u64 },
     Paused { seq: u64 },
-    /// The output devices or the output's error changed.
-    Output,
 }
 
-/// Where the engine's threads send events: a channel the UI drains, and
-/// the waker that has it look.
+/// Where the decoder threads send events: a channel the UI drains, and the
+/// waker that has it look. (The mixer, on the audio thread, has its
+/// [`Outbox`].)
 #[derive(Clone)]
 pub struct EventSink {
     tx: Sender<EngineEvent>,
@@ -134,40 +136,51 @@ impl EventSink {
         let _ = self.tx.send(event);
         self.waker.wake();
     }
-    #[cfg(test)]
-    pub fn for_tests() -> (EventSink, Receiver<EngineEvent>) {
-        EventSink::new(LateWaker::default())
-    }
 }
 
 /// The engine's threads and the handles to them.
 pub struct Engine {
     mixer_tx: Sender<MixerCmd>,
+    /// The tests render the mix by hand; the output thread has its own handle.
+    #[cfg(test)]
     mixer: Arc<Mutex<Mixer>>,
     levels: Arc<Levels>,
     output_tx: Sender<OutputCmd>,
     pub output: Arc<OutputShared>,
     events: Receiver<EngineEvent>,
+    /// The mixer's events (read here; its porter wakes the UI for them).
+    mixer_events: rtrb::Consumer<EngineEvent>,
     sink: EventSink,
 }
 
 impl Engine {
     /// Start the engine on the output device `device` (None: the system default).
     pub fn start(waker: LateWaker, device: Option<String>) -> Engine {
-        Engine::with_output(waker, |mixer, shared, sink| output::start(mixer, shared, sink, device))
+        Engine::with_output(waker, |mixer, shared, waker| output::start(mixer, shared, waker, device))
     }
 
     fn with_output(
         waker: LateWaker,
-        start: impl FnOnce(Arc<Mutex<Mixer>>, Arc<OutputShared>, EventSink) -> Sender<OutputCmd>,
+        start: impl FnOnce(Arc<Mutex<Mixer>>, Arc<OutputShared>, LateWaker) -> Sender<OutputCmd>,
     ) -> Engine {
-        let (sink, events) = EventSink::new(waker);
+        let (sink, events) = EventSink::new(waker.clone());
+        let (outbox, mixer_events) = Outbox::start(waker.clone());
         let (mixer_tx, mixer_rx) = channel();
         let levels = Arc::new(Levels::default());
         let shared = Arc::new(OutputShared::default());
-        let mixer = Arc::new(Mutex::new(Mixer::new(OutFormat::default(), mixer_rx, levels.clone(), sink.clone())));
-        let output_tx = start(mixer.clone(), shared.clone(), sink.clone());
-        Engine { mixer_tx, mixer, levels, output_tx, output: shared, events, sink }
+        let mixer = Arc::new(Mutex::new(Mixer::new(OutFormat::default(), mixer_rx, levels.clone(), outbox)));
+        let output_tx = start(mixer.clone(), shared.clone(), waker);
+        Engine {
+            mixer_tx,
+            #[cfg(test)]
+            mixer,
+            levels,
+            output_tx,
+            output: shared,
+            events,
+            mixer_events,
+            sink,
+        }
     }
 
     /// An engine nothing plays: the test renders the mix itself.
@@ -240,8 +253,6 @@ pub struct EngineAdapter {
     seek_epoch: u64,
     error_detail: Option<String>,
     queue: VecDeque<EngineEvent>,
-    /// The output's devices or error changed.
-    pub output_changed: bool,
 }
 
 impl EngineAdapter {
@@ -260,7 +271,6 @@ impl EngineAdapter {
             seek_epoch: 0,
             error_detail: None,
             queue: VecDeque::new(),
-            output_changed: false,
         }
     }
 
@@ -331,6 +341,7 @@ impl EngineAdapter {
 }
 
 impl AudioAdapter for EngineAdapter {
+    /// Drops the prepared voice too (see [`AudioAdapter::load`]).
     fn load(&mut self, url: &str) {
         self.auto = None;
         self.outgoing = None;
@@ -433,6 +444,9 @@ impl AudioAdapter for EngineAdapter {
             self.outgoing = None;
         }
         self.queue.extend(self.engine.events.try_iter());
+        while let Ok(event) = self.engine.mixer_events.pop() {
+            self.queue.push_back(event);
+        }
         while let Some(event) = self.queue.pop_front() {
             let mapped = match event {
                 EngineEvent::Metadata { id } if self.is_active(id) => Some(AdapterEvent::LoadedMetadata),
@@ -456,10 +470,6 @@ impl AudioAdapter for EngineAdapter {
                 EngineEvent::Paused { seq } if seq == self.seq || seq == SYSTEM_PAUSE => {
                     self.playing = false;
                     Some(AdapterEvent::Pause)
-                }
-                EngineEvent::Output => {
-                    self.output_changed = true;
-                    None
                 }
                 _ => None,
             };

@@ -285,10 +285,6 @@ impl Theme {
     pub fn radius_xl(&self) -> f32 {
         self.radius * 1.4
     }
-    /// `--radius-2xl`.
-    pub fn radius_2xl(&self) -> f32 {
-        self.radius * 1.8
-    }
 
     /// `--row-h`.
     pub fn row_h(&self) -> f32 {
@@ -312,13 +308,6 @@ impl Theme {
             Density::Airy => 24.0,
             Density::Balanced => 20.0,
             Density::Dense => 16.0,
-        }
-    }
-    /// `--fs`, the body font size.
-    pub fn fs(&self) -> f32 {
-        match self.density {
-            Density::Dense => 13.0,
-            _ => 14.0,
         }
     }
 }

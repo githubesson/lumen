@@ -3,16 +3,14 @@
 //! every opening; only changed fields are sent.
 
 use rune::{El, TextEdit, col};
-use serde_json::{Map, Value, json};
 
-use super::{Which, grid_field, grid_row, input, loading, number_input, reset, save_cancel};
-use crate::api::TrackDetail;
+use super::{Which, grid_field, grid_row, input, number_input, reset, save_cancel};
 use crate::app::App;
-use crate::overlays::track_info::rows::display_artists;
+use crate::core::metadata_edit::{TrackEditForm, build_track_patch, track_edit_form};
 use crate::theme::Theme;
-use crate::ui::kit::{Dialog, error_banner};
+use crate::ui::kit::{Dialog, error_banner, loading_state};
 
-/// `TrackEditForm`, as fields.
+/// `TrackEditForm`, as the fields that edit it.
 #[derive(Default)]
 pub struct TrackForm {
     pub title: TextEdit,
@@ -25,66 +23,32 @@ pub struct TrackForm {
     pub disc_no: TextEdit,
 }
 
-fn num(n: Option<u64>) -> String {
-    n.filter(|n| *n > 0).map(|n| n.to_string()).unwrap_or_default()
-}
+impl TrackForm {
+    fn new(f: TrackEditForm) -> TrackForm {
+        TrackForm {
+            title: TextEdit::new(f.title),
+            artists: TextEdit::new(f.artists),
+            album_title: TextEdit::new(f.album_title),
+            album_artist: TextEdit::new(f.album_artist),
+            year: TextEdit::new(f.year),
+            genre: TextEdit::new(f.genre),
+            track_no: TextEdit::new(f.track_no),
+            disc_no: TextEdit::new(f.disc_no),
+        }
+    }
 
-/// `trackEditForm`: the inverse of [`build_patch`].
-pub fn form(t: &TrackDetail) -> TrackForm {
-    TrackForm {
-        title: TextEdit::new(t.title.clone()),
-        artists: TextEdit::new(display_artists(t)),
-        album_title: TextEdit::new(t.album_title.clone().unwrap_or_default()),
-        // album_artist isn't on TrackDetail, so it starts blank.
-        album_artist: TextEdit::new(""),
-        year: TextEdit::new(num(t.year.map(|y| y.max(0) as u64))),
-        genre: TextEdit::new(t.genre.clone().unwrap_or_default()),
-        track_no: TextEdit::new(num(t.track_no.map(u64::from))),
-        disc_no: TextEdit::new(num(t.disc_no.map(u64::from))),
+    fn values(&self) -> TrackEditForm {
+        TrackEditForm {
+            title: self.title.text.clone(),
+            artists: self.artists.text.clone(),
+            album_title: self.album_title.text.clone(),
+            album_artist: self.album_artist.text.clone(),
+            year: self.year.text.clone(),
+            genre: self.genre.text.clone(),
+            track_no: self.track_no.text.clone(),
+            disc_no: self.disc_no.text.clone(),
+        }
     }
-}
-
-fn int(s: &str) -> i64 {
-    s.trim().parse().unwrap_or(0)
-}
-
-/// `buildTrackPatch`: only the fields that changed.
-pub fn build_patch(t: &TrackDetail, f: &TrackForm) -> Map<String, Value> {
-    let mut p = Map::new();
-    let title = f.title.text.trim();
-    if !title.is_empty() && title != t.title {
-        p.insert("title".into(), json!(title));
-    }
-    let parsed: Vec<&str> = f.artists.text.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    let current: Vec<&str> = t.artists.iter().filter(|a| a.role != "composer").map(|a| a.name.as_str()).collect();
-    if parsed != current {
-        p.insert("artists".into(), json!(parsed));
-    }
-    let album = f.album_title.text.trim();
-    if album != t.album_title.as_deref().unwrap_or("") {
-        p.insert("album_title".into(), json!(album));
-    }
-    let album_artist = f.album_artist.text.trim();
-    if !album_artist.is_empty() {
-        p.insert("album_artist".into(), json!(album_artist));
-    }
-    let year = int(&f.year.text);
-    if t.year.map_or(0, i64::from) != year {
-        p.insert("year".into(), json!(year));
-    }
-    let genre = f.genre.text.trim();
-    if t.genre.as_deref().unwrap_or("") != genre {
-        p.insert("genre".into(), json!(genre));
-    }
-    let tn = int(&f.track_no.text);
-    if t.track_no.map_or(0, i64::from) != tn {
-        p.insert("track_no".into(), json!(tn));
-    }
-    let dn = int(&f.disc_no.text);
-    if t.disc_no.map_or(0, i64::from) != dn {
-        p.insert("disc_no".into(), json!(dn));
-    }
-    p
 }
 
 pub fn open(app: &mut App, track_id: &str) {
@@ -101,7 +65,7 @@ pub fn open(app: &mut App, track_id: &str) {
             }
             match result {
                 Ok(t) => {
-                    s.track_form = form(&t);
+                    s.track_form = TrackForm::new(track_edit_form(&t));
                     s.track = Some(t);
                 }
                 Err(e) => s.load_error = Some(crate::overlays::error_message(&e, "Failed to load track.")),
@@ -111,34 +75,14 @@ pub fn open(app: &mut App, track_id: &str) {
 }
 
 fn save(app: &mut App) {
-    let s = &mut app.overlays.edit;
-    let (Some(track), Some(id)) = (s.track.clone(), s.track_id.clone()) else { return };
+    let s = &app.overlays.edit;
+    let (Some(track), Some(id)) = (&s.track, s.track_id.clone()) else { return };
     // `required`: an empty title doesn't submit.
     if s.busy || s.track_form.title.text.trim().is_empty() {
         return;
     }
-    let patch = build_patch(&track, &s.track_form);
-    s.busy = true;
-    s.error = None;
-    let nonce = s.nonce;
-    let Some(client) = app.client.clone() else { return };
-    app.net.run(
-        move || crate::api::library::update_track(&client, &id, &serde_json::from_value(Value::Object(patch)).map_err(|e| crate::api::ApiError::local(0, e.to_string()))?),
-        move |app, result| {
-            let s = &mut app.overlays.edit;
-            s.busy = false;
-            if s.nonce != nonce {
-                return;
-            }
-            match result {
-                Ok(_) => {
-                    crate::pages::library_changed(app);
-                    super::close(app);
-                }
-                Err(e) => s.error = Some(crate::overlays::error_message(&e, "Save failed.")),
-            }
-        },
-    );
+    let patch = build_track_patch(track, &s.track_form.values());
+    super::submit(app, move |client| crate::api::library::update_track(client, &id, &patch).map(drop));
 }
 
 pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
@@ -199,43 +143,10 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
         None => {
             form_body = form_body.child(match &s.load_error {
                 Some(e) => error_banner(t, e),
-                None => loading(t),
+                None => loading_state(t, "Loading…"),
             });
             form_body = form_body.child(save_cancel(t, false, true, save));
         }
     }
     Dialog::new("edit-track", form_body).title("Edit track").build(t, window, super::dismiss)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn detail() -> TrackDetail {
-        serde_json::from_value(json!({
-            "id": "t1", "title": "Song", "album_title": "LP", "year": 2020, "track_no": 3,
-            "artists": [{"id": "a", "name": "A", "role": "primary"}, {"id": "c", "name": "C", "role": "composer"}]
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn an_untouched_form_sends_nothing() {
-        let t = detail();
-        assert!(build_patch(&t, &form(&t)).is_empty());
-    }
-
-    #[test]
-    fn only_changes_go_out() {
-        let t = detail();
-        let mut f = form(&t);
-        f.artists = TextEdit::new("A, B");
-        f.year = TextEdit::new("");
-        f.album_artist = TextEdit::new("Various");
-        let p = build_patch(&t, &f);
-        assert_eq!(p.get("artists"), Some(&json!(["A", "B"])));
-        assert_eq!(p.get("year"), Some(&json!(0)));
-        assert_eq!(p.get("album_artist"), Some(&json!("Various")));
-        assert_eq!(p.len(), 3);
-    }
 }

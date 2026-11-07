@@ -2,14 +2,14 @@
 //! TIDAL auto-download for admins (`detail.css` `.playlist-settings`). The
 //! text details save together; the cover and the switch apply at once.
 
-use rune::{Cursor, El, col, row};
+use rune::{El, col, row};
 
 use crate::api::{Playlist, Visibility};
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, setting_row};
+use crate::ui::forms::{Desc, SelectOption, setting_row, setting_select};
 use crate::ui::kit::{error_banner, switch};
-use crate::ui::{Btn, font, ico, icons as i, input_with, line, with_lh};
+use crate::ui::{Btn, icons as i, input_with};
 
 use super::collaborators::surface;
 use super::detail::{self, Detail, detail_mut};
@@ -128,38 +128,11 @@ fn set_visibility(app: &mut App, value: &str) {
     }
 }
 
-/// `<Select variant="minimal">` in a settings row: the value in the
-/// foreground and the muted chevrons, padded as `.settings-row-control`
-/// pads it.
+/// The visibility's `<Select variant="minimal">`.
 fn visibility_select(app: &App, t: &Theme, value: Visibility) -> El {
-    const KEY: &str = "playlist-visibility";
-    let open = app.select.as_ref().is_some_and(|s| s.key == KEY);
-    let spec = OpenSelect::new(
-        KEY,
-        vec![SelectOption::new("private", "Private"), SelectOption::new("collaborative", "Collaborative")],
-        if value == Visibility::Collaborative { "collaborative" } else { "private" },
-        SelectVariant::Minimal,
-        set_visibility,
-    );
-    let label = if value == Visibility::Collaborative { "Collaborative" } else { "Private" };
-    row()
-        .key(KEY)
-        .pl(6.0)
-        .pr(2.0)
-        .py(4.0)
-        .gap(4.0)
-        .items_center()
-        .radius(t.radius_md())
-        .role("combobox")
-        .label("Visibility")
-        .expanded(open)
-        .cursor(Cursor::Pointer)
-        .focusable(true)
-        .child(line(label, with_lh(font(14.0, 400.0), 20.0), t.c.foreground))
-        .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground))
-        .on_press(move |app: &mut App| {
-            app.select = if app.select.as_ref().is_some_and(|s| s.key == spec.key) { None } else { Some(spec.clone()) };
-        })
+    let options = vec![SelectOption::new("private", "Private"), SelectOption::new("collaborative", "Collaborative")];
+    let value = if value == Visibility::Collaborative { "collaborative" } else { "private" };
+    setting_select(app, t, "playlist-visibility", options, value, false, set_visibility).label("Visibility")
 }
 
 /// `.surface.playlist-settings-card`.
@@ -210,7 +183,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, p: &Playlist, perms: &Permissions,
             .child(setting_row(
                 t,
                 "Cover",
-                Some(if custom { "Your image. JPEG, PNG or WebP." } else { "The first track's art, until you choose an image." }),
+                Some(Desc::Text(if custom { "Your image. JPEG, PNG or WebP." } else { "The first track's art, until you choose an image." }.into())),
                 Some(buttons),
                 None,
                 None,
@@ -221,11 +194,14 @@ pub fn view(app: &App, t: &Theme, d: &Detail, p: &Playlist, perms: &Permissions,
             .child(setting_row(
                 t,
                 "Visibility",
-                Some(if v.visibility == Visibility::Collaborative {
-                    "People you invite can see it, and editors can add tracks."
-                } else {
-                    "Only you can see it."
-                }),
+                Some(Desc::Text(
+                    if v.visibility == Visibility::Collaborative {
+                        "People you invite can see it, and editors can add tracks."
+                    } else {
+                        "Only you can see it."
+                    }
+                    .into(),
+                )),
                 Some(visibility_select(app, t, v.visibility)),
                 None,
                 None,
@@ -249,7 +225,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, p: &Playlist, perms: &Permissions,
             desc.push_str(&format!(" {} still queued.", pluralize(queued as usize, "track")));
         }
         let toggle = switch(t, "playlist-tidal", auto, d.saving_auto, detail::toggle_auto_download);
-        let body = setting_row(t, "Save TIDAL tracks to the library", Some(&desc), Some(toggle), None, None, true);
+        let body = setting_row(t, "Save TIDAL tracks to the library", Some(Desc::Text(desc)), Some(toggle), None, None, true);
         panel = add(panel, "Downloads", card(t, body));
     }
     if perms.can_delete {
@@ -259,7 +235,7 @@ pub fn view(app: &App, t: &Theme, d: &Detail, p: &Playlist, perms: &Permissions,
             "This can't be undone."
         };
         let delete = Btn::new("playlist-delete", "Delete").danger().small().icon(&i::TRASH_2).build(t).on_press(detail::delete);
-        panel = add(panel, "Danger zone", card(t, setting_row(t, "Delete playlist", Some(desc), Some(delete), None, None, true)));
+        panel = add(panel, "Danger zone", card(t, setting_row(t, "Delete playlist", Some(Desc::Text(desc.into())), Some(delete), None, None, true)));
     }
     panel
 }

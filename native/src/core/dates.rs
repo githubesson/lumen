@@ -13,6 +13,8 @@ pub const MONTHS_LONG: [&str; 12] = [
     "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
     "November", "December",
 ];
+/// By [`Parts::weekday`] (0 = Sunday).
+pub const WEEKDAYS_SHORT: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /// `Date.now()`.
 pub fn now_ms() -> i64 {
@@ -88,6 +90,7 @@ pub fn utc_parts(ms: i64) -> Parts {
 }
 
 /// `new Date(year, month0, day, hour)`: a local wall-clock time.
+#[cfg(test)]
 pub fn local_ms(year: i64, month0: i64, day: i64, hour: i64) -> i64 {
     let wall = utc(year, month0, day) + hour * 3_600_000;
     wall - local_offset_ms(wall - local_offset_ms(wall))
@@ -219,17 +222,6 @@ pub fn medium_date(p: &Parts) -> String {
     format!("{} {}, {}", MONTHS_SHORT[p.month as usize - 1], p.day, p.year)
 }
 
-/// `timeStyle: "short"` in en-US: "3:45 PM".
-pub fn short_time(p: &Parts) -> String {
-    let (h, ampm) = match p.hour {
-        0 => (12, "AM"),
-        1..=11 => (p.hour, "AM"),
-        12 => (12, "PM"),
-        h => (h - 12, "PM"),
-    };
-    format!("{h}:{:02}\u{202f}{ampm}", p.minute)
-}
-
 /// The local time zone's offset from UTC at `ms`, in milliseconds (positive
 /// east of Greenwich). Zero when the system can't say.
 pub fn local_offset_ms(ms: i64) -> i64 {
@@ -308,6 +300,46 @@ mod sys {
     }
 }
 
+/// A local date and time as a person types it where the web has a
+/// `datetime-local` field (`new Date(text)` reads these as local time too):
+/// `2026-11-20T09:30`, `11/20/2026, 9:30 AM`, `11/20/2026 21:30`. A date
+/// needs its time here; `None` for anything else.
+pub fn parse_local_input(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let (date, time) = match s.find(['T', ' ', ',']) {
+        Some(at) => (&s[..at], s[at + 1..].trim_start_matches([',', ' '])),
+        None => (s, ""),
+    };
+    let (year, month, day) = if date.contains('-') {
+        let p: Vec<&str> = date.split('-').collect();
+        (p.first()?.parse::<i64>().ok()?, p.get(1)?.parse::<u32>().ok()?, p.get(2)?.parse::<u32>().ok()?)
+    } else {
+        let p: Vec<&str> = date.split('/').collect();
+        (p.get(2)?.parse::<i64>().ok()?, p.first()?.parse::<u32>().ok()?, p.get(1)?.parse::<u32>().ok()?)
+    };
+    let time = time.trim();
+    let (clock, pm) = match time.to_ascii_uppercase() {
+        t if t.ends_with("PM") => (time[..time.len() - 2].trim(), Some(true)),
+        t if t.ends_with("AM") => (time[..time.len() - 2].trim(), Some(false)),
+        _ => (time, None),
+    };
+    let (h, m) = clock.split_once(':')?;
+    let (mut hour, minute) = (h.trim().parse::<u32>().ok()?, m.trim().parse::<u32>().ok()?);
+    match pm {
+        Some(pm) if (1..=12).contains(&hour) => hour = hour % 12 + if pm { 12 } else { 0 },
+        Some(_) => return None,
+        None => {}
+    }
+    if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) || hour > 23 || minute > 59 {
+        return None;
+    }
+    if !(1..=275_760).contains(&year) {
+        return None;
+    }
+    let wall = days_from_civil(year, month, day) * DAY_MS + (hour as i64 * 60 + minute as i64) * 60_000;
+    Some(wall - local_offset_ms(wall - local_offset_ms(wall)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,11 +386,20 @@ mod tests {
     }
 
     #[test]
+    fn typed_local_dates() {
+        let at = local_ms(2026, 10, 20, 21) + 30 * 60_000;
+        assert_eq!(parse_local_input("11/20/2026, 9:30 PM"), Some(at));
+        assert_eq!(parse_local_input("11/20/2026 21:30"), Some(at));
+        assert_eq!(parse_local_input("2026-11-20T21:30"), Some(at));
+        assert_eq!(parse_local_input("11/20/2026, 12:05 AM"), Some(local_ms(2026, 10, 20, 0) + 5 * 60_000));
+        for bad in ["", "soon", "11/20/2026", "02/30/2026, 9:30 AM", "11/20/2026, 13:00 PM", "11/20/2026, 9:60"] {
+            assert_eq!(parse_local_input(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
     fn en_us_strings() {
         let p = utc_parts(parse("2026-09-04T15:45:00Z").unwrap());
         assert_eq!(medium_date(&p), "Sep 4, 2026");
-        assert_eq!(short_time(&p), "3:45\u{202f}PM");
-        let midnight = utc_parts(parse("2026-09-04T00:05:00Z").unwrap());
-        assert_eq!(short_time(&midnight), "12:05\u{202f}AM");
     }
 }

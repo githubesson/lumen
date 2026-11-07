@@ -60,11 +60,10 @@ pub fn enter(app: &mut App, loc: &Location) {
 }
 
 /// `libraryChanged.emit()`: an upload, an edit, a delete or a rescan may
-/// have changed the library. The core event fires, and the lists on screen
-/// read their rows again (the web's paginated lists listen; the album,
-/// artist and playlist pages show the edit).
+/// have changed the library, so the lists on screen read their rows again
+/// (the web's paginated lists listen; the album, artist and playlist pages
+/// show the edit).
 pub fn library_changed(app: &mut App) {
-    crate::core::events::LIBRARY_CHANGED.emit();
     library::library_changed(app);
     playlists::library_changed(app);
     home::library_changed(app);

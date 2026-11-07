@@ -1,15 +1,15 @@
 //! `PlaylistNew.tsx` (with `RadioCardOption.tsx`), at `/playlists/new`.
 
-use rune::{Color, Cursor, El, TextEdit, col, el, row, text};
+use rune::{El, TextEdit, col, el, row, text};
 
 use crate::api::Visibility;
 use crate::app::App;
-use crate::theme::{Theme, color_mix};
+use crate::theme::Theme;
 use crate::ui::forms::field;
 use crate::ui::kit::{error_banner, eyebrow};
-use crate::ui::{Btn, css_border, font, input_with};
+use crate::ui::{Btn, font, input_with};
 
-use super::logic::{ch60, details_payload, error_message, is_valid_name};
+use super::logic::{details_payload, error_message, is_valid_name};
 
 pub struct State {
     pub name: TextEdit,
@@ -69,50 +69,6 @@ fn submit(app: &mut App) {
     );
 }
 
-/// `RadioCardOption`: a bordered card with a radio, its label and a line
-/// under it; the checked one is outlined in the primary colour.
-pub fn radio_card(t: &Theme, key: &str, checked: bool, label: &str, description: &str, on_pick: impl Fn(&mut App) + 'static) -> El {
-    let r = t.radius_lg();
-    let mut card = css_border(row(), 1.0, if checked { t.c.primary } else { t.c.border }, r)
-        .key(key)
-        .w_full()
-        .padding(13.0)
-        .gap(12.0)
-        .items_start()
-        .radius(r)
-        .role("radio")
-        .checked(checked)
-        .label(label.to_string())
-        .cursor(Cursor::Pointer)
-        .focusable(true)
-        .on_press(on_pick);
-    if checked {
-        card = card.fill(color_mix(t.c.primary, 0.05, Color::TRANSPARENT));
-    }
-    card.child(radio(t, checked).mt(2.0)).child(
-        col()
-            .grow(1.0)
-            .min_w(0.0)
-            .child(text(label).font(font(14.0, 500.0)).color(t.c.foreground).h(20.3))
-            .child(text(description).font(font(12.0, 400.0)).color(t.c.muted_foreground).h(17.4).mt(2.0)),
-    )
-}
-
-/// A native `<input type="radio">` with `accent-color: var(--primary)`, as
-/// Chromium draws it: a 13 px ring on the field colour; checked, the ring and
-/// a dot in the accent with a field-coloured gap between them.
-pub fn radio(t: &Theme, checked: bool) -> El {
-    let ring = if t.dark() { rune::color::hex("#858585").unwrap() } else { rune::color::hex("#767676").unwrap() };
-    let field = if t.dark() { rune::color::hex("#3b3b3b").unwrap() } else { Color::WHITE };
-    if checked {
-        el().size(13.0, 13.0).radius(6.5).fill(t.c.primary).center().child(
-            el().size(11.0, 11.0).radius(5.5).fill(field).center().child(el().size(8.6, 8.6).radius(4.3).fill(t.c.primary)),
-        )
-    } else {
-        css_border(el().size(13.0, 13.0).radius(6.5).fill(field), 1.0, ring, 6.5)
-    }
-}
-
 pub fn view(app: &App, t: &Theme, _cx: &mut rune::Cx<App>) -> El {
     let s = &app.pages.playlists.new;
     let name = input_with(t, "new-playlist-name", &s.name, "", |f| {
@@ -132,10 +88,10 @@ pub fn view(app: &App, t: &Theme, _cx: &mut rune::Cx<App>) -> El {
                 .w_full()
                 .gap(8.0)
                 .role("radiogroup")
-                .child(radio_card(t, "new-playlist-private", vis == Visibility::Private, "Private", "Only you can see or edit this playlist.", |a: &mut App| {
+                .child(crate::ui::native::radio_card(t, "new-playlist-private", vis == Visibility::Private, "Private", "Only you can see or edit this playlist.", |a: &mut App| {
                     a.pages.playlists.new.visibility = Visibility::Private
                 }))
-                .child(radio_card(
+                .child(crate::ui::native::radio_card(
                     t,
                     "new-playlist-collaborative",
                     vis == Visibility::Collaborative,
@@ -167,9 +123,9 @@ pub fn view(app: &App, t: &Theme, _cx: &mut rune::Cx<App>) -> El {
         .key("new-playlist-view")
         .w_full()
         .padding(t.pad())
-        .child(super::list::page_header(t, "New playlist", None, None))
+        .child(crate::ui::blocks::page_header(t, "New playlist", None, None))
         .child(
-            el().w_full().max_w(ch60(14.0)).mb(28.0).child(
+            el().w_full().max_w(crate::ui::ch(60.0, font(14.0, 400.0))).mb(28.0).child(
                 text("Playlists are private by default. Collaborative ones let you invite other users as viewers or editors.")
                     .font(font(14.0, 400.0))
                     .color(t.c.muted_foreground)

@@ -3,16 +3,16 @@
 
 use std::collections::HashSet;
 
-use rune::{Color, Cursor, El, KeyEvent, Tx, col, el, row, text};
+use rune::{Cursor, El, KeyEvent, Tx, col, el, row, text};
 
-use crate::api::{TrackListItem, TrackSource, media};
+use crate::api::{TrackListItem, TrackSource};
 use crate::app::App;
 use crate::format::{display_text, fmt_duration_ms};
 use crate::images::Cover;
 use crate::theme::Theme;
 use crate::ui::forms::search_input;
 use crate::ui::kit::{Dialog, scroll_area_fit};
-use crate::ui::{Btn, css_border, css_border_bottom, font, ico, icons as i, line, tnum};
+use crate::ui::{Btn, css_border_bottom, font, line, tnum};
 
 use super::detail::{self, detail, detail_mut};
 use super::logic::error_message;
@@ -142,7 +142,7 @@ fn submit(app: &mut App) {
 }
 
 /// Whether `t` is in the playlist already, under any of its ids.
-fn is_existing(t: &TrackListItem, existing: &HashSet<&str>) -> bool {
+fn is_existing(t: &TrackListItem, existing: &HashSet<String>) -> bool {
     let has = |id: String| existing.contains(id.as_str());
     if existing.contains(t.id.as_str()) {
         return true;
@@ -162,16 +162,6 @@ fn is_existing(t: &TrackListItem, existing: &HashSet<&str>) -> bool {
     }
 }
 
-/// A native checkbox with `accent-color: var(--primary)`, as Chromium draws it.
-fn native_checkbox(t: &Theme, checked: bool) -> El {
-    if checked {
-        return el().size(13.0, 13.0).radius(2.0).fill(t.c.primary).center().child(ico(&i::CHECK, 11.0, t.c.primary_foreground));
-    }
-    let ring = if t.dark() { rune::color::hex("#858585").unwrap() } else { rune::color::hex("#767676").unwrap() };
-    let field = if t.dark() { rune::color::hex("#3b3b3b").unwrap() } else { Color::WHITE };
-    css_border(el().size(13.0, 13.0).radius(2.0).fill(field), 1.0, ring, 2.0)
-}
-
 /// The `.mini-art` tile outside a table: the cover at its own size, its
 /// top-left corner showing (no `background-size` applies there).
 fn mini_art(app: &App, url: &str) -> El {
@@ -183,7 +173,7 @@ fn mini_art(app: &App, url: &str) -> El {
     tile
 }
 
-fn track_row(app: &App, t: &Theme, tr: &TrackListItem, existing: &HashSet<&str>, selected: bool) -> El {
+fn track_row(app: &App, t: &Theme, tr: &TrackListItem, existing: &HashSet<String>, selected: bool) -> El {
     let disabled = is_existing(tr, existing);
     let mut sub = display_text(tr.artist.as_deref(), "Unknown");
     if let Some(a) = tr.album_title.as_deref().filter(|a| !a.is_empty()) {
@@ -195,7 +185,7 @@ fn track_row(app: &App, t: &Theme, tr: &TrackListItem, existing: &HashSet<&str>,
     if disabled {
         sub.push_str(" - already added");
     }
-    let url = media::track_cover(&tr.id, tr.album_id.as_deref(), tr.cover_url.as_deref(), None);
+    let url = tr.cover_at(None);
     let id = tr.id.clone();
     let mut r = row()
         .key(format!("add-track-{}", tr.id))
@@ -208,7 +198,7 @@ fn track_row(app: &App, t: &Theme, tr: &TrackListItem, existing: &HashSet<&str>,
         .role("checkbox")
         .checked(selected)
         .label(display_text(Some(&tr.title), ""))
-        .child(native_checkbox(t, selected))
+        .child(crate::ui::native::checkbox(t, selected))
         .child(mini_art(app, &url))
         .child(
             col()
@@ -230,7 +220,7 @@ fn track_row(app: &App, t: &Theme, tr: &TrackListItem, existing: &HashSet<&str>,
 pub fn view(app: &App, t: &Theme, cx: &mut rune::Cx<App>, window: [f32; 2]) -> Option<El> {
     let d = detail(app)?;
     let s = state(app).filter(|s| s.open)?;
-    let existing: HashSet<&str> = d.tracks.as_deref().unwrap_or(&[]).iter().map(|e| e.track_id.as_str()).collect();
+    let existing = &d.ids;
     let search = search_input(t, "add-tracks-search", &app.pages.playlists.fields.add_query, "Search local + TIDAL", Some(320.0), |f| {
         f.label("Search tracks")
             .on_edit(|a: &mut App| &mut a.pages.playlists.fields.add_query)
@@ -245,7 +235,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut rune::Cx<App>, window: [f32; 2]) -> O
     });
     let mut list = col().w_full().mt(12.0);
     for tr in &s.tracks {
-        list = list.child(track_row(app, t, tr, &existing, s.selected.contains(&tr.id)));
+        list = list.child(track_row(app, t, tr, existing, s.selected.contains(&tr.id)));
     }
     // The panel is at most 80% of the window: its borders, the 57 px header
     // and the 61 px footer leave the rest to the list.
@@ -267,9 +257,8 @@ pub fn view(app: &App, t: &Theme, cx: &mut rune::Cx<App>, window: [f32; 2]) -> O
         .disabled(!can_add)
         .build(t);
     let add = if can_add { add.on_press(submit) } else { add };
-    let footer = row()
+    let footer = crate::ui::css_border_top(row(), 1.0, t.c.border)
         .w_full()
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert())
         .px(18.0)
         .pt(15.0)
         .pb(14.0)
@@ -287,7 +276,7 @@ mod tests {
 
     #[test]
     fn already_added_under_any_id() {
-        let existing: HashSet<&str> = ["t1", "local:42", "tidal:9"].into_iter().collect();
+        let existing: HashSet<String> = ["t1", "local:42", "tidal:9"].into_iter().map(String::from).collect();
         let track = |id: &str, db: Option<&str>, source: TrackSource, source_id: Option<&str>| TrackListItem {
             id: id.into(),
             db_track_id: db.map(Into::into),

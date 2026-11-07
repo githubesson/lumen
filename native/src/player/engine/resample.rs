@@ -27,14 +27,21 @@ impl Pipeline {
         self.src_rate == src_rate && self.src_channels == src_channels.max(1) && self.out == out
     }
 
-    /// Convert interleaved source samples; the output is interleaved at the output format.
-    pub fn process(&mut self, input: &[f32]) -> &[f32] {
-        map_channels(input, self.src_channels, self.out.channels, &mut self.mapped);
+    /// Convert interleaved source samples; the output is interleaved at the
+    /// output format. Samples that need neither step come back as they are.
+    pub fn process<'a>(&'a mut self, input: &'a [f32]) -> &'a [f32] {
+        let mapped = if self.src_channels == self.out.channels {
+            // Whole frames, as `map_channels` keeps.
+            &input[..input.len() / self.src_channels * self.src_channels]
+        } else {
+            map_channels(input, self.src_channels, self.out.channels, &mut self.mapped);
+            &self.mapped
+        };
         match &mut self.resampler {
-            None => &self.mapped,
+            None => mapped,
             Some(r) => {
                 self.buf.clear();
-                r.push(&self.mapped, &mut self.buf);
+                r.push(mapped, &mut self.buf);
                 &self.buf
             }
         }

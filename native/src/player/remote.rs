@@ -47,6 +47,20 @@ pub struct CommandResult {
     pub error: Option<String>,
 }
 
+impl CommandResult {
+    /// A command that failed on this side: never sent (`disconnected`), or
+    /// never answered (`timeout`).
+    pub fn failed(command_id: String, source: &str, target: &str, status: &str, error: &str) -> CommandResult {
+        CommandResult {
+            command_id,
+            source_device_id: source.into(),
+            target_device_id: target.into(),
+            status: status.into(),
+            error: Some(error.into()),
+        }
+    }
+}
+
 /// `RemotePlaybackControlEvent`: a command another device applied here.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteControlEvent {
@@ -61,9 +75,15 @@ pub const REMOTE_CONTROL_INDICATOR: Duration = Duration::from_secs(6);
 /// Minimum gap between `set_volume` commands to a remote device.
 pub const REMOTE_VOLUME_INTERVAL: Duration = Duration::from_millis(80);
 
-/// `filterRemoteDevices`: devices other than this one, online, accepting control.
+/// Whether `filterRemoteDevices` keeps `device`: another device than this
+/// one, online, accepting control.
+pub fn is_remote_device(device: &PlaybackDevice, self_id: Option<&str>) -> bool {
+    Some(device.device_id.as_str()) != self_id && device.online && device.control_enabled
+}
+
+/// `filterRemoteDevices`.
 pub fn filter_remote_devices(devices: &[PlaybackDevice], self_id: Option<&str>) -> Vec<PlaybackDevice> {
-    devices.iter().filter(|d| Some(d.device_id.as_str()) != self_id && d.online && d.control_enabled).cloned().collect()
+    devices.iter().filter(|d| is_remote_device(d, self_id)).cloned().collect()
 }
 
 /// `optimisticControlledState`: the state after a command the target accepted.
@@ -85,18 +105,17 @@ pub fn build_remote_queue(track: &TrackListItem, queue: &[TrackListItem]) -> Vec
     let playable: Vec<TrackListItem> = queue.iter().filter(|t| t.unavailable != Some(true)).cloned().collect();
     let source = if playable.is_empty() { vec![track.clone()] } else { playable };
     let selected = source.iter().position(|t| t.id == track.id).unwrap_or(0);
-    let start = (selected as i64 - 24).min(source.len() as i64 - 50).max(0) as usize;
-    let window: Vec<TrackListItem> = source[start..(start + 50).min(source.len())].to_vec();
+    let window = source[super::queue_sync::queue_window(selected, source.len())].to_vec();
     if window.iter().any(|t| t.id == track.id) { window } else { vec![track.clone()] }
 }
 
 /// `remoteActivityTime`: the target's position, extrapolated from its
-/// heartbeat while it plays, capped at the track's end.
-pub fn remote_activity_time(activity: Option<&PlaybackActivity>, now_ms: u64) -> (f64, f64) {
+/// heartbeat (sent at `updated_ms`, its `updated_at`) while it plays,
+/// capped at the track's end.
+pub fn remote_activity_time(activity: Option<&PlaybackActivity>, updated_ms: Option<u64>, now_ms: u64) -> (f64, f64) {
     let Some(a) = activity else { return (0.0, 0.0) };
     let duration = a.duration_sec.unwrap_or(0.0);
-    let updated = a.updated_at.as_deref().and_then(parse_rfc3339_ms);
-    let elapsed = match (a.is_playing, updated) {
+    let elapsed = match (a.is_playing, updated_ms) {
         (true, Some(at)) => (now_ms as f64 - at as f64) / 1000.0,
         _ => 0.0,
     };
@@ -104,8 +123,8 @@ pub fn remote_activity_time(activity: Option<&PlaybackActivity>, now_ms: u64) ->
 }
 
 /// The remote clock as the bar shows it: quantized to 0.25 s.
-pub fn remote_clock(activity: Option<&PlaybackActivity>, now_ms: u64) -> (f64, f64) {
-    let (t, d) = remote_activity_time(activity, now_ms);
+pub fn remote_clock(activity: Option<&PlaybackActivity>, updated_ms: Option<u64>, now_ms: u64) -> (f64, f64) {
+    let (t, d) = remote_activity_time(activity, updated_ms, now_ms);
     (quantize_time(t, 0.0), d)
 }
 
@@ -202,40 +221,9 @@ pub fn play_track_args(track: &TrackListItem, queue: &[TrackListItem]) -> Value 
     })
 }
 
-/// RFC 3339 (the server's `updated_at`) to ms since the epoch.
-pub fn parse_rfc3339_ms(s: &str) -> Option<u64> {
-    let b = s.as_bytes();
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't' | b' ') || b[13] != b':' || b[16] != b':' {
-        return None;
-    }
-    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
-    let (y, mo, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
-    let (h, mi, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    let mut rest = &s[19..];
-    let mut ms = 0i64;
-    if let Some(frac) = rest.strip_prefix('.') {
-        let digits = frac.bytes().take_while(u8::is_ascii_digit).count();
-        let first3: String = frac[..digits].chars().chain("000".chars()).take(3).collect();
-        ms = first3.parse().ok()?;
-        rest = &frac[digits..];
-    }
-    let offset_min = match rest {
-        "Z" | "z" => 0,
-        o if o.len() == 6 && (o.starts_with('+') || o.starts_with('-')) => {
-            let sign = if o.starts_with('-') { -1 } else { 1 };
-            sign * (o[1..3].parse::<i64>().ok()? * 60 + o[4..6].parse::<i64>().ok()?)
-        }
-        _ => return None,
-    };
-    // Days from civil (Howard Hinnant).
-    let y2 = if mo <= 2 { y - 1 } else { y };
-    let era = y2.div_euclid(400);
-    let yoe = y2 - era * 400;
-    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    let secs = days * 86_400 + h * 3600 + mi * 60 + sec - offset_min * 60;
-    u64::try_from(secs * 1000 + ms).ok()
+/// A server timestamp (RFC 3339, as `updated_at`) in ms since the epoch.
+pub fn timestamp_ms(s: &str) -> Option<u64> {
+    crate::core::dates::parse(s).and_then(|ms| u64::try_from(ms).ok())
 }
 
 /// Commands to the target, at most one `set_volume` per interval (the
@@ -332,22 +320,23 @@ mod tests {
     #[test]
     fn the_remote_clock_extrapolates_only_while_playing() {
         let mut a = PlaybackActivity { position_sec: 10.0, duration_sec: Some(100.0), is_playing: true, ..Default::default() };
-        a.updated_at = Some("2026-11-06T18:00:00Z".into());
-        let at = parse_rfc3339_ms("2026-11-06T18:00:05.5Z").unwrap();
-        assert_eq!(remote_activity_time(Some(&a), at), (15.5, 100.0));
+        let sent = timestamp_ms("2026-11-06T18:00:00Z");
+        let at = timestamp_ms("2026-11-06T18:00:05.5Z").unwrap();
+        assert_eq!(remote_activity_time(Some(&a), sent, at), (15.5, 100.0));
         a.is_playing = false;
-        assert_eq!(remote_activity_time(Some(&a), at), (10.0, 100.0));
+        assert_eq!(remote_activity_time(Some(&a), sent, at), (10.0, 100.0));
         a.is_playing = true;
-        assert_eq!(remote_activity_time(Some(&a), at + 200_000).0, 100.0);
-        assert_eq!(remote_activity_time(None, at), (0.0, 0.0));
+        assert_eq!(remote_activity_time(Some(&a), sent, at + 200_000).0, 100.0);
+        assert_eq!(remote_activity_time(Some(&a), None, at).0, 10.0, "an unknown send time adds nothing");
+        assert_eq!(remote_activity_time(None, sent, at), (0.0, 0.0));
     }
 
     #[test]
     fn parses_server_timestamps() {
-        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(parse_rfc3339_ms("2000-02-29T00:00:00.250Z"), Some(951_782_400_250));
-        assert_eq!(parse_rfc3339_ms("2026-11-06T19:07:15.012345678+01:00"), Some(1_793_988_435_012));
-        assert_eq!(parse_rfc3339_ms("yesterday"), None);
+        assert_eq!(timestamp_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(timestamp_ms("2000-02-29T00:00:00.250Z"), Some(951_782_400_250));
+        assert_eq!(timestamp_ms("2026-11-06T19:07:15.012345678+01:00"), Some(1_793_988_435_012));
+        assert_eq!(timestamp_ms("yesterday"), None);
     }
 
     #[test]
@@ -362,7 +351,7 @@ mod tests {
         assert_eq!(playback_device_kind("Android phone"), DeviceKind::Phone);
         assert_eq!(playback_device_kind("Web"), DeviceKind::Web);
         assert_eq!(playback_device_kind("Desktop"), DeviceKind::Desktop);
-        let failed = CommandResult { command_id: "c".into(), source_device_id: "s".into(), target_device_id: "t".into(), status: "timeout".into(), error: None };
+        let failed = CommandResult { error: None, ..CommandResult::failed("c".into(), "s", "t", "timeout", "") };
         assert_eq!(remote_command_error(Some(&failed)).as_deref(), Some("Command timeout"));
     }
 

@@ -226,15 +226,11 @@ fn chart_scale_and_labels() {
     assert_eq!(activity_chart_scale(&buckets(&[1; 31]), 6).1, 6);
     assert_eq!(activity_chart_scale(&[], 6), (0, 1));
     let date = utc(2026, 3, 7);
-    use ActivityLabelStyle::*;
-    assert_eq!(activity_bucket_label(date, ReplayBucket::Day, Compact), "7");
-    assert_eq!(activity_bucket_label(date, ReplayBucket::Month, Compact), "M");
-    assert_eq!(activity_bucket_label(date, ReplayBucket::Day, Verbose), "Mar 7");
-    assert_eq!(activity_bucket_label(date, ReplayBucket::Week, Verbose), "Mar 7");
-    assert_eq!(activity_bucket_label(date, ReplayBucket::Week, Compact), "Mar 7");
-    assert_eq!(activity_bucket_label(date, ReplayBucket::Month, Verbose), "Mar 26");
+    assert_eq!(activity_bucket_label(date, ReplayBucket::Day), "Mar 7");
+    assert_eq!(activity_bucket_label(date, ReplayBucket::Week), "Mar 7");
+    assert_eq!(activity_bucket_label(date, ReplayBucket::Month), "Mar 26");
     // Read in UTC whatever the local zone: a bucket at UTC midnight keeps its day.
-    assert_eq!(activity_bucket_label(dates::parse("2026-03-01T00:00:00Z").unwrap(), ReplayBucket::Month, Verbose), "Mar 26");
+    assert_eq!(activity_bucket_label(dates::parse("2026-03-01T00:00:00Z").unwrap(), ReplayBucket::Month), "Mar 26");
 }
 
 #[test]

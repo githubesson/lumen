@@ -37,15 +37,13 @@ pub fn set_mini_player(app: &mut App, tx: &mut Tx, on: bool) -> bool {
 }
 
 /// Which edge stays put when the window grows for a panel.
-pub fn mini_player_panel_anchor(app: &App) -> Anchor {
-    let _ = app;
+pub fn mini_player_panel_anchor() -> Anchor {
     anchor(window::mini_player_panel_anchor())
 }
 
 /// Grow the mini window for a panel, or shrink it back. The edge that
 /// stayed put, or None when the window can't change.
-pub fn set_mini_player_panel(app: &mut App, tx: &mut Tx, open: bool) -> Option<Anchor> {
-    let _ = app;
+pub fn set_mini_player_panel(tx: &mut Tx, open: bool) -> Option<Anchor> {
     if headless() {
         let size = if open { window::MINI_PLAYER_PANEL_SIZE } else { window::MINI_PLAYER_SIZE };
         tx.resize_window_instant((size.0 as f32, size.1 as f32));

@@ -6,18 +6,18 @@
 use rune::{Color, Cursor, El, el};
 
 use super::State;
-use super::snippet::{Grab, Window};
+use crate::core::share_snippet::{SnippetGrab as Grab, SnippetWindow};
 use crate::app::App;
 use crate::format::fmt_duration_sec;
 use crate::theme::{Theme, color_mix};
 use crate::ui::css_border;
 
-pub fn view(t: &Theme, s: &State, dur: f64, w: Window, width: f32) -> El {
+pub fn view(t: &Theme, s: &State, dur: f64, w: SnippetWindow, width: f32) -> El {
     // Positions are percentages of the padding box, inside the 1 px border.
     let inner = (width - 2.0).max(0.0);
     let pct = |sec: f64| if dur > 0.0 { (sec.clamp(0.0, dur) / dur) as f32 } else { 0.0 };
     let x_start = 1.0 + pct(s.start) * inner;
-    let x_end = 1.0 + pct(w.end) * inner;
+    let x_end = 1.0 + pct(w.end_sec) * inner;
     let playhead = 1.0 + pct(if s.playing { s.current } else { s.start }) * inner;
     let line = color_mix(t.c.primary, 0.65, Color::TRANSPARENT);
 
@@ -30,8 +30,8 @@ pub fn view(t: &Theme, s: &State, dur: f64, w: Window, width: f32) -> El {
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(line))
         .cursor(Cursor::Grab)
         .label("Move clip window")
-        .help(format!("{} to {}", fmt_duration_sec(s.start), fmt_duration_sec(w.end)))
-        .range_value(s.start, 0.0, w.max_start)
+        .help(format!("{} to {}", fmt_duration_sec(s.start), fmt_duration_sec(w.end_sec)))
+        .range_value(s.start, 0.0, w.max_start_sec)
         .on_step(|app: &mut App, d, tx| super::on_step(app, Grab::Window, d, tx.mods().shift))
         .on_step_limit(|app: &mut App, end, _| super::on_step_limit(app, Grab::Window, end));
     let handle = |key: &str, x: f32, kind: Grab| {

@@ -1,37 +1,19 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::*;
+use crate::api::testing::{MockServer, Res};
 
 /// Serves the routes `routes(base)` builds (path → status, body) until the test ends.
 fn serve(routes: impl FnOnce(&str) -> HashMap<String, (u16, Vec<u8>)>) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let routes = Arc::new(routes(&base));
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { continue };
-            let routes = routes.clone();
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                let path = line.split(' ').nth(1).unwrap_or("/").to_string();
-                loop {
-                    let mut header = String::new();
-                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header == "\r\n" {
-                        break;
-                    }
-                }
-                let (status, body) = routes.get(&path).cloned().unwrap_or((404, b"{\"message\":\"Not Found\"}".to_vec()));
-                let _ = write!(stream, "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-                let _ = stream.write_all(&body);
-            });
-        }
+    let table: Arc<OnceLock<HashMap<String, (u16, Vec<u8>)>>> = Arc::default();
+    let lookup = table.clone();
+    let server = MockServer::with_handler(move |req| match lookup.get().and_then(|t| t.get(&req.path)) {
+        Some((status, body)) => Res::new(*status).bytes(body.clone()),
+        None => Res::new(404).body("{\"message\":\"Not Found\"}"),
     });
-    base
+    let _ = table.set(routes(server.base()));
+    server.base().to_string()
 }
 
 fn sha256(bytes: &[u8]) -> String {

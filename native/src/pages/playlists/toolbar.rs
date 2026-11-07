@@ -6,7 +6,7 @@ use rune::{Color, Cursor, El, Key, KeyEvent, Tx, el, row};
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
 use crate::ui::forms::{SelectOption, SelectVariant, search_input, select};
-use crate::ui::kit::{SegSize, segmented_counted, toolbar_sep};
+use crate::ui::kit::{SegSize, segmented_counted, toolbar_group, toolbar_sep};
 use crate::ui::{ico, icons as i};
 
 use super::detail::{Detail, Tab, detail_mut, set_sort, set_tab};
@@ -36,23 +36,12 @@ pub fn toolbar(app: &App, t: &Theme, d: &Detail, collabs: bool, settings: bool) 
     let rows = d.tracks.as_deref().unwrap_or(&[]);
     if rows.len() > 1 {
         let options: Vec<SelectOption> = logic::SORT_OPTIONS.iter().map(|(k, l)| SelectOption::new(logic::sort_value(*k), *l)).collect();
-        let mut group = row()
-            .key("playlist-sort-controls")
-            .min_h(32.0)
-            .padding(3.0)
-            .gap(2.0)
-            .items_center()
-            .radius(t.radius_lg())
-            .fill(t.c.muted)
-            .role("group")
-            .label("Track list options")
-            .child(tracks::selection_host(app, t));
+        let mut controls = vec![tracks::selection_host(app, t)];
         // While selecting, the group holds only the selection's controls.
         let selecting = tracks::is_selecting(app);
         if !selecting {
-            group = group
-                .child(toolbar_sep(t))
-                .child(select(app, t, "playlist-sort", &options, logic::sort_value(d.sort), SelectVariant::Toolbar, "", false, set_sort));
+            controls.push(toolbar_sep(t));
+            controls.push(select(app, t, "playlist-sort", &options, logic::sort_value(d.sort), SelectVariant::Toolbar, "", false, set_sort));
         }
         if d.sort != SortKey::Custom && !selecting {
             let hot = color_mix(t.c.foreground, 0.07, Color::TRANSPARENT);
@@ -61,7 +50,7 @@ pub fn toolbar(app: &App, t: &Theme, d: &Detail, collabs: bool, settings: bool) 
             } else {
                 "Sorted descending, switch to ascending"
             };
-            group = group.child(
+            controls.push(
                 el().key("playlist-sort-dir")
                     .size(32.0, 26.0)
                     .radius(t.radius_md())
@@ -80,6 +69,7 @@ pub fn toolbar(app: &App, t: &Theme, d: &Detail, collabs: bool, settings: bool) 
                     }),
             );
         }
+        let group = toolbar_group(t, "playlist-sort-controls", controls).role("group").label("Track list options");
         bar = bar.child(group);
     }
     let search = search_input(t, "playlist-search", &app.pages.playlists.fields.search, "Search this playlist", Some(260.0), |f| {

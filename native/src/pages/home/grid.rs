@@ -114,7 +114,6 @@ pub fn place(cells: &[BoardCell], size: BoardSize) -> Vec<Area> {
 pub struct Laid {
     pub rects: Vec<[f32; 4]>,
     pub height: f32,
-    pub columns: usize,
 }
 
 /// A cell's width in a grid of `columns` over `width` with `gap`.
@@ -172,7 +171,7 @@ pub fn lay_out(areas: &[Area], width: f32, gap: f32, columns: usize, mut natural
         })
         .collect();
     let height = if n_rows == 0 { 0.0 } else { tops[n_rows] - gap };
-    Laid { rects, height, columns }
+    Laid { rects, height }
 }
 
 #[cfg(test)]

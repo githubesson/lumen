@@ -42,12 +42,10 @@ pub struct Http {
 
 impl Http {
     pub fn new(cookie: Option<String>) -> Http {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
+        let agent: ureq::Agent = crate::net::agent_config()
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
             .timeout_per_read(Some(Duration::from_secs(20)))
-            .user_agent(concat!("Lumen-Desktop/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
         Http { agent, cookie }

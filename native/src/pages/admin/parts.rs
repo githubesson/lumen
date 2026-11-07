@@ -1,12 +1,15 @@
 //! Pieces the admin sections share: `.surface`, `AdminSectionTitle` /
-//! `AdminSectionIntro`, `Disclosure`, `.stat-link`, `.skeleton-text`, and the
-//! form fields.
+//! `AdminSectionIntro`, `Disclosure`, `.stat-link`, `.skeleton-text`, the
+//! form fields, the auto-fit grids and the music-folder dropdown.
 
 use rune::{Color, Cursor, El, Span, TextEdit, TextStyle, col, el, row, text};
 
+use crate::api::admin::MusicRoot;
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::{css_border, font, ico, icons as i, kit, motion, with_lh};
+use crate::ui::forms::SelectOption;
+use crate::ui::tooltip::TipExt;
+use crate::ui::{font, ico, icons as i, kit, motion};
 
 use super::table::advance;
 
@@ -24,8 +27,7 @@ pub fn line_box(e: El, style: TextStyle) -> El {
 
 /// How many lines `s` takes wrapped at `width`.
 pub fn lines_of(s: &str, spans: &[Span], style: TextStyle, width: f32) -> usize {
-    let (_, h) = rune::text::measure(s, spans, style, Some(width));
-    ((h / style.line_height).round() as usize).max(1)
+    crate::ui::css_lines(s, spans, style, Some(width), rune::text::RichLayoutOptions::default())
 }
 
 /// A wrapping paragraph `width` wide, as tall as its CSS line boxes.
@@ -41,15 +43,8 @@ pub fn eyebrow(t: &Theme, s: &str) -> El {
     line_box(kit::eyebrow(t, s), font(12.0, 500.0))
 }
 
-/// `.surface`: the card panel, with `pad` inside its 1 px border.
-pub fn surface(t: &Theme, pad: f32) -> El {
-    css_border(col(), 1.0, t.c.border, t.radius_xl()).padding(pad + 1.0).radius(t.radius_xl()).fill(t.c.card)
-}
-
-/// `n` `ch` of `style` (`max-width: 70ch`).
-pub fn ch(n: f32, style: TextStyle) -> f32 {
-    advance("0", style) * n
-}
+pub use crate::ui::ch;
+pub use crate::ui::kit::surface;
 
 /// A muted 14 px paragraph `width` wide.
 pub fn intro(t: &Theme, s: &str, spans: Vec<Span>, width: f32) -> El {
@@ -138,7 +133,7 @@ pub fn stat_link(key: &str, label: &str, style: TextStyle, color: Color, help: O
         .child(dots)
         .child(solid);
     if let Some(h) = help {
-        b = b.help(h.to_string());
+        b = b.tip(key, h);
     }
     b
 }
@@ -149,21 +144,17 @@ pub fn skeleton(t: &Theme, w: f32, font_size: f32) -> El {
 }
 
 /// A `.input` text field bound to the edit `lens` reaches; Return runs
-/// `submit` (the form's submit) when given.
+/// `submit` (the form's submit).
 pub fn text_field(
     t: &Theme,
     key: &str,
     edit: &TextEdit,
     placeholder: &str,
-    lens: for<'a> fn(&'a mut App) -> &'a mut TextEdit,
-    submit: Option<fn(&mut App)>,
+    lens: impl for<'a> Fn(&'a mut App) -> &'a mut TextEdit + 'static,
+    submit: impl Fn(&mut App) + 'static,
 ) -> El {
     crate::ui::input_with(t, key, edit, placeholder, move |e| {
-        let e = e.on_edit(lens);
-        match submit {
-            Some(f) => e.on_submit(move |app: &mut App, _tx: &mut rune::Tx| f(app)),
-            None => e,
-        }
+        e.on_edit(lens).on_submit(move |app: &mut App, _tx: &mut rune::Tx| submit(app))
     })
 }
 
@@ -187,14 +178,46 @@ pub fn retry_note(t: &Theme, key: &str, message: &str, retry: fn(&mut App)) -> E
         .child(stat_link(key, "Try again", style, t.c.muted_foreground, None, move |app, _| retry(app)))
 }
 
-/// The 14 px body line height text style with an explicit `lh`.
-pub fn style_lh(size: f32, weight: f32, lh: f32) -> TextStyle {
-    with_lh(font(size, weight), lh)
-}
-
 /// `repeat(auto-fit, minmax(min, 1fr))` with `n` items: the columns' width.
 pub fn fit_columns(width: f32, min: f32, gap: f32, n: usize) -> (usize, f32) {
     let tracks = (((width + gap) / (min + gap)).floor() as usize).max(1);
     let cols = tracks.min(n.max(1));
     (cols, (width - gap * (cols as f32 - 1.0)) / cols as f32)
+}
+
+/// A `repeat(auto-fit, minmax(min, 1fr))` grid of `items`, `gap` apart
+/// both ways, each row's items on its bottom edge when `align_end`
+/// (`align-items: end`).
+pub fn auto_fit(items: Vec<El>, width: f32, min: f32, gap: f32, align_end: bool) -> El {
+    let (cols, w) = fit_columns(width, min, gap, items.len());
+    let line = || if align_end { row().gap(gap).items_end() } else { row().gap(gap) };
+    let mut out = col().gap(gap);
+    let mut current = line();
+    for (n, item) in items.into_iter().enumerate() {
+        if n > 0 && n % cols == 0 {
+            out = out.child(current);
+            current = line();
+        }
+        current = current.child(item.w(w));
+    }
+    out.child(current)
+}
+
+/// The music folders as dropdown options: "Primary - /music", "Label -
+/// /path" ("Source" without a label). An option's value is what `value`
+/// reads off its root (the pins pick a folder by path, auto-download by
+/// id); missing folders are disabled, and paused ones too when
+/// `need_enabled` (files under a disabled root can't be streamed).
+pub fn root_options(roots: &[MusicRoot], value: impl Fn(&MusicRoot) -> String, need_enabled: bool) -> Vec<SelectOption> {
+    roots
+        .iter()
+        .map(|r| {
+            let label = if r.primary {
+                format!("Primary - {}", r.path)
+            } else {
+                format!("{} - {}", if r.label.is_empty() { "Source" } else { &r.label }, r.path)
+            };
+            SelectOption { disabled: !r.exists || (need_enabled && !r.enabled), ..SelectOption::new(value(r), label) }
+        })
+        .collect()
 }

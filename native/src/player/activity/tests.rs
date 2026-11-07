@@ -98,9 +98,9 @@ fn messages_update_devices_and_results() {
     assert_eq!(s.devices[1].queue.as_ref().unwrap().repeat(), Repeat::All);
     assert!(s.on_message(&devices.to_string()).is_empty(), "an unchanged list changes nothing");
     assert!(s.on_message(r#"{"type":"devices.snapshot","protocol":2,"devices":[]}"#).is_empty());
+    // Nothing here shows another device's latest activity.
     let snapshot = json!({ "type": "activity.snapshot", "protocol": 1, "activity": null });
-    s.on_message(&snapshot.to_string());
-    assert!(s.latest_activity.is_none());
+    assert!(s.on_message(&snapshot.to_string()).is_empty());
 }
 
 #[test]

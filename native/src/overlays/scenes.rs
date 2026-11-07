@@ -3,7 +3,7 @@
 
 use crate::app::{App, scene};
 use crate::overlays::settings::SectionId;
-use crate::overlays::settings::desktop_bridge::UpdateStatus;
+use crate::desktop::updater::{UpdateBranch, UpdateState, UpdateStatus};
 
 /// The library row the reference right-clicks (`t-al-weather-4`).
 pub const MENU_TRACK: &str = "t-al-weather-4";
@@ -51,8 +51,8 @@ fn desktop_config(app: &mut App) {
 /// An updater that found a new version (`updateAvailable` in the reference).
 pub fn update_available() -> UpdateStatus {
     UpdateStatus {
-        state: "available".into(),
-        branch: "main".into(),
+        state: UpdateState::Available,
+        branch: UpdateBranch::Main,
         repo_url: "https://github.com/esson/lumen".into(),
         default_repo_url: "https://github.com/esson/lumen".into(),
         current_version: "0.1.29".into(),
@@ -181,7 +181,7 @@ pub fn remove_spec(t: &crate::api::TrackListItem) -> crate::overlays::confirm::C
     )
     .subject(
         Art::Cover {
-            url: Some(crate::api::media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), Some(64))),
+            url: Some(t.cover_at(Some(64))),
             label,
         },
         t.title.clone(),

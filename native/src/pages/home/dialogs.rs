@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 
-use rune::{Cursor, Cx, El, Icon, TextEdit, col, el, row, text};
+use rune::{Cx, El, Icon, TextEdit, col, el, row, text};
 
 use crate::api::Playlist;
 use crate::app::App;
 use crate::theme::Theme;
 use crate::ui::forms::{SelectOption, SelectVariant, field, field_row, select};
 use crate::ui::kit::{Dialog, dialog_footer, scroll_area_with};
-use crate::ui::{Btn, css_border, font, ico, icons as i, with_lh};
+use crate::ui::{Btn, font, ico, icons as i};
 
 use super::board::lh;
 
@@ -31,8 +31,6 @@ pub struct DialogState {
     pub picked_playlist: String,
     /// The settings dialog's name field, saved as it closes.
     pub name: TextEdit,
-    /// The added panels' names Reset showed, kept through its closing.
-    pub reset_names: Vec<String>,
     /// Whether the board was narrow (one column) when the settings opened:
     /// a stacked board has no sizes to pick.
     pub narrow: bool,
@@ -152,7 +150,7 @@ fn add_dialog(app: &App, t: &Theme, arrangement: &HomeArrangement, window: [f32;
     let mut content_h = 12.0 + 16.0;
     if arrangement.panels.len() >= MAX_PANELS {
         let note = format!("Home has {MAX_PANELS} panels, as many as it holds. Remove one to add another.");
-        let h = lines(&note, font(13.0, 400.0), inner, 18.85);
+        let h = crate::ui::css_text_h(&note, font(13.0, 400.0), Some(inner));
         content_h += h + 16.0;
         body = body.child(lh(text(note).font(font(13.0, 400.0)).color(t.c.muted_foreground).wrap(), h).role("status"));
     }
@@ -176,10 +174,6 @@ fn add_dialog(app: &App, t: &Theme, arrangement: &HomeArrangement, window: [f32;
     Dialog::new("board-add", scroller).title("Add a panel").max_width(600.0).build(t, window, close)
 }
 
-/// A wrapping text's height in whole lines of `line_h`.
-fn lines(s: &str, style: rune::TextStyle, width: f32, line_h: f32) -> f32 {
-    (rune::text::measure(s, &[], style, Some(width)).1 / line_h).round().max(1.0) * line_h
-}
 
 /// The period picked for `kind` in Add panel, or one no panel of this kind
 /// shows yet (the usual one first), so a second On repeat isn't a copy.
@@ -200,7 +194,7 @@ fn add_playlist(app: &App, arrangement: &HomeArrangement) -> Option<String> {
     if !picked.is_empty() {
         return Some(picked.clone());
     }
-    let list: &[Playlist] = app.playlists.as_deref()?;
+    let list: &[Playlist] = app.playlists.data.as_deref()?;
     let on_home: Vec<&String> = arrangement.panels.iter().filter_map(|p| p.playlist.as_ref()).collect();
     list.iter().find(|p| !on_home.contains(&&p.id)).or(list.first()).map(|p| p.id.clone())
 }
@@ -232,7 +226,7 @@ fn catalog_row(app: &App, t: &Theme, kind: PanelKind, arrangement: &HomeArrangem
         );
     }
     if info.playlist {
-        match app.playlists.as_deref() {
+        match app.playlists.data.as_deref() {
             Some(list) if !list.is_empty() => {
                 let options: Vec<SelectOption> = list.iter().map(|p| SelectOption::new(p.id.clone(), p.name.clone())).collect();
                 actions = actions.child(
@@ -278,7 +272,7 @@ fn catalog_row(app: &App, t: &Theme, kind: PanelKind, arrangement: &HomeArrangem
     // The actions' rough width, for where the description wraps.
     let actions_w = if narrow { 0.0 } else if info.period && existing.is_none() { 180.0 } else { 80.0 };
     let words_w = inner - 32.0 - 12.0 - if narrow { 0.0 } else { actions_w + 12.0 };
-    let desc_h = lines(info.description, font(12.0, 400.0), words_w, 17.4);
+    let desc_h = crate::ui::css_text_h(info.description, font(12.0, 400.0), Some(words_w));
     let words = col()
         .grow(1.0)
         .min_w(0.0)
@@ -314,7 +308,7 @@ fn reveal(tx: &mut rune::Tx, id: Option<String>) {
 fn settings_dialog(app: &App, t: &Theme, p: &HomePanel, window: [f32; 2]) -> El {
     let info = p.kind.info();
     let d = &app.pages.home.edit.dialogs;
-    let playlists = app.playlists.as_deref();
+    let playlists = app.playlists.data.as_deref();
     let placeholder = if p.kind == PanelKind::Playlist {
         playlists
             .and_then(|l| l.iter().find(|x| Some(&x.id) == p.playlist.as_ref()))
@@ -406,31 +400,12 @@ fn settings_dialog(app: &App, t: &Theme, p: &HomePanel, window: [f32; 2]) -> El 
 /// `TextInput`: the `.input` field bound to the dialog's name, at most 60
 /// characters, saved on Return.
 fn name_input(t: &Theme, edit: &TextEdit, placeholder: &str) -> El {
-    let focused = edit.focused;
-    let mut b = el().key("board-settings-name-box").h(32.0).w_full().radius(t.radius_lg()).fill(t.c.input_bg).items_center();
-    b = css_border(b, 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg());
-    if focused {
-        b = b
-            .box_shadow(rune::Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: t.c.focus_ring, inset: false })
-            .box_shadow(rune::Shadow {
-                x: 0.0,
-                y: 0.0,
-                blur: 0.0,
-                spread: 4.0,
-                color: crate::theme::color_mix(t.c.ring, 0.3, rune::Color::TRANSPARENT),
-                inset: false,
-            });
-    }
-    b.child(
-        rune::text_input(edit, font(14.0, 400.0))
-            .key("board-settings-name")
-            .single_line()
-            .placeholder(placeholder, t.c.muted_foreground)
+    crate::ui::forms::input_box(
+        t,
+        "board-settings-name",
+        edit.focused,
+        crate::ui::forms::text_field(t, "board-settings-name", edit, font(14.0, 400.0), placeholder)
             .label("Name")
-            .color(t.c.foreground)
-            .selection_color(t.c.selection)
-            .grow(1.0)
-            .px(11.0)
             .on_edit(|app: &mut App| &mut app.pages.home.edit.dialogs.name)
             .on_input_change(|app: &mut App, _| {
                 let name = &mut app.pages.home.edit.dialogs.name;
@@ -455,7 +430,7 @@ fn reset_dialog(app: &App, t: &Theme, window: [f32; 2]) -> El {
         if n == 1 { "is" } else { "are" }
     );
     let width = window[0].min(440.0 + 32.0) - 32.0 - 2.0 - 32.0;
-    let h = lines(&message, font(14.0, 400.0), width, 20.3);
+    let h = crate::ui::css_text_h(&message, font(14.0, 400.0), Some(width));
     let body = col().w_full().padding(16.0).child(lh(text(message).font(font(14.0, 400.0)).color(t.c.popover_foreground).wrap(), h));
     let cancel = Btn::new("board-reset-cancel", "Cancel").build(t).on_press(close);
     let reset = Btn::new("board-reset-confirm", "Reset Home").danger().icon(&i::TRASH_2).build(t).on_press(editing::reset_now);
@@ -465,10 +440,4 @@ fn reset_dialog(app: &App, t: &Theme, window: [f32; 2]) -> El {
         .footer(dialog_footer(t, None, vec![cancel, reset]))
         .build(t, window, close)
         .role("alertdialog")
-}
-
-/// Unused helpers kept for the markup's sake.
-#[allow(dead_code)]
-fn _unused(_: Cursor) -> rune::TextStyle {
-    with_lh(font(14.0, 400.0), 20.3)
 }

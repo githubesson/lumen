@@ -27,15 +27,10 @@ use crate::app::App;
 use crate::route::Location;
 use crate::theme::Theme;
 
-pub use logic::error_message;
-pub(super) use list::page_header;
-pub(super) use logic::{ch60, fmt_date};
 
 /// What the playlist pages keep between visits.
 #[derive(Default)]
 pub struct State {
-    /// `usePlaylists()`'s bookkeeping beside `app.playlists`.
-    pub list: list::Resource,
     pub(super) new: new::State,
     /// The open playlist (`PlaylistDetailView`, remounted per visit).
     pub(super) detail: Option<detail::Detail>,
@@ -144,8 +139,5 @@ pub fn scene(app: &mut App, act: &str) {
 /// `usePlaylists().update`: apply a change already made, ahead of any
 /// refetch; reads in flight no longer land.
 pub fn update_playlists(app: &mut App, f: impl FnOnce(&mut Vec<Playlist>)) {
-    app.pages.playlists.list.updates += 1;
-    if let Some(rows) = app.playlists.as_mut() {
-        f(rows);
-    }
+    app.playlists.update(f);
 }

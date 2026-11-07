@@ -4,6 +4,8 @@
 
 use serde_json::{Map, Value};
 
+use crate::core::js::{self, slice_utf16};
+
 /// What follows "Listening to" in Discord's member list (`statusName`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StatusName {
@@ -142,37 +144,11 @@ pub struct CardLines {
     pub large_text: Option<String>,
 }
 
-/// JavaScript's `\s` (and what `String.prototype.trim` removes).
-fn js_space(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
-            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
-    )
-}
-
-fn js_trim(s: &str) -> &str {
-    s.trim_matches(js_space)
-}
-
-/// The first `max` UTF-16 code units of `s`, never splitting a surrogate pair
-/// (`s.slice(0, max)` with a trailing lone high surrogate dropped).
-fn slice_utf16(s: &str, max: usize) -> &str {
-    let mut units = 0;
-    for (i, c) in s.char_indices() {
-        units += c.len_utf16();
-        if units > max {
-            return &s[..i];
-        }
-    }
-    s
-}
-
 /// `clampForDiscord`: Discord wants 2–128 characters per line. A single
 /// character (one emoji included) is padded, and a cut never splits an
 /// emoji's surrogate pair.
 pub fn clamp_for_discord(value: Option<&str>, max: usize) -> Option<String> {
-    let trimmed = js_trim(value?);
+    let trimmed = js::trim(value?);
     if trimmed.is_empty() {
         return None;
     }
@@ -184,7 +160,7 @@ pub fn clamp_for_discord(value: Option<&str>, max: usize) -> Option<String> {
 
 /// Text between fields that only joins them, dropped along with a missing field.
 fn is_joiner(s: &str) -> bool {
-    s.chars().all(|c| js_space(c) || "-–—·•|,:/~+&".contains(c))
+    s.chars().all(|c| js::is_space(c) || "-–—·•|,:/~+&".contains(c))
 }
 
 /// Splits `template` around `{title}`, `{artist}` and `{album}` (any case):
@@ -231,7 +207,7 @@ fn tidy(line: &str) -> String {
         };
         if let Some(close) = close {
             let mut j = i + 1;
-            while j < chars.len() && js_space(chars[j]) {
+            while j < chars.len() && js::is_space(chars[j]) {
                 j += 1;
             }
             if j < chars.len() && chars[j] == close {
@@ -245,7 +221,7 @@ fn tidy(line: &str) -> String {
     let mut out = String::with_capacity(kept.len());
     let mut in_space = false;
     for c in kept.chars() {
-        if js_space(c) {
+        if js::is_space(c) {
             if !in_space {
                 out.push(' ');
             }
@@ -281,7 +257,7 @@ pub fn fill_template(template: &str, fields: &CardFields) -> Option<String> {
             "artist" => fields.artist.as_deref(),
             _ => fields.album.as_deref(),
         }
-        .map(js_trim)
+        .map(js::trim)
         .filter(|v| !v.is_empty());
         if let Some(value) = value {
             parts[i] = value.to_string();

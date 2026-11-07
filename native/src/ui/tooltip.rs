@@ -231,7 +231,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
             return None;
         }
     }
-    let window = cx.layout_size("app").or_else(|| cx.layout_size("signed-out")).unwrap_or([1280.0, 820.0]);
+    let window = crate::shell::window_size(cx);
     let size = cx.layout_size("tooltip-bubble").unwrap_or([0.0, 0.0]);
     let (x, y, side, arrow) = place(anchor, size, tip.side, window);
     Some(bubble(t, &tip.body, side, arrow, size, s.instant).absolute(x, y))

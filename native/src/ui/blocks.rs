@@ -1,18 +1,16 @@
 //! Page building blocks: `Section.tsx`, `ListPageHeader.tsx`,
-//! `PageHeader.tsx`, `list/ListMeta.tsx`, `list/LoadMoreSentinel.tsx`,
-//! `DataState.tsx`, `CenteredCard.tsx`, `RadioCardOption.tsx`,
-//! `IosSpinner.tsx`, `AnimatedNumber.tsx` and `PlayListButton.tsx`
-//! (`home.css`, `detail.css`, `primitives.css`, `auth.css`).
+//! `PageHeader.tsx`, `list/ListMeta.tsx`, `DataState.tsx`, `IosSpinner.tsx`,
+//! `AnimatedNumber.tsx` and `PlayListButton.tsx` (`home.css`, `detail.css`,
+//! `primitives.css`, `player-lyrics.css`).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use rune::{Color, Cursor, El, Icon, col, el, row, text};
-use rune_motion::{Beat, Easing, LoopSpec, Sequence};
+use rune::{El, Icon, col, el, row, text};
 
 use crate::api::TrackListItem;
 use crate::app::App;
-use crate::theme::{Theme, color_mix};
+use crate::theme::Theme;
 use crate::ui::kit::{error_banner, loading_state};
 use crate::ui::track_select::Source;
 use crate::ui::{Btn, exact, font, ico, icons as i, tnum, with_lh};
@@ -70,18 +68,6 @@ pub fn section_head(t: &Theme, sub: Option<&str>, title: &str, action: Option<El
     head
 }
 
-/// `.section-link`: a muted 14 px link that lights up on hover.
-pub fn section_link(t: &Theme, key: &str, label: &str, href: &str) -> El {
-    let href = href.to_string();
-    el().key(key)
-        .role("link")
-        .label(label)
-        .cursor(Cursor::Pointer)
-        .hover_group()
-        .child(text(label).font(font(14.0, 400.0)).color(t.c.muted_foreground).group_color(t.c.foreground))
-        .on_press(move |app: &mut App| app.navigate_to(&href))
-}
-
 /// `ListPageHeader`'s props.
 #[derive(Default)]
 pub struct ListHeader<'a> {
@@ -112,7 +98,7 @@ pub fn list_page_header(app: &App, t: &Theme, key: &str, h: ListHeader) -> El {
         let base = el().size(200.0, 200.0).radius(t.radius_lg()).clip_rounded(t.radius_lg()).fill(t.c.muted).center();
         match h.hero {
             Some(tr) => {
-                let url = crate::ui::track_row::cover_url_full(tr);
+                let url = tr.cover_at(None);
                 match app.images.get(&url) {
                     crate::images::Cover::Ready(img) => base.child(el().size(200.0, 200.0).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
                     _ => base,
@@ -184,20 +170,22 @@ pub fn meta_dot(t: &Theme) -> El {
     el().size(3.0, 3.0).radius(99.0).fill(t.c.muted_foreground)
 }
 
-/// `PageHeader` with its right-aligned actions (`.page-header`); the plain
-/// title and count are `kit::page_header`.
+/// `PageHeader` (`.page-header`): the 24 px title, an optional muted count
+/// after it and right-aligned actions.
 ///
-/// The row aligns its items' baselines: the 24 px title's sits 25.9 px down
-/// its 34.8 px line, the count's 15.15 px down its 20.3, and a button's at
-/// its top (Chromium takes an inline-flex button's baseline from its
-/// leading icon), so the title and the actions share the row's top.
+/// The row aligns its items' baselines: the count's sits on the title's
+/// ([`css_baseline`](crate::ui::css_baseline): 25 px down the title's 34.8 px
+/// line, 15 down the count's 20.3), and a button's at its top (Chromium takes
+/// an inline-flex button's baseline from its leading icon), so the title and
+/// the actions share the row's top. The title keeps Rune's whole-pixel box:
+/// the pages under it (the library's toolbar and track table) are measured
+/// with it.
 pub fn page_header(t: &Theme, title: &str, count: Option<&str>, actions: Option<El>) -> El {
     let mut h = row().w_full().gap(16.0).items_start().flex_wrap();
-    // Both drawn a pixel higher than the line boxes put them: where
-    // Chromium's 24 px baseline lands (measured against the reference).
-    h = h.child(crate::ui::exact(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground), 34.8).shrink());
+    h = h.child(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground).shrink());
     if let Some(c) = count {
-        h = h.child(crate::ui::exact(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 20.3).shrink().mt(25.9 - 15.15));
+        let drop = crate::ui::css_baseline(24.0, 34.8) - crate::ui::css_baseline(14.0, 20.3);
+        h = h.child(crate::ui::exact(text(c).font(tnum(font(14.0, 400.0))).color(t.c.muted_foreground), 20.3).shrink().mt(drop));
     }
     h = h.child(el().grow(1.0));
     if let Some(a) = actions {
@@ -237,26 +225,9 @@ pub fn group(n: u64) -> String {
     out
 }
 
-/// `LoadMoreSentinel`: a 1 px marker that asks for the next page when it
-/// scrolls into view (`more`), and "Loading more…" while one loads.
-pub fn load_more(t: &Theme, key: &str, more: bool, loading: bool, on_near: fn(&mut App)) -> El {
-    let mut c = col().key(key).w_full();
-    if more {
-        c = c.child(el().key(format!("{key}-sentinel")).w_full().h(1.0).on_visible(move |app: &mut App, visible, _| {
-            if visible {
-                on_near(app);
-            }
-        }));
-    }
-    if loading {
-        c = c.child(loading_state(t, "Loading more…"));
-    }
-    c
-}
-
 /// `DataState`: the error banner, "Loading…" until there's data, the empty
 /// state when `empty`, else the content.
-pub fn data_state<T>(t: &Theme, data: Option<&T>, error: Option<&str>, loading_label: Option<&str>, empty: Option<(bool, El)>, content: impl FnOnce(&T) -> El) -> El {
+pub fn data_state<T: ?Sized>(t: &Theme, data: Option<&T>, error: Option<&str>, loading_label: Option<&str>, empty: Option<(bool, El)>, content: impl FnOnce(&T) -> El) -> El {
     let mut c = col().w_full();
     if let Some(e) = error {
         c = c.child(error_banner(t, e));
@@ -271,92 +242,36 @@ pub fn data_state<T>(t: &Theme, data: Option<&T>, error: Option<&str>, loading_l
     }
 }
 
-/// `CenteredCard` (`.auth-wrap` / `.auth-card`): the brand mark, a title and
-/// intro over the card's content, centred in the window.
-pub fn centered_card(t: &Theme, key: &str, title: &str, intro: Option<&str>, content: El) -> El {
-    let mut head = col().w_full().gap(12.0).mb(24.0).items_center().child(crate::ui::brand_mark(t, 38.0));
-    let mut words = col().items_center().child(text(title).font(font(24.0, 600.0).tracking(-0.48)).color(t.c.foreground));
-    if let Some(i) = intro {
-        words = words.child(text(i).font(font(14.0, 400.0)).color(t.c.muted_foreground).wrap().mt(6.0));
-    }
-    head = head.child(words);
-    let card = crate::ui::css_border(col(), 1.0, t.c.border, t.radius_xl())
-        .key(format!("{key}-card"))
-        .w_full()
-        .max_w(400.0)
-        .padding(25.0)
-        .radius(t.radius_xl())
-        .fill(t.c.card)
-        .child(head)
-        .child(content);
-    col().key(key).w_full().h_full().padding(24.0).fill(t.c.background).center().child(card)
-}
-
-/// `RadioCardOption`: a bordered card with a radio, a label and a line
-/// under it; checked, it takes the primary border and a faint tint.
-pub fn radio_card(t: &Theme, key: &str, checked: bool, label: &str, description: &str, on_pick: impl Fn(&mut App) + 'static) -> El {
-    let border = if checked { t.c.primary } else { t.c.border };
-    let fill = if checked { color_mix(t.c.primary, 0.05, Color::TRANSPARENT) } else { Color::TRANSPARENT };
-    let words = col()
-        .grow(1.0)
-        .min_w(0.0)
-        .child(text(label).font(font(14.0, 500.0)).color(t.c.foreground).wrap())
-        .child(text(description).font(font(12.0, 400.0)).color(t.c.muted_foreground).wrap().mt(2.0));
-    crate::ui::css_border(row(), 1.0, border, t.radius_lg())
-        .key(key)
-        .w_full()
-        .padding(13.0)
-        .gap(12.0)
-        .items_start()
-        .radius(t.radius_lg())
-        .fill(fill)
-        .role("radio")
-        .checked(checked)
-        .label(label)
-        .cursor(Cursor::Pointer)
-        .focusable(true)
-        .child(radio_dot(t, checked).mt(3.0))
-        .child(words)
-        .on_press(on_pick)
-}
-
-/// Chromium's 13 px radio in `accent-color: var(--primary)`.
-fn radio_dot(t: &Theme, checked: bool) -> El {
-    let ring = if t.dark() { rune::color::hex("#858585").unwrap() } else { rune::color::hex("#767676").unwrap() };
-    let face = if t.dark() { rune::color::hex("#3b3b3b").unwrap() } else { Color::WHITE };
-    if checked {
-        el().size(13.0, 13.0).radius(99.0).fill(t.c.primary).center().child(el().size(5.0, 5.0).radius(99.0).fill(if t.dark() { face } else { Color::WHITE }))
-    } else {
-        el().size(13.0, 13.0).radius(99.0).fill(face).border(1.0, ring)
-    }
-}
-
-/// `IosSpinner` (`.ios-spinner`): twelve spokes fading round, `size` px
-/// across (28 by default), in the muted ink unless given one.
-pub fn ios_spinner(t: &Theme, size: f32, ink: Option<Color>) -> El {
-    let ink = ink.unwrap_or(t.c.muted_foreground);
-    let mut s = el().size(size, size).role("status").label("Loading");
-    let r = size / 2.0 - 1.0;
-    for k in 0..12 {
-        // Each spoke is a 2.2 × 7 pill from the top edge, turned about the
-        // centre by k × 30°; its fade runs a twelfth of a second behind.
-        let a = (k as f32) * std::f32::consts::PI / 6.0;
-        let (sx, sy) = a.sin_cos();
-        let mid = r - 3.5;
-        let cx = size / 2.0 + sx * mid;
-        let cy = size / 2.0 - sy * mid;
-        // `animation-delay: -k/12 s` on an endless loop is the same as
-        // starting it (1 - k/12) s in.
-        static FADE: [Beat; 2] = [Beat::new(0.0), Beat::new(1.0).opacity(0.18).easing(Easing::LINEAR)];
-        let delay = (1.0 - (k as f64) / 12.0) % 1.0;
+/// `IosSpinner` (`.ios-spinner`): twelve 2.2 × 7 px spokes round a `size`
+/// px circle (`--spinner-size`, 28 unless a rule sets it) in the muted ink,
+/// each fading from full to 18% over a second, a twelfth of a turn behind
+/// the last. `label` is its `aria-label`.
+pub fn ios_spinner(t: &Theme, key: &str, size: f32, label: &str) -> El {
+    const PHASES: [f32; 12] = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
+    let mut s = el().key(key).size(size, size).role("status").label(label);
+    for (n, k) in PHASES.iter().enumerate() {
         let spoke = el()
-            .absolute(cx - 1.1, cy - 3.5)
+            .absolute(size / 2.0 - 1.1, 1.0)
             .size(2.2, 7.0)
             .radius(999.0)
-            .fill(ink)
-            .rotate(a)
-            .looping(LoopSpec { delay, ..LoopSpec::sequence(Sequence::new(&FADE)) });
-        s = s.child(spoke);
+            .fill(t.c.muted_foreground)
+            // A ≤ 30 fps cycle that settles at the reduced-motion opacity.
+            .looping(rune::LoopSpec::cycle(rune::Cycle {
+                period: 1.0,
+                // `animation-delay: calc(var(--i) * -1s / 12)`.
+                phase: -k / 12.0,
+                stops: &[(0.0, 1.0), (1.0, 0.18)],
+                still: 0.45,
+                fps: 30.0,
+            }));
+        // Each spoke turns about the circle's centre (`rotate(var(--i) * 30deg)`).
+        s = s.child(
+            el().key(format!("{key}-{n}"))
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .rotate(*k * std::f32::consts::PI / 6.0)
+                .inert()
+                .child(spoke),
+        );
     }
     s
 }
@@ -392,17 +307,10 @@ impl Run {
     }
 }
 
-/// `AnimatedNumber`: counts up from 0 (then from its last value) to `value`
-/// over 600 ms, ease-out cubic, with thousands separators. Under reduced
-/// motion it shows the value at once.
-pub fn animated_number(app: &App, cx: &rune::Cx<App>, key: &str, value: f64, style: rune::TextStyle, ink: Color) -> El {
-    let shown = animated_value(app, cx, key, value);
-    text(format_count(shown)).font(tnum(style)).color(ink).key(key.to_string())
-}
-
-/// [`animated_number`]'s value this frame, for a counter that formats it
-/// itself (`AnimatedNumber`'s `format`: Replay's listening time) or sets it
-/// with other text.
+/// `AnimatedNumber`'s value this frame: it counts up from 0 (then from its
+/// last value) to `value` over 600 ms, ease-out cubic; under reduced motion
+/// it is the value at once. The caller formats it ([`format_count`] gives
+/// the thousands separators; Replay's listening time formats its own).
 pub fn animated_value(app: &App, cx: &rune::Cx<App>, key: &str, value: f64) -> f64 {
     let nums = &app.widgets.numbers;
     let now = nums.clock.get();

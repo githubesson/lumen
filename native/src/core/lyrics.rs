@@ -271,10 +271,6 @@ impl LyricsCache {
         true
     }
 
-    pub fn is_inflight(&self, key: &str) -> bool {
-        self.inflight.contains(key)
-    }
-
     /// A fetch for `key` finished: an answer is cached (an instrumental one
     /// counts as a hit), a failure isn't.
     pub fn finish(&mut self, key: &str, result: Result<LyricsResult, ApiError>) -> Result<LyricsCacheEntry, ApiError> {

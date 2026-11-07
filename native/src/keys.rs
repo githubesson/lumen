@@ -26,7 +26,7 @@ pub fn modal_open(app: &App) -> bool {
 }
 
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
-    if crate::overlays::track_menu::on_key(app, ev, tx) {
+    if crate::overlays::track_menu::on_key(app, ev) {
         return true;
     }
     // An open Select's listbox takes the arrows, Return and Escape.

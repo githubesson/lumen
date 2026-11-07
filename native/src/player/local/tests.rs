@@ -203,35 +203,6 @@ fn shuffle_pins_the_current_track_and_turning_it_off_restores_the_list() {
 }
 
 #[test]
-fn play_next_queues_picks_in_order_after_the_current_track() {
-    let mut r = rig();
-    r.start(&["a", "b", "c"], 0, 100.0);
-    let extra = list(&["x", "y"]);
-    assert!(r.p.play_next(&extra[..1]));
-    assert!(r.p.play_next(&extra[1..]));
-    assert_eq!(queue_ids(&r.p), ["a", "x", "y", "b", "c"]);
-    // A queued track moves rather than appearing twice; the current one stays.
-    assert!(r.p.play_next(&list(&["c", "a"])));
-    assert_eq!(queue_ids(&r.p), ["a", "x", "y", "c", "b"]);
-    assert!(!r.p.play_next(&list(&["a"])));
-    // The run ends when the track changes.
-    r.p.next();
-    assert!(r.p.play_next(&list(&["z"])));
-    assert_eq!(queue_ids(&r.p), ["a", "x", "z", "y", "c", "b"]);
-}
-
-#[test]
-fn play_next_with_nothing_loaded_plays_the_picks() {
-    let mut r = rig();
-    r.p.set_shuffle(true);
-    assert!(r.p.play_next(&list(&["p", "q", "r"])));
-    assert_eq!(queue_ids(&r.p), ["p", "q", "r"]);
-    assert_eq!(current_id(&r.p).as_deref(), Some("p"));
-    assert!(r.p.play_next(&list(&["s"])));
-    assert_eq!(queue_ids(&r.p), ["p", "q", "r", "s"]);
-}
-
-#[test]
 fn the_next_track_is_prepared_at_70_percent_and_handed_off_at_the_end() {
     let mut r = rig();
     r.start(&["a", "b"], 0, 100.0);
@@ -265,10 +236,34 @@ fn changing_whats_next_drops_the_prepared_track() {
     r.start(&["a", "b", "c"], 0, 100.0);
     r.at(75.0);
     r.a.calls();
-    r.p.play_next(&list(&["x"]));
+    // Repeat one: nothing comes next.
+    r.p.set_repeat(Repeat::One);
     assert_eq!(r.a.calls(), vec!["clear_prepared"]);
+    r.p.set_repeat(Repeat::Off);
     r.at(76.0);
-    assert_eq!(r.a.calls(), vec![format!("prepare {}", url("x"))]);
+    assert_eq!(r.a.calls(), vec![format!("prepare {}", url("b"))]);
+}
+
+/// A new selection loads its track, and `load` drops the prepared source:
+/// the next track is prepared again even when it's the same one, so the
+/// hand-off into it stays gapless.
+#[test]
+fn a_new_selection_prepares_its_next_track_again() {
+    let mut r = rig();
+    r.start(&["a", "b"], 0, 100.0);
+    r.at(71.0);
+    assert_eq!(r.a.calls(), vec![format!("prepare {}", url("b"))]);
+    let z = list(&["z", "b"]);
+    assert!(r.p.play(&z[0], &z, PlayOptions::default()));
+    assert_eq!(r.a.0.borrow().prepared, None, "the load dropped it");
+    r.a.set(|s| s.duration = 100.0);
+    r.p.handle(AdapterEvent::LoadedMetadata);
+    r.a.calls();
+    r.at(71.0);
+    assert_eq!(r.a.calls(), vec![format!("prepare {}", url("b"))]);
+    r.a.set(|s| s.prepared_ready = true);
+    r.p.handle(AdapterEvent::Ended);
+    assert_eq!(r.a.calls(), vec![format!("activate {} true", url("b"))], "handed off without a load");
 }
 
 #[test]
@@ -352,7 +347,7 @@ fn a_failure_stops_on_the_track_and_asks_the_server() {
     r.p.probe_done(*token, false, StreamProbe { reason: None, answer: "HTTP 410 · file missing on disk".into() });
     let err = r.p.error().unwrap();
     assert_eq!(err.summary, "Couldn't play this track.");
-    assert_eq!(err.detail().as_deref(), Some("HTTP 410 · file missing on disk"));
+    assert_eq!(err.details.server, ServerAnswer::Answered("HTTP 410 · file missing on disk".into()));
     // Playing it again retries: loaded afresh, the failure cleared.
     r.a.calls();
     r.p.toggle();

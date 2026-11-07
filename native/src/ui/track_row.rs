@@ -9,7 +9,7 @@
 use rune::{Color, Cursor, El, el, row, text};
 use rune_motion::{Beat, Sequence};
 
-use crate::api::{TrackListItem, media};
+use crate::api::TrackListItem;
 use crate::app::App;
 use crate::format::{display_text, fmt_duration_ms};
 use crate::theme::Theme;
@@ -20,13 +20,8 @@ use crate::ui::{css_border_bottom, font, ico, icons as i, line, motion, tnum, to
 pub use crate::core::entity_labels::credits_only;
 pub use crate::core::track::{
     TrackActions as Actions, can_share_track as can_share, is_local_track as is_local, is_tidal_track as is_tidal,
-    track_actions as actions,
+    playable_tracks as playable, track_actions as actions,
 };
-
-/// `playableTracks`: the rows that can stream.
-pub fn playable(tracks: &[TrackListItem]) -> Vec<TrackListItem> {
-    tracks.iter().filter(|t| t.unavailable != Some(true)).cloned().collect()
-}
 
 /// `usePlayFromList().playTrack`: play `track` with the list's playable rows
 /// as the queue; an unavailable row does nothing.
@@ -46,32 +41,9 @@ pub fn play_from(app: &mut App, track: &TrackListItem, list: &[TrackListItem]) {
 }
 
 /// `startListPlayback`: the list from its first playable row, or from a
-/// random one with shuffle on. False when nothing can play.
+/// random one when `shuffle`. False when nothing can play.
 pub fn start_list(app: &mut App, tracks: &[TrackListItem], shuffle: bool) -> bool {
-    let queue = playable(tracks);
-    if queue.is_empty() {
-        return false;
-    }
-    let start = if shuffle { random_below(queue.len()) } else { 0 };
-    app.player.play_list(queue, start);
-    true
-}
-
-fn random_below(n: usize) -> usize {
-    use std::hash::{BuildHasher, Hasher};
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u64(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64));
-    (h.finish() % n.max(1) as u64) as usize
-}
-
-/// The cover thumbnail URL rows draw (`trackCoverUrl(track, 64)`).
-pub fn cover_url(t: &TrackListItem, size: u32) -> String {
-    media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), Some(size))
-}
-
-/// `trackCoverUrl(track)` at the server's full size (detail headers).
-pub fn cover_url_full(t: &TrackListItem) -> String {
-    media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), None)
+    app.player.start_list(tracks, shuffle)
 }
 
 /// The cover's placeholder letter source: the album, else the title.
@@ -139,8 +111,7 @@ pub fn favorite_button(app: &App, t: &Theme, key: &str, id: &str, fav: bool) -> 
     let glyph = if fav { &i::HEART_FILLED } else { &i::HEART };
     let mut heart = ico(glyph, 14.0, ink).group_color(t.c.accent_foreground);
     if fav && pop > 0 {
-        static POP: [Beat; 3] = [Beat::new(0.0), Beat::new(0.096).scale(1.25), Beat::new(0.24)];
-        heart = heart.key(format!("{key}-pop{pop}")).sequence(Sequence::new(&POP));
+        heart = heart.key(format!("{key}-pop{pop}")).sequence(Sequence::new(&HEART_POP));
     }
     let id = id.to_string();
     action_button(t, key, if fav { "Remove from favorites" } else { "Add to favorites" })
@@ -148,6 +119,14 @@ pub fn favorite_button(app: &App, t: &Theme, key: &str, id: &str, fav: bool) -> 
         .child(heart)
         .on_press(move |app: &mut App| toggle_favorite(app, &id))
 }
+
+/// `heart-pop` (`--animate-heart-pop`): 1 → 1.25 at 40% → 1, 240 ms
+/// ease-out (each step eased), as a favourite's heart turns on.
+pub static HEART_POP: [Beat; 3] = [
+    Beat::new(0.0),
+    Beat::new(0.096).scale(1.25).easing(rune_motion::Easing::EASE_OUT),
+    Beat::new(0.24).easing(rune_motion::Easing::EASE_OUT),
+];
 
 /// The heart's toggle: flips the favourite and pops the heart when it turns on.
 pub fn toggle_favorite(app: &mut App, id: &str) {
@@ -193,8 +172,8 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
     let tr = spec.track;
     let key = format!("{}-row-{}", spec.list, tr.id);
     let sel = app.widgets.lists.selection(spec.list);
-    let selecting = sel.is_some_and(|s| s.mode);
-    let selected = sel.is_some_and(|s| s.ids.contains(&tr.id));
+    let selecting = sel.mode;
+    let selected = sel.ids.contains(&tr.id);
     let is_now = app.player.current().is_some_and(|c| c.id == tr.id);
     let playing = is_now && app.player.playing;
     let is_admin = app.me().is_some_and(|m| m.is_admin());
@@ -203,6 +182,8 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
     let cell_ink = if lit { t.c.foreground } else { t.c.muted_foreground };
     let title = display_text(Some(&tr.title), "");
     let (list, source, queue, index) = (spec.list.to_string(), spec.source, spec.queue, spec.index);
+    // One copy of the track for the row's handlers to share.
+    let shared = std::rc::Rc::new(tr.clone());
 
     let mut r = row()
         .key(key.clone())
@@ -241,7 +222,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
 
     // `.col-idx`.
     let play_btn = {
-        let (tr2, q) = (tr.clone(), queue);
+        let (tr2, q) = (shared.clone(), queue);
         idx_play(t, &format!("{key}-play"), &format!("Play {}", tr.title))
             .on_press(move |app: &mut App| {
                 let list = q(app).to_vec();
@@ -261,7 +242,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
 
     // `.col-art`.
     if spec.cover {
-        let url = cover_url(tr, 64);
+        let url = tr.cover_at(Some(64));
         let (col_w, art) = if spec.headless { (56.0, 40.0) } else { (44.0, 32.0) };
         r = r.child(
             row().w(col_w).h_full().pl(8.0).items_center().child(crate::ui::cover_art(
@@ -297,7 +278,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
             title_cell.child(crate::ui::exact(tooltip::tip_truncated(sub, &format!("{key}-artist"), &artist, font(12.0, 400.0)), 17.4));
     }
     {
-        let (l, id, tr2) = (list.clone(), tr.id.clone(), tr.clone());
+        let (l, id, tr2) = (list.clone(), tr.id.clone(), shared.clone());
         title_cell = title_cell.on_press_tx(move |app: &mut App, tx| {
             if app.widgets.lists.is_selecting(&l) {
                 track_select::toggle_row(app, &l, source, &id, index, tx.mods().shift);
@@ -359,7 +340,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
         });
     }
     {
-        let (l, tr2) = (list.clone(), tr.clone());
+        let (l, tr2) = (list.clone(), shared.clone());
         r = r.on_double_press(move |app: &mut App| {
             if !app.widgets.lists.is_selecting(&l) {
                 let list = queue(app).to_vec();
@@ -368,7 +349,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
         });
     }
     {
-        let (l, tr2) = (list.clone(), tr.clone());
+        let (l, tr2) = (list.clone(), shared);
         r = r.on_secondary_press(move |app: &mut App, at: rune::PointerPress, _tx| {
             crate::ui::track_list::open_menu(app, &l, source, queue, &tr2, [at.x, at.y]);
         });

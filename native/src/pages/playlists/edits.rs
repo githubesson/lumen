@@ -60,7 +60,7 @@ fn commit_tracks(
 ) {
     invalidate_loads(app);
     let Some(d) = detail_mut(app) else { return };
-    d.tracks = Some(next.clone());
+    d.set_tracks(Some(next.clone()));
     let (mount, id, seq) = (d.mount, d.id.clone(), d.load_gen);
     let m = &mut app.pages.playlists.mutations;
     let c = m.by_mount.entry(mount).or_default();
@@ -163,7 +163,7 @@ fn finish(app: &mut App, mount: u64, id: String, next: Vec<PlaylistTrackEntry>) 
                 if let Some(x) = &fresh.data {
                     d.download = Some(Download { queued: x.tidal_queued, retry_at: x.tidal_retry_at.clone() });
                 }
-                d.tracks = Some(rows.clone());
+                d.set_tracks(Some(rows.clone()));
                 d.error = None;
                 let cover = cover_for(&rows);
                 update_playlists(app, |list| {

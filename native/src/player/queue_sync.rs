@@ -91,6 +91,14 @@ pub fn compact_track(t: &TrackListItem) -> Value {
     Value::Object(m)
 }
 
+/// The tracks a device shares of its play order (the queue snapshot, or the
+/// queue a `play_track` command sends): at most 50 around entry `index` of
+/// `len`, 24 before it where there are enough after.
+pub fn queue_window(index: usize, len: usize) -> std::ops::Range<usize> {
+    let start = (index as i64 - 24).min(len as i64 - 50).max(0) as usize;
+    start..(start + 50).min(len)
+}
+
 /// `buildPlaybackQueueSnapshot`: a contiguous window of at most 50 tracks
 /// holding the current one, trimmed from its farther edge to fit
 /// `max_bytes`. None when even the current track alone can't fit.
@@ -103,9 +111,9 @@ pub fn build_snapshot(
     max_bytes: usize,
 ) -> Option<Value> {
     let len = queue.len();
-    let offset = (index as i64 - 24).min(len as i64 - 50).max(0) as usize;
-    let mut tracks: Vec<Value> = queue[offset.min(len)..(offset + 50).min(len)].iter().map(compact_track).collect();
-    let mut offset = offset;
+    let window = queue_window(index, len);
+    let mut offset = window.start;
+    let mut tracks: Vec<Value> = queue[window].iter().map(compact_track).collect();
     let mut rel = if len > 0 { index - offset } else { 0 };
     let mut sizes: Vec<usize> = tracks.iter().map(|t| t.to_string().len()).collect();
     let envelope = |tracks: usize, offset: usize, rel: usize| {

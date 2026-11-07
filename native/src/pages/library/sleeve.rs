@@ -26,8 +26,8 @@ pub const STACK_BELOW_PX: f32 = 720.0;
 pub struct SleeveAlbum<'a> {
     pub title: String,
     pub cover: Option<String>,
-    pub credits: Vec<AlbumCredit>,
-    pub facts: Vec<AlbumFact>,
+    pub credits: &'a [AlbumCredit],
+    pub facts: &'a [AlbumFact],
     /// What "Saved" means on this kind of album page.
     pub saved_hint: &'static str,
     /// The whole list, for Play all.
@@ -182,7 +182,7 @@ fn details(t: &Theme, s: &mut Sleeve, width: f32) -> El {
             .collect(),
     };
     let mut d = col().key("sleeve-details").w_full().min_w(0.0).pt(13.0).child(head).child(facts_grid(t, width, facts));
-    d = d.child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert());
+    d = crate::ui::css_border_top(d, 1.0, t.c.border);
     d
 }
 
@@ -219,12 +219,6 @@ fn name_block(t: &Theme, s: &Sleeve, width: f32, title_style: TextStyle) -> El {
         }
     }
     name
-}
-
-/// The list's width: beside the column, or the content's when stacked.
-pub fn list_width(t: &Theme, cx: &mut Cx<App>) -> f32 {
-    let content_w = cx.layout_size("sleeve-view").map_or(956.0 + 2.0 * t.pad(), |r| r[0]) - 2.0 * t.pad();
-    if content_w < STACK_BELOW_PX { content_w } else { content_w - 280.0 - 49.0 }
 }
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {

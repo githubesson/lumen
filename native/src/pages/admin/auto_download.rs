@@ -3,12 +3,14 @@
 
 use rune::{El, Span, TextEdit, col, row, text};
 
-use super::requests::{self as rq, TidalAutoDownloadStatus};
 use super::table::{self, Cell, Col, Line, Part};
-use super::{Res, call, format, load, parts};
+use super::{call, format, parts};
+use crate::api::tidal::{self as api, TidalAutoDownloadStatus, TidalDownload, TidalDownloadStatus};
 use crate::app::App;
+use crate::core::tidal::status::tidal_auto_download_problems;
+use crate::resource::{Res, load};
 use crate::theme::Theme;
-use crate::ui::forms::{SelectOption, SelectVariant, select};
+use crate::ui::forms::{SelectVariant, select};
 use crate::ui::{Btn, font, icons as i, mono, tnum};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,8 +49,8 @@ impl Default for State {
 fn st(app: &mut App) -> &mut State {
     &mut app.pages.admin.auto
 }
-fn status_res(app: &mut App) -> &mut Res<TidalAutoDownloadStatus> {
-    &mut app.pages.admin.auto.status
+fn status_res(app: &mut App) -> Option<&mut Res<TidalAutoDownloadStatus>> {
+    Some(&mut app.pages.admin.auto.status)
 }
 fn subdir_edit(app: &mut App) -> &mut TextEdit {
     &mut app.pages.admin.auto.subdir
@@ -87,7 +89,7 @@ pub fn mount(app: &mut App) {
 }
 
 fn reload(app: &mut App, then: impl FnOnce(&mut App) + Send + 'static) {
-    load(app, status_res, rq::tidal_auto_download, "Failed to load TIDAL auto-download status.", move |app| {
+    load(app, status_res, api::tidal_auto_download, "Failed to load TIDAL auto-download status.", move |app| {
         st(app).sync_subdir();
         then(app);
     });
@@ -119,7 +121,7 @@ fn save(app: &mut App) {
     let subdir = s.subdir.text.trim().to_string();
     call(
         app,
-        move |c| rq::save_tidal_auto_download(c, (!root.is_empty()).then_some(root.as_str()), &subdir),
+        move |c| api::save_tidal_auto_download_settings(c, (!root.is_empty()).then_some(root.as_str()), &subdir),
         |app, r| match r {
             Ok(saved) => {
                 // What the server stored becomes the status; the edits give way to it.
@@ -146,8 +148,8 @@ fn retry(app: &mut App) {
     }
     s.busy = Some(Busy::Retry);
     s.action_error = None;
-    call(app, rq::retry_tidal_auto_downloads, |app, r| match r {
-        Ok(()) => reload(app, |app| st(app).busy = None),
+    call(app, api::retry_tidal_auto_downloads, |app, r| match r {
+        Ok(_) => reload(app, |app| st(app).busy = None),
         Err(e) => {
             let s = st(app);
             s.action_error = Some(super::error_message(&e, "Could not retry failed downloads."));
@@ -167,7 +169,9 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
     let inner = width - 34.0;
     let mut card = parts::surface(t, 16.0).gap(14.0);
 
-    let mut refresh_btn = Btn::new("admin-auto-refresh", "Refresh").small().icon(&i::REFRESH_CW).disabled(s.status.loading).build(t);
+    let refresh_spec = Btn::new("admin-auto-refresh", "Refresh").small().icon(&i::REFRESH_CW).disabled(s.status.loading);
+    let refresh_w = refresh_spec.width();
+    let mut refresh_btn = refresh_spec.build(t);
     if !s.status.loading {
         refresh_btn = refresh_btn.on_press(refresh);
     }
@@ -180,7 +184,6 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
                 col().shrink().min_w(0.0).child(parts::eyebrow(t, "Playlist auto-download")).child({
                     let s = "Turn it on from a playlist's page. Its TIDAL tracks are saved here and the playlist switches to the library copies.";
                     let style = font(14.0, 400.0);
-                    let refresh_w = 20.0 + 14.0 + 4.0 + table::advance("Refresh", font(13.0, 500.0));
                     let w = table::advance(s, style).ceil().min(inner - refresh_w - 12.0);
                     parts::para(s, Vec::new(), style, t.c.muted_foreground, w)
                 }),
@@ -191,13 +194,8 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
     if let Some(e) = s.action_error.as_deref().or(s.status.error.as_deref()) {
         card = card.child(parts::banner(t, e));
     }
-    if let Some(st) = status {
-        if !st.ffmpeg {
-            card = card.child(parts::banner(t, "ffmpeg is not installed on the server, so downloads are paused."));
-        }
-        if let Some(e) = st.destination_error.as_deref().filter(|e| !e.is_empty()) {
-            card = card.child(parts::banner(t, &format!("Download folder unavailable: {e}")));
-        }
+    for problem in tidal_auto_download_problems(status) {
+        card = card.child(parts::banner(t, &problem));
     }
 
     let summary = status.map(|s| &s.summary);
@@ -224,18 +222,8 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
 
     // The form: folder, subfolder, then the buttons, in auto-fit columns.
     let roots = app.pages.admin.library.roots.data.as_deref().unwrap_or(&[]);
-    let options: Vec<SelectOption> = roots
-        .iter()
-        .map(|r| {
-            let label = if r.primary {
-                format!("Primary - {}", r.path)
-            } else {
-                format!("{} - {}", if r.label.is_empty() { "Source" } else { &r.label }, r.path)
-            };
-            // Files under a disabled root can't be streamed.
-            SelectOption { disabled: !r.exists || !r.enabled, ..SelectOption::new(r.id.clone(), label) }
-        })
-        .collect();
+    // Picked by id; files under a disabled root can't be streamed.
+    let options = parts::root_options(roots, |r| r.id.clone(), true);
     let folder = select(
         app,
         t,
@@ -247,7 +235,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
         options.is_empty(),
         set_root,
     );
-    let subdir = parts::text_field(t, "admin-auto-subdir", &s.subdir, "TIDAL", subdir_edit, Some(save));
+    let subdir = parts::text_field(t, "admin-auto-subdir", &s.subdir, "TIDAL", subdir_edit, save);
     let failed = summary.is_some_and(|x| x.failed > 0);
     let mut retry_btn = Btn::new("admin-auto-retry", if s.busy == Some(Busy::Retry) { "Retrying..." } else { "Retry failed" })
         .small()
@@ -268,17 +256,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
         parts::field(t, "Subfolder", subdir),
         row().gap(8.0).justify_end().child(retry_btn).child(save_btn),
     ];
-    let (cols, w) = parts::fit_columns(inner, 220.0, 12.0, items.len());
-    let mut form = col().gap(12.0);
-    let mut line = row().gap(12.0).items_end();
-    for (k, item) in items.into_iter().enumerate() {
-        if k > 0 && k % cols == 0 {
-            form = form.child(line);
-            line = row().gap(12.0).items_end();
-        }
-        line = line.child(item.w(w));
-    }
-    card = card.child(form.child(line));
+    card = card.child(parts::auto_fit(items.into(), inner, 220.0, 12.0, true));
 
     if let Some(dest) = status.and_then(|s| s.destination.as_deref()).filter(|d| !d.is_empty()) {
         let s1 = "Saves to ";
@@ -309,11 +287,12 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
     card
 }
 
-fn downloads(t: &Theme, recent: &[rq::TidalDownload], width: f32) -> El {
+fn downloads(t: &Theme, recent: &[TidalDownload], width: f32) -> El {
     let rows = recent
         .iter()
         .map(|r| {
-            let mut status = vec![table::inline_badge(t, if r.status == "existing" { "in library" } else { &r.status }, r.status != "failed")];
+            let label = if r.status == TidalDownloadStatus::Existing { "in library" } else { r.status.as_str() };
+            let mut status = vec![table::inline_badge(t, label, r.status != TidalDownloadStatus::Failed)];
             if let Some(e) = r.error.as_deref().filter(|e| !e.is_empty()) {
                 let mut msg = e.to_string();
                 if let Some(next) = r.next_attempt_at.as_deref() {

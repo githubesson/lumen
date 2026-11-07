@@ -1,8 +1,6 @@
 //! Lumen's desktop client, drawn with Rune: a pixel-for-pixel port of the
 //! Electron frontend (`frontend/`).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
-// The port lands area by area; parts of the API layer wait for their pages.
-#![allow(dead_code)]
 
 mod api;
 mod app;
@@ -16,6 +14,7 @@ mod net;
 mod overlays;
 mod pages;
 mod player;
+mod resource;
 mod route;
 mod shell;
 mod theme;

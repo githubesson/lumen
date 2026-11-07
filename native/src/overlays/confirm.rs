@@ -193,14 +193,15 @@ fn go(app: &mut App) {
     }
     let Some(request) = s.request.as_mut() else { return };
     let id = request.id;
-    let Some(action) = request.action.take() else {
+    if request.action.is_none() {
         settle(app, id, true);
         return;
-    };
+    }
+    let Some(client) = app.client.clone() else { return };
+    let Some(action) = request.action.take() else { return };
     let fallback = request.spec.error_fallback.clone().unwrap_or_else(|| "Something went wrong.".into());
     s.busy = true;
     s.error = None;
-    let Some(client) = app.client.clone() else { return };
     app.net.run(
         move || action(&client),
         move |app, result| {
@@ -302,14 +303,13 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     if let Some(g) = spec.confirm_icon {
         confirm = confirm.icon(g).icon_size(16.0);
     }
-    let footer = row()
+    let footer = crate::ui::css_border_top(row(), 1.0, t.c.border)
         .key("confirm-actions")
         .w_full()
         .gap(8.0)
         .px(16.0)
         .pt(13.0)
         .pb(12.0)
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert())
         .child(el().grow(1.0).w(0.0).child(Btn::new("confirm-cancel", "Cancel").disabled(s.busy).build(t).w_full().on_press(cancel)))
         .child(el().grow(1.0).w(0.0).child(confirm.build(t).w_full().on_press(go)));
     Some(

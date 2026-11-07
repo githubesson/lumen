@@ -89,8 +89,7 @@ fn header(app: &App, t: &Theme, c: &Cols, selecting: bool) -> El {
     let mut h = row().key("playlist-thead").w_full().h(40.0).pb(1.0).fill(t.c.background);
     if selecting {
         let items = shown_source(app);
-        let sel = app.widgets.lists.get(TRACKS_LIST);
-        let (all, some) = (sel.all_selected(items), sel.some_selected(items));
+        let (all, some) = app.widgets.lists.selection(TRACKS_LIST).all_some(items);
         h = h.child(
             row().w(c.select).h_full().px(4.0).items_center().justify_center().child(
                 track_select::checkbox(
@@ -297,18 +296,11 @@ fn on_drag(app: &mut App, g: &mut rune::Drag, tx: &mut Tx, r: Gesture) {
             });
             // Auto-scroll: keep the rows around the gap in view.
             if let Some(slot) = drag.slot {
-                let keys: Vec<String> = d
-                    .tracks
-                    .as_deref()
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(|e| format!("pl-row-{}-{}", e.position, e.track_id))
-                    .collect();
-                if let Some(k) = keys.get(slot.saturating_sub(1)) {
-                    tx.scroll_into_view(k.clone());
-                }
-                if let Some(k) = keys.get(slot) {
-                    tx.scroll_into_view(k.clone());
+                let rows = d.tracks.as_deref().unwrap_or(&[]);
+                for n in [slot.saturating_sub(1), slot] {
+                    if let Some(e) = rows.get(n) {
+                        tx.scroll_into_view(format!("pl-row-{}-{}", e.position, e.track_id));
+                    }
                 }
             }
         }
@@ -355,8 +347,7 @@ pub fn page(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, pe
     let selecting = selecting(app);
     let width = cx.layout_size("playlist-head").map_or(956.0, |s| s[0]);
     let c = cols(width, selecting);
-    let show_added_by =
-        p.visibility == Visibility::Collaborative || rows.iter().any(|t| t.added_by_id.as_deref().is_some_and(|by| by != p.owner_id));
+    let show_added_by = p.visibility == Visibility::Collaborative || d.adders.iter().any(|by| *by != p.owner_id);
     let reorderable = perms.can_edit_tracks && d.sort == SortKey::Custom && q.is_empty() && !selecting;
     let can_edit = perms.can_edit_tracks;
     let mut panel = col().w_full().gap(8.0);
@@ -395,7 +386,7 @@ pub fn page(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, pe
                     count: d.shown_idx.len(),
                     now: app.player.current().is_some_and(|c| c.id == e.track_id),
                     playing: app.player.playing,
-                    selected: sel.is_some_and(|s| s.ids.contains(&e.track_id)),
+                    selected: sel.ids.contains(&e.track_id),
                     selecting,
                     can_edit,
                     show_added_by,

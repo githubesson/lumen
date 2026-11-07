@@ -185,8 +185,8 @@ pub fn request_panel(app: &mut App, tx: &mut Tx, next: Option<Panel>, instant: b
     match app.ui.player.mini.request(next, instant) {
         Step::Nothing => {}
         Step::Grow => {
-            app.ui.player.mini.anchor = window_bridge::mini_player_panel_anchor(app);
-            match window_bridge::set_mini_player_panel(app, tx, true) {
+            app.ui.player.mini.anchor = window_bridge::mini_player_panel_anchor();
+            match window_bridge::set_mini_player_panel(tx, true) {
                 Some(anchor) => app.ui.player.mini.anchor = anchor,
                 None => {
                     let m = &mut app.ui.player.mini;
@@ -197,7 +197,7 @@ pub fn request_panel(app: &mut App, tx: &mut Tx, next: Option<Panel>, instant: b
         }
         Step::ShrinkNow => {
             tx.instant();
-            window_bridge::set_mini_player_panel(app, tx, false);
+            window_bridge::set_mini_player_panel(tx, false);
         }
         Step::ShrinkAfterMorph => tx.wake_after(CLOSE_MORPH),
     }
@@ -216,7 +216,7 @@ pub fn poll(app: &mut App, tx: &mut Tx, failed: bool) -> bool {
         match m.shrink_due(Instant::now()) {
             Some(wait) => tx.wake_after(wait),
             None => {
-                window_bridge::set_mini_player_panel(app, tx, false);
+                window_bridge::set_mini_player_panel(tx, false);
                 changed = true;
             }
         }
@@ -410,7 +410,7 @@ fn panel_layout(app: &App, t: &Theme, cx: &mut Cx<App>, panel: Panel) -> El {
         .gap(8.0)
         .items_center()
         .transition(rune::Transition::asymmetric(rune::Transition::opacity(), rune::Transition::none()))
-        .child(super::centred(crate::ui::line(panel.title(), font(14.0, 600.0), t.c.foreground), 20.3));
+        .child(crate::ui::centred_lh(crate::ui::line(panel.title(), font(14.0, 600.0), t.c.foreground), 20.3));
     match panel {
         Panel::Queue => {
             if let Some(pos) = super::queue::position(app) {
@@ -445,7 +445,7 @@ fn panel_layout(app: &App, t: &Theme, cx: &mut Cx<App>, panel: Panel) -> El {
                     ),
                 )
             } else {
-                c.child(super::lyrics::content(app, t, cx, "mini-lyrics-scroll", true))
+                c.child(super::lyrics::content(app, t, cx, "mini-lyrics-scroll"))
             }
         }
         Panel::Error => {

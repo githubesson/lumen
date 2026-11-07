@@ -42,6 +42,12 @@ where
     })
 }
 
+/// `#[serde(default = "default_true")]`: a flag that holds unless the server
+/// says otherwise (`root_exists !== false`).
+pub fn default_true() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

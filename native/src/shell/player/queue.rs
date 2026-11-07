@@ -6,7 +6,7 @@ use rune::{Align, Color, Cursor, Cx, El, Side, col, el, row, text};
 
 use super::adapters::{self, MenuContext};
 use super::{Popover, close_btn, pop_box, pop_layer, position_pill};
-use crate::api::{TrackListItem, media};
+use crate::api::TrackListItem;
 use crate::app::App;
 use crate::ui::tooltip::TipExt;
 use crate::format::display_text;
@@ -49,7 +49,7 @@ pub fn popover(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .pb(4.0)
         .gap(6.0)
         .items_center()
-        .child(super::centred(text("Queue").font(font(13.0, 600.0)).color(t.c.foreground), 18.85));
+        .child(crate::ui::centred_lh(text("Queue").font(font(13.0, 600.0)).color(t.c.foreground), 18.85));
     if let Some(pos) = position(app) {
         head = head.child(position_pill(t, &pos));
     }
@@ -111,7 +111,7 @@ pub fn list(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, close_on_jump: 
 /// The playing track: a full-width band tinted like the share card's
 /// footer, with a larger cover, between hairlines.
 fn now_playing_band(app: &App, t: &Theme, scope: &str, track: &TrackListItem, index: usize, menus: bool) -> El {
-    let cover = media::track_cover(&track.id, track.album_id.as_deref(), track.cover_url.as_deref(), Some(96));
+    let cover = track.cover_at(Some(96));
     let text_col = col()
         .grow(1.0)
         .min_w(0.0)
@@ -131,22 +131,19 @@ fn now_playing_band(app: &App, t: &Theme, scope: &str, track: &TrackListItem, in
         .child(cover_art(t, &app.images, Some(&cover), &track.title, 48.0, 48.0, t.radius_md()))
         .child(text_col);
     if menus {
-        let track = track.clone();
-        band = band.on_secondary_press(move |app: &mut App, at, tx: &mut rune::Tx| {
-            let queue = app.player.queue.clone();
-            adapters::open_track_menu(app, tx, &track, at, MenuContext { queue: Some(queue), jump_to: Some(index) });
-        });
+        band = band.on_secondary_press(menu_at(index, &track.id));
     }
     band
 }
 
 /// An "Up next" row: a button that jumps playback to `index`.
 fn queue_row(app: &App, t: &Theme, scope: &str, track: &TrackListItem, index: usize, close_on_jump: bool, menus: bool) -> El {
-    let cover = media::track_cover(&track.id, track.album_id.as_deref(), track.cover_url.as_deref(), Some(64));
+    let cover = track.cover_at(Some(64));
+    let title = display_text(Some(&track.title), "");
     let text_col = col()
         .grow(1.0)
         .min_w(0.0)
-        .child(line(display_text(Some(&track.title), ""), with_lh(font(13.0, 500.0), 16.0), t.c.popover_foreground))
+        .child(line(title.clone(), with_lh(font(13.0, 500.0), 16.0), t.c.popover_foreground))
         .child(line(display_text(track.artist.as_deref(), "Unknown artist"), with_lh(font(12.0, 400.0), 16.0), t.c.muted_foreground));
     let mut r = row()
         .key(format!("{scope}-row-{index}"))
@@ -157,7 +154,7 @@ fn queue_row(app: &App, t: &Theme, scope: &str, track: &TrackListItem, index: us
         .items_center()
         .radius(t.radius_md())
         .role("button")
-        .label(display_text(Some(&track.title), ""))
+        .label(title)
         .cursor(Cursor::Pointer)
         .focusable(true)
         .hover(t.c.accent)
@@ -171,11 +168,19 @@ fn queue_row(app: &App, t: &Theme, scope: &str, track: &TrackListItem, index: us
         .child(cover_art(t, &app.images, Some(&cover), &track.title, 32.0, 32.0, t.radius_sm()))
         .child(text_col);
     if menus {
-        let track = track.clone();
-        r = r.on_secondary_press(move |app: &mut App, at, tx: &mut rune::Tx| {
-            let queue = app.player.queue.clone();
-            adapters::open_track_menu(app, tx, &track, at, MenuContext { queue: Some(queue), jump_to: Some(index) });
-        });
+        r = r.on_secondary_press(menu_at(index, &track.id));
     }
     r
+}
+
+/// A queue row's right-click: the track menu for the queue's track at
+/// `index` (still `id`), with the queue to play from. The row looks its
+/// track up when pressed rather than keeping a copy of it.
+fn menu_at(index: usize, id: &str) -> impl Fn(&mut App, rune::PointerPress, &mut rune::Tx) + 'static {
+    let id = id.to_string();
+    move |app: &mut App, at, _tx: &mut rune::Tx| {
+        let Some(track) = app.player.queue.get(index).filter(|t| t.id == id).cloned() else { return };
+        let queue = app.player.queue.clone();
+        adapters::open_track_menu(app, &track, at, MenuContext { queue: Some(queue) });
+    }
 }

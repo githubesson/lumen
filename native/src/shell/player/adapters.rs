@@ -2,7 +2,7 @@
 //! context menu (`useTrackContextMenu`), the favourites store
 //! (`useFavorites`) and `PlayingBars`.
 
-use rune::{El, PointerPress, Tx};
+use rune::{El, PointerPress};
 
 use crate::api::TrackListItem;
 use crate::app::App;
@@ -13,13 +13,10 @@ use crate::theme::Theme;
 pub struct MenuContext {
     /// The list the row came from, for "Play" from it.
     pub queue: Option<Vec<TrackListItem>>,
-    /// The row's place in the player's queue.
-    pub jump_to: Option<usize>,
 }
 
 /// Open the track context menu for `track` at the pointer.
-pub fn open_track_menu(app: &mut App, tx: &mut Tx, track: &TrackListItem, at: PointerPress, ctx: MenuContext) {
-    let _ = tx;
+pub fn open_track_menu(app: &mut App, track: &TrackListItem, at: PointerPress, ctx: MenuContext) {
     let menu = crate::overlays::track_menu::MenuContext { queue: ctx.queue.unwrap_or_default(), ..Default::default() };
     crate::overlays::track_menu::open(app, track.clone(), [at.x, at.y], menu);
 }

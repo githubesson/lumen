@@ -4,19 +4,19 @@
 //! (`DesktopUpdates.tsx`).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-use rune::{Color, El, Shadow, TextEdit, el, row};
+use rune::{El, TextEdit, el, row};
 
-use super::desktop_bridge::{self as bridge, DesktopConfig, Toggle};
+use super::desktop_bridge::{self as bridge, Toggle};
 use super::{Desc, RowFn, SettingDef, select, setting_row};
 use crate::app::App;
-use crate::api::lastfm::LastFmStatus;
-use crate::theme::{Density, Layout, Mode, Theme, color_mix};
+use crate::core::lastfm::{LastFmConnectionKind, LastFmWait};
+use crate::desktop::DesktopConfig;
+use crate::desktop::updater::{UpdateBranch, UpdateState};
+use crate::theme::{Density, Layout, Mode, Theme};
 use crate::ui::forms::SelectOption;
 use crate::ui::kit::switch;
-use crate::ui::{Btn, css_border, font, icons as i, tnum};
+use crate::ui::{Btn, font, icons as i, tnum};
 
 fn opts(list: &[(&str, &str)]) -> Vec<SelectOption> {
     list.iter().map(|(v, l)| SelectOption::new(*v, *l)).collect()
@@ -110,8 +110,17 @@ pub fn playback<'a>(app: &'a App, t: &'a Theme) -> Vec<SettingDef<'a>> {
                     list.push(SelectOption::new(id, label));
                 }
             }
-            let c = select(app, t, "settings-output", list, &bridge::audio_output(app), false, |app, v| bridge::set_audio_output(app, v));
-            setting_row(t, "Output device", Some(Desc::Text("Where Lumen plays audio.".into())), Some(c), None, None, last)
+            // `OutputDeviceSetting` lists the devices again each time it shows.
+            let c = select(app, t, "settings-output", list, &bridge::audio_output(app), false, |app, v| bridge::set_audio_output(app, v))
+                .label("Audio output device")
+                .on_visible(|app: &mut App, shown: bool, tx: &mut rune::Tx| {
+                    if shown {
+                        bridge::refresh_audio_outputs(app);
+                    }
+                    tx.live_only();
+                });
+            let error = bridge::audio_output_error(app);
+            setting_row(t, "Output device", Some(Desc::Text("Where Lumen plays audio.".into())), Some(c), None, error.as_deref(), last)
         }));
     }
     out.push(one("smooth mix crossfade fade transition gapless songs", move |last| {
@@ -149,15 +158,13 @@ pub struct DesktopUi {
     pub server_error: Option<String>,
     pub pending: HashSet<Toggle>,
     pub errors: HashMap<Toggle, String>,
-    /// The now-playing address was just copied (until this generation ends).
-    pub copied: u64,
-    pub copy_gen: u64,
+    /// The now-playing address was just copied.
+    pub copied: crate::ui::flash::Flag,
     pub renewing: bool,
     pub renew_error: Option<String>,
 }
 
-/// Binds a field to its `TextEdit` in the app state.
-pub type Bind = fn(&mut App) -> &mut TextEdit;
+pub use crate::ui::forms::Bind;
 
 /// `.input.settings-input` (`mono`: tabular figures at 12 px). Without a
 /// `bind` it can't be edited (`readOnly`).
@@ -178,30 +185,7 @@ pub fn settings_input_with(
     on_change: Option<fn(&mut App)>,
     on_submit: Option<fn(&mut App)>,
 ) -> El {
-    let focused = edit.focused;
-    let mut field = css_border(el(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
-        .key(format!("{key}-box"))
-        .h(32.0)
-        .w_full()
-        .min_w(0.0)
-        .radius(t.radius_lg())
-        .fill(t.c.input_bg)
-        .items_center();
-    if focused {
-        field = field
-            .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: t.c.focus_ring, inset: false })
-            .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 4.0, color: color_mix(t.c.ring, 0.3, Color::TRANSPARENT), inset: false });
-    }
-    let mut input = rune::text_input(edit, tnum(font(12.0, 400.0)))
-        .key(key)
-        .single_line()
-        .placeholder(placeholder, t.c.muted_foreground)
-        .label(label)
-        .color(t.c.foreground)
-        .selection_color(t.c.selection)
-        .grow(1.0)
-        .min_w(0.0)
-        .px(11.0);
+    let mut input = crate::ui::forms::text_field(t, key, edit, tnum(font(12.0, 400.0)), placeholder).label(label).min_w(0.0);
     if let Some(b) = bind {
         input = input.on_edit(b);
     }
@@ -211,7 +195,7 @@ pub fn settings_input_with(
     if let Some(f) = on_submit {
         input = input.on_submit(move |app: &mut App, _| f(app));
     }
-    field.child(input)
+    crate::ui::forms::input_box(t, key, edit.focused, input).min_w(0.0)
 }
 
 pub fn desktop<'a>(app: &'a App, t: &'a Theme, d: &DesktopConfig) -> Vec<SettingDef<'a>> {
@@ -246,7 +230,7 @@ pub fn desktop<'a>(app: &'a App, t: &'a Theme, d: &DesktopConfig) -> Vec<Setting
 }
 
 fn save_server(app: &mut App) {
-    let Some(current) = bridge::config(app).map(|c| c.backend_url) else { return };
+    let current = bridge::config(app).backend_url;
     let ui = &mut app.overlays.settings.desktop;
     let address = ui.server.text.clone();
     if address.trim() == current || ui.server_busy {
@@ -309,12 +293,12 @@ pub(super) fn toggle_row(
     setting_row(t, label, Some(Desc::Text(description.into())), Some(super::switch_control(sw)), below, err.as_deref(), last)
 }
 
-pub fn connections<'a>(app: &'a App, t: &'a Theme, d: Option<&DesktopConfig>) -> Vec<SettingDef<'a>> {
-    let mut out = vec![one("last.fm lastfm scrobbling scrobble connect account", move |last| lastfm_row(app, t, last))];
-    if let Some(d) = d.cloned() {
-        out.push(one("now playing api obs overlay stream widget local http server cover", move |last| now_playing_row(app, t, &d, last)));
-    }
-    out
+pub fn connections<'a>(app: &'a App, t: &'a Theme, d: &DesktopConfig) -> Vec<SettingDef<'a>> {
+    let d = d.clone();
+    vec![
+        one("last.fm lastfm scrobbling scrobble connect account", move |last| lastfm_row(app, t, last)),
+        one("now playing api obs overlay stream widget local http server cover", move |last| now_playing_row(app, t, &d, last)),
+    ]
 }
 
 fn now_playing_row(app: &App, t: &Theme, d: &DesktopConfig, last: bool) -> El {
@@ -325,7 +309,7 @@ fn now_playing_row(app: &App, t: &Theme, d: &DesktopConfig, last: bool) -> El {
     let error = ui.renew_error.clone().filter(|_| enabled).or_else(|| (enabled && !d.now_playing_api_error.is_empty()).then(|| d.now_playing_api_error.clone()));
     let below = match (&address, enabled) {
         (Some(addr), true) => {
-            let copied = ui.copied != 0 && ui.copied == ui.copy_gen;
+            let copied = ui.copied.on();
             let edit = TextEdit::new(addr.clone());
             let a = addr.clone();
             let copy = Btn::new("settings-np-copy", if copied { "Copied" } else { "Copy" })
@@ -341,7 +325,7 @@ fn now_playing_row(app: &App, t: &Theme, d: &DesktopConfig, last: bool) -> El {
                 ui.renewing = true;
                 ui.renew_error = None;
                 match bridge::renew_now_playing_token(app) {
-                    Ok(()) => app.overlays.settings.desktop.copied = 0,
+                    Ok(()) => app.overlays.settings.desktop.copied.clear(),
                     Err(_) => app.overlays.settings.desktop.renew_error = Some("Couldn't make a new token.".into()),
                 }
                 app.overlays.settings.desktop.renewing = false;
@@ -373,71 +357,27 @@ fn now_playing_row(app: &App, t: &Theme, d: &DesktopConfig, last: bool) -> El {
 
 /// `useCopiedFlag(2000)`: "Copied" for two seconds.
 fn flash_copied(app: &mut App) {
-    let ui = &mut app.overlays.settings.desktop;
-    ui.copy_gen += 1;
-    let gen_ = ui.copy_gen;
-    ui.copied = gen_;
-    let wait = !app.net.is_sync();
-    app.net.run(
-        move || {
-            if wait {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-            }
-        },
-        move |app, ()| {
-            let ui = &mut app.overlays.settings.desktop;
-            if ui.copied == gen_ {
-                ui.copied = 0;
-            }
-        },
-    );
+    crate::ui::flash::flash(app, |app| &mut app.overlays.settings.desktop.copied, 2000);
 }
 
 // ---------------------------------------------------------------- Last.fm
 
-/// `useLastFMConnection`.
-#[derive(Default)]
-pub struct LastFm {
-    pub status: Option<LastFmStatus>,
-    pub busy: bool,
-    pub error: Option<String>,
-    /// The running authorization wait; bumped to stop it.
-    poll: Arc<AtomicU64>,
-    /// Cancels the running wait's request loop.
-    waiting: Option<crate::api::Cancel>,
-}
-
-/// `lastFMConnectionState`: the row's description and error.
-pub fn lastfm_state(status: Option<&LastFmStatus>, error: Option<&str>) -> (String, Option<String>) {
-    let shown = error.map(str::to_string).or_else(|| status.and_then(|s| s.last_error.clone()).filter(|e| !e.is_empty()));
-    let Some(s) = status else { return ("Checking…".into(), shown) };
-    let desc = if !s.configured {
-        "Not set up on this server.".to_string()
-    } else if s.connected {
-        format!("Scrobbling as {}.", s.username.as_deref().filter(|u| !u.is_empty()).unwrap_or("your account"))
-    } else if s.pending {
-        "Waiting for you to approve Lumen on Last.fm.".to_string()
-    } else {
-        "Send what you play to your Last.fm profile.".to_string()
-    };
-    (desc, shown)
-}
-
+/// `useLastFMConnection` (`core::lastfm`), its requests run here.
 fn lastfm_row(app: &App, t: &Theme, last: bool) -> El {
     let lf = &app.overlays.settings.lastfm;
-    let (desc, error) = lastfm_state(lf.status.as_ref(), lf.error.as_deref());
-    let control = lf.status.as_ref().filter(|s| s.configured).map(|s| {
-        if s.connected {
-            Btn::new("settings-lastfm", "Disconnect").small().disabled(lf.busy).build(t).on_press(lastfm_disconnect)
-        } else {
-            Btn::new("settings-lastfm", if s.pending { "Restart" } else { "Connect" })
+    let view = lf.view();
+    let control = match view.kind {
+        LastFmConnectionKind::Checking | LastFmConnectionKind::Unavailable => None,
+        LastFmConnectionKind::Connected => Some(Btn::new("settings-lastfm", "Disconnect").small().disabled(lf.busy).build(t).on_press(lastfm_disconnect)),
+        LastFmConnectionKind::Pending | LastFmConnectionKind::Disconnected => Some(
+            Btn::new("settings-lastfm", if view.kind == LastFmConnectionKind::Pending { "Restart" } else { "Connect" })
                 .small()
                 .disabled(lf.busy)
                 .build(t)
-                .on_press(lastfm_connect)
-        }
-    });
-    setting_row(t, "Last.fm scrobbling", Some(Desc::Text(desc)), control, None, error.as_deref(), last)
+                .on_press(lastfm_connect),
+        ),
+    };
+    setting_row(t, "Last.fm scrobbling", Some(Desc::Text(view.description)), control, None, view.error.as_deref(), last)
 }
 
 fn lastfm_load(app: &mut App) {
@@ -449,107 +389,62 @@ fn lastfm_load(app: &mut App) {
             if app.overlays.settings.session != session {
                 return;
             }
-            app.overlays.settings.lastfm.status = result.ok();
-            lastfm_wait(app);
+            if let Some(wait) = app.overlays.settings.lastfm.status_loaded(result) {
+                lastfm_wait(app, wait);
+            }
         },
     );
 }
 
 /// While Last.fm waits for approval, ask every 3 s whether it came
 /// (`waitForLastFMAuthorization`), for up to ten minutes.
-fn lastfm_wait(app: &mut App) {
-    let lf = &mut app.overlays.settings.lastfm;
-    let Some(s) = &lf.status else { return };
-    if !s.configured || s.connected || !s.pending {
-        return;
-    }
-    lf.error = None;
-    let id = lf.poll.fetch_add(1, Ordering::Relaxed) + 1;
-    if let Some(old) = lf.waiting.take() {
-        old.cancel();
-    }
-    let cancel = crate::api::Cancel::new();
-    lf.waiting = Some(cancel.clone());
+fn lastfm_wait(app: &mut App, wait: LastFmWait) {
     let Some(client) = app.client.clone() else { return };
     app.net.run(
-        move || match crate::api::lastfm::wait_for_lastfm_authorization(&client, crate::api::lastfm::default_lastfm_poll(), &cancel) {
-            Err(e) if e.kind == crate::api::client::ErrorKind::Aborted => None,
-            other => Some(other),
-        },
-        move |app, result| {
-            let lf = &mut app.overlays.settings.lastfm;
-            let Some(result) = result else { return };
-            if lf.poll.load(Ordering::Relaxed) != id {
-                return;
-            }
-            match result {
-                Ok(username) => {
-                    let configured = lf.status.as_ref().is_none_or(|s| s.configured);
-                    lf.status = Some(LastFmStatus { configured, connected: true, pending: false, username: Some(username), last_error: None });
-                }
-                Err(e) => {
-                    if let Some(s) = lf.status.as_mut() {
-                        s.pending = false;
-                    }
-                    lf.error = Some(crate::overlays::error_message(&e, "Could not complete Last.fm authorization."));
-                }
-            }
-        },
+        move || (wait.ticket, wait.run(&client)),
+        |app, (ticket, result)| app.overlays.settings.lastfm.wait_finished(ticket, result),
     );
 }
 
 fn lastfm_connect(app: &mut App) {
+    let Some(client) = app.client.clone() else { return };
     let lf = &mut app.overlays.settings.lastfm;
     if lf.busy {
         return;
     }
-    lf.busy = true;
-    lf.error = None;
-    let Some(client) = app.client.clone() else { return };
+    lf.connect();
+    let session = app.overlays.settings.session;
     app.net.run(
         move || crate::api::lastfm::connect_lastfm(&client),
-        |app, result| {
-            let lf = &mut app.overlays.settings.lastfm;
-            lf.busy = false;
-            match result {
-                // Opening needs the window's Tx: from the next frame.
-                Ok(r) => crate::overlays::later(app, move |app: &mut App, tx: &mut rune::Tx| {
-                    match crate::desktop::open_external(tx, &r.authorization_url) {
-                        Ok(()) => {
-                            if let Some(s) = app.overlays.settings.lastfm.status.as_mut() {
-                                s.pending = true;
-                                s.last_error = None;
-                            }
-                            lastfm_wait(app);
-                        }
-                        Err(_) => app.overlays.settings.lastfm.error = Some("Could not open Last.fm authorization.".into()),
-                    }
-                }),
-                Err(e) => lf.error = Some(crate::overlays::error_message(&e, "Could not connect Last.fm.")),
+        move |app, result| {
+            if app.overlays.settings.session != session {
+                return;
             }
+            let Some(url) = app.overlays.settings.lastfm.connect_started(result) else { return };
+            // Opening needs the window's Tx: from the next frame.
+            crate::overlays::later(app, move |app: &mut App, tx: &mut rune::Tx| {
+                let opened = crate::desktop::open_external(tx, &url).is_ok();
+                if let Some(wait) = app.overlays.settings.lastfm.opened(opened) {
+                    lastfm_wait(app, wait);
+                }
+            });
         },
     );
 }
 
 fn lastfm_disconnect(app: &mut App) {
+    let Some(client) = app.client.clone() else { return };
     let lf = &mut app.overlays.settings.lastfm;
     if lf.busy {
         return;
     }
-    lf.busy = true;
-    lf.error = None;
-    let Some(client) = app.client.clone() else { return };
+    lf.disconnect();
+    let session = app.overlays.settings.session;
     app.net.run(
         move || crate::api::lastfm::disconnect_lastfm(&client),
-        |app, result| {
-            let lf = &mut app.overlays.settings.lastfm;
-            lf.busy = false;
-            match result {
-                Ok(()) => {
-                    let configured = lf.status.as_ref().is_none_or(|s| s.configured);
-                    lf.status = Some(LastFmStatus { configured, connected: false, pending: false, username: None, last_error: None });
-                }
-                Err(e) => lf.error = Some(crate::overlays::error_message(&e, "Could not disconnect Last.fm.")),
+        move |app, result| {
+            if app.overlays.settings.session == session {
+                app.overlays.settings.lastfm.disconnected(result);
             }
         },
     );
@@ -557,42 +452,42 @@ fn lastfm_disconnect(app: &mut App) {
 
 // ---------------------------------------------------------------- updates
 
-/// `useDesktopUpdates`: the unsaved channel and source, and the work running.
+/// `useDesktopUpdates`: the unsaved channel and source, started from the
+/// status as the dialog opens, and the last save's failure.
 #[derive(Default)]
 pub struct UpdatesUi {
-    pub initialized: bool,
-    pub branch: String,
+    /// The channel being edited; None when there was no status to start from.
+    pub branch: Option<UpdateBranch>,
     pub repo: TextEdit,
-    pub busy: bool,
     pub error: Option<String>,
 }
 
 pub fn updates<'a>(app: &'a App, t: &'a Theme) -> Vec<SettingDef<'a>> {
     let Some(status) = bridge::update_status(app) else { return Vec::new() };
     let ui = &app.overlays.settings.updates;
-    let branch = if ui.initialized { ui.branch.clone() } else { status.branch.clone() };
-    let repo = if ui.initialized { ui.repo.text.clone() } else { status.repo_url.clone() };
+    let branch = ui.branch.unwrap_or(status.branch);
+    let repo = if ui.branch.is_some() { ui.repo.text.as_str() } else { status.repo_url.as_str() };
     let dirty = branch != status.branch || repo.trim() != status.repo_url;
-    let checking = status.state == "checking" || status.state == "downloading";
-    let failed = status.state == "error" || ui.error.is_some();
-    let busy = ui.busy;
+    let checking = matches!(status.state, UpdateState::Checking | UpdateState::Downloading);
+    let failed = status.state == UpdateState::Error || ui.error.is_some();
     let rows: Vec<RowFn> = vec![
         Box::new(move |last| {
-            let c = select(app, t, "settings-update-channel", opts(&[("main", "Main"), ("dev", "Dev")]), &branch, busy || checking, |app, v| {
-                let ui = &mut app.overlays.settings.updates;
-                ui.branch = v.to_string();
+            let c = select(app, t, "settings-update-channel", opts(&[("main", "Main"), ("dev", "Dev")]), branch.as_str(), checking, |app, v| {
+                if let Some(b) = UpdateBranch::parse(v) {
+                    app.overlays.settings.updates.branch = Some(b);
+                }
             });
             setting_row(t, "Update channel", Some(Desc::Text("Dev gets new builds sooner.".into())), Some(c), None, None, last)
         }),
         Box::new(move |last| {
-            let save = Btn::new("settings-update-save", "Save").small().disabled(busy || checking || !dirty).build(t).on_press(save_updates);
+            let save = Btn::new("settings-update-save", "Save").small().disabled(checking || !dirty).build(t).on_press(save_updates);
             let field = settings_input(
                 t,
                 "settings-update-repo",
                 &app.overlays.settings.updates.repo,
                 &status.default_repo_url,
                 "Update repository URL",
-                (!(busy || checking)).then_some((|app: &mut App| &mut app.overlays.settings.updates.repo) as Bind),
+                (!checking).then_some((|app: &mut App| &mut app.overlays.settings.updates.repo) as Bind),
             );
             setting_row(
                 t,
@@ -606,19 +501,17 @@ pub fn updates<'a>(app: &'a App, t: &'a Theme) -> Vec<SettingDef<'a>> {
         }),
         Box::new(move |last| {
             let line = app.overlays.settings.updates.error.clone().unwrap_or_else(|| {
-                if status.message.is_empty() { status.state.clone() } else { status.message.clone() }
+                if status.message.is_empty() { status.state.as_str().to_string() } else { status.message.clone() }
             });
             let button = if status.can_install {
-                Btn::new("settings-update-go", "Restart & install").small().primary().disabled(busy).build(t).on_press_tx(|app: &mut App, tx: &mut rune::Tx| {
+                Btn::new("settings-update-go", "Restart & install").small().primary().build(t).on_press_tx(|app: &mut App, tx: &mut rune::Tx| {
                     app.overlays.settings.updates.error = None;
                     bridge::install_update(app, tx)
                 })
-            } else if status.state == "available" && bridge::can_download() {
-                Btn::new("settings-update-go", "Download").small().primary().disabled(busy).build(t).on_press(|app: &mut App| {
-                    run_update(app, bridge::download_update)
-                })
+            } else if status.state == UpdateState::Available {
+                Btn::new("settings-update-go", "Download").small().primary().build(t).on_press(|app: &mut App| run_update(app, bridge::download_update))
             } else {
-                let label = if status.state == "downloading" {
+                let label = if status.state == UpdateState::Downloading {
                     "Downloading…"
                 } else if checking {
                     "Checking…"
@@ -627,7 +520,7 @@ pub fn updates<'a>(app: &'a App, t: &'a Theme) -> Vec<SettingDef<'a>> {
                 };
                 Btn::new("settings-update-go", label)
                     .small()
-                    .disabled(busy || checking || !status.can_check || dirty)
+                    .disabled(checking || !status.can_check || dirty)
                     .build(t)
                     .on_press(|app: &mut App| run_update(app, bridge::check_for_updates))
             };
@@ -647,15 +540,14 @@ fn run_update(app: &mut App, call: fn(&mut App)) {
 fn save_updates(app: &mut App) {
     let Some(status) = bridge::update_status(app) else { return };
     let ui = &app.overlays.settings.updates;
-    let branch = ui.branch.clone();
+    let branch = ui.branch.unwrap_or(status.branch);
     let repo = if ui.repo.text.trim().is_empty() { status.default_repo_url.clone() } else { ui.repo.text.trim().to_string() };
-    let result = bridge::save_update_config(app, &branch, &repo);
+    let result = bridge::save_update_config(app, branch.as_str(), &repo);
     let ui = &mut app.overlays.settings.updates;
-    ui.busy = false;
     match result {
         Ok(s) => {
-            ui.branch = s.branch.clone();
-            ui.repo = TextEdit::new(s.repo_url.clone());
+            ui.branch = Some(s.branch);
+            ui.repo = TextEdit::new(s.repo_url);
             ui.error = None;
         }
         Err(e) => ui.error = Some(if e.is_empty() { "Could not save the update source.".into() } else { e }),
@@ -666,28 +558,24 @@ fn save_updates(app: &mut App) {
 
 /// The dialog opened: load Last.fm, start the drafts from what's saved.
 pub fn on_open(app: &mut App) {
-    let server = bridge::config(app).map(|c| c.backend_url).unwrap_or_default();
+    let server = bridge::config(app).backend_url;
+    let updates = bridge::update_status(app).map(|status| UpdatesUi {
+        branch: Some(status.branch),
+        repo: TextEdit::new(if status.repo_url.is_empty() { &status.default_repo_url } else { &status.repo_url }),
+        error: None,
+    });
     let s = &mut app.overlays.settings;
     s.desktop = DesktopUi { server: TextEdit::new(server), ..Default::default() };
     s.lastfm.error = None;
     s.lastfm.busy = false;
-    s.updates = UpdatesUi::default();
-    if let Some(status) = s.updater.clone() {
-        s.updates = UpdatesUi { initialized: true, branch: status.branch.clone(), repo: TextEdit::new(status.repo_url.clone()), ..Default::default() };
-        if s.updates.repo.text.is_empty() {
-            s.updates.repo = TextEdit::new(status.default_repo_url);
-        }
-    }
+    s.updates = updates.unwrap_or_default();
     lastfm_load(app);
 }
 
 /// The dialog closed: stop waiting on Last.fm, drop the drafts.
 pub fn on_close(app: &mut App) {
     let s = &mut app.overlays.settings;
-    s.lastfm.poll.fetch_add(1, Ordering::Relaxed);
-    if let Some(w) = s.lastfm.waiting.take() {
-        w.cancel();
-    }
+    s.lastfm.close();
     s.lastfm.busy = false;
     s.desktop = DesktopUi::default();
 }

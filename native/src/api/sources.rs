@@ -6,7 +6,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::client::{ApiError, ApiResult, Client, seg};
-use super::de::{lenient_u64, string_or_number};
+use super::de::{default_true, lenient_u64, string_or_number};
 
 /// Download outcome of a pinned source's file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -17,6 +17,17 @@ pub enum SourceDownloadStatus {
     Skipped,
     #[default]
     Failed,
+}
+
+impl SourceDownloadStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceDownloadStatus::Downloaded => "downloaded",
+            SourceDownloadStatus::Existing => "existing",
+            SourceDownloadStatus::Skipped => "skipped",
+            SourceDownloadStatus::Failed => "failed",
+        }
+    }
 }
 
 /// A tracker pin (`ArtistGridPin`), normalized: missing text is "", the
@@ -87,18 +98,17 @@ impl<'de> Deserialize<'de> for ArtistGridPin {
     }
 }
 
+/// The pin's download folder: the server's, else the root and subfolder.
+fn destination_path(given: String, root_path: &str, destination_subdir: &str) -> String {
+    if !given.is_empty() {
+        return given;
+    }
+    [root_path, destination_subdir].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join("/")
+}
+
 /// `normalizeArtistGridPin`.
 fn normalize_artist_grid_pin(raw: RawArtistGridPin) -> ArtistGridPin {
-    let destination_path = if raw.destination_path.is_empty() {
-        [raw.root_path.as_str(), raw.destination_subdir.as_str()]
-            .iter()
-            .filter(|s| !s.is_empty())
-            .copied()
-            .collect::<Vec<_>>()
-            .join("/")
-    } else {
-        raw.destination_path
-    };
+    let destination_path = destination_path(raw.destination_path, &raw.root_path, &raw.destination_subdir);
     ArtistGridPin {
         id: raw.id,
         root_id: raw.root_id,
@@ -195,8 +205,12 @@ pub struct ArtistGridDownload {
     pub updated_at: String,
 }
 
+/// A Filen share pin. Read as loosely as tracker pins: ids may be numbers,
+/// the destination path falls back to the root and subfolder, and a root is
+/// taken to exist unless the server says it doesn't.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct FilenPin {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub id: String,
     #[serde(default)]
     pub root_id: Option<String>,
@@ -214,7 +228,7 @@ pub struct FilenPin {
     pub label: String,
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_u64")]
     pub scan_interval_seconds: u64,
     #[serde(default)]
     pub last_scan_at: Option<String>,
@@ -226,7 +240,7 @@ pub struct FilenPin {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub root_exists: bool,
 }
 
@@ -293,8 +307,10 @@ pub struct FilenDownload {
     pub updated_at: String,
 }
 
+/// An API tracker pin, read as loosely as [`FilenPin`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct ApiTrackerPin {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub id: String,
     #[serde(default)]
     pub root_id: Option<String>,
@@ -306,8 +322,9 @@ pub struct ApiTrackerPin {
     pub destination_path: String,
     #[serde(default)]
     pub api_base_url: String,
-    #[serde(default)]
-    pub tracker_id: i64,
+    /// A number the server may send as text.
+    #[serde(default, deserialize_with = "string_or_number")]
+    pub tracker_id: String,
     #[serde(default)]
     pub tracker_name: String,
     #[serde(default)]
@@ -320,7 +337,7 @@ pub struct ApiTrackerPin {
     pub primary_artist: String,
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_u64")]
     pub scan_interval_seconds: u64,
     #[serde(default)]
     pub last_scan_at: Option<String>,
@@ -332,7 +349,7 @@ pub struct ApiTrackerPin {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub root_exists: bool,
 }
 
@@ -462,16 +479,23 @@ pub fn list_artist_grid_downloads(c: &Client, id: &str, limit: i64) -> ApiResult
 
 // ── Filen pins ─────────────────────────────────────────────────────────────
 
+impl FilenPin {
+    fn normalized(mut self) -> FilenPin {
+        self.destination_path = destination_path(std::mem::take(&mut self.destination_path), &self.root_path, &self.destination_subdir);
+        self
+    }
+}
+
 pub fn list_filen_pins(c: &Client) -> ApiResult<Vec<FilenPin>> {
-    c.get_list(FILEN)
+    Ok(c.get_list::<FilenPin>(FILEN)?.into_iter().map(FilenPin::normalized).collect())
 }
 
 pub fn create_filen_pin(c: &Client, input: &FilenPinCreate) -> ApiResult<FilenPin> {
-    c.post(FILEN, to_json(input))
+    Ok(c.post::<FilenPin>(FILEN, to_json(input))?.normalized())
 }
 
 pub fn update_filen_pin(c: &Client, id: &str, input: &FilenPinPatch) -> ApiResult<FilenPin> {
-    c.patch(&format!("{FILEN}/{}", pin_path_id(id, "Filen")?), to_json(input))
+    Ok(c.patch::<FilenPin>(&format!("{FILEN}/{}", pin_path_id(id, "Filen")?), to_json(input))?.normalized())
 }
 
 pub fn delete_filen_pin(c: &Client, id: &str) -> ApiResult<()> {
@@ -488,16 +512,23 @@ pub fn list_filen_downloads(c: &Client, id: &str, limit: i64) -> ApiResult<Vec<F
 
 // ── API tracker pins ───────────────────────────────────────────────────────
 
+impl ApiTrackerPin {
+    fn normalized(mut self) -> ApiTrackerPin {
+        self.destination_path = destination_path(std::mem::take(&mut self.destination_path), &self.root_path, &self.destination_subdir);
+        self
+    }
+}
+
 pub fn list_api_tracker_pins(c: &Client) -> ApiResult<Vec<ApiTrackerPin>> {
-    c.get_list(AT)
+    Ok(c.get_list::<ApiTrackerPin>(AT)?.into_iter().map(ApiTrackerPin::normalized).collect())
 }
 
 pub fn create_api_tracker_pin(c: &Client, input: &ApiTrackerPinCreate) -> ApiResult<ApiTrackerPin> {
-    c.post(AT, to_json(input))
+    Ok(c.post::<ApiTrackerPin>(AT, to_json(input))?.normalized())
 }
 
 pub fn update_api_tracker_pin(c: &Client, id: &str, input: &ApiTrackerPinPatch) -> ApiResult<ApiTrackerPin> {
-    c.patch(&format!("{AT}/{}", pin_path_id(id, "API tracker")?), to_json(input))
+    Ok(c.patch::<ApiTrackerPin>(&format!("{AT}/{}", pin_path_id(id, "API tracker")?), to_json(input))?.normalized())
 }
 
 pub fn delete_api_tracker_pin(c: &Client, id: &str) -> ApiResult<()> {
@@ -552,5 +583,18 @@ mod tests {
         let pin: ArtistGridPin = serde_json::from_str(r#"{"root_exists":false,"destination_path":"/x"}"#).unwrap();
         assert!(!pin.root_exists);
         assert_eq!(pin.destination_path, "/x");
+    }
+
+    #[test]
+    fn filen_and_api_tracker_pins_read_loosely() {
+        let pin: ApiTrackerPin =
+            serde_json::from_str(r#"{"id":"x","tracker_id":1182,"root_path":"/music","destination_subdir":"a","scan_interval_seconds":"600"}"#)
+                .unwrap();
+        let pin = pin.normalized();
+        assert_eq!((pin.tracker_id.as_str(), pin.destination_path.as_str(), pin.scan_interval_seconds), ("1182", "/music/a", 600));
+        assert!(pin.root_exists);
+        let pin: FilenPin = serde_json::from_str(r#"{"id":5,"root_exists":false,"root_path":"/music"}"#).unwrap();
+        let pin = pin.normalized();
+        assert_eq!((pin.id.as_str(), pin.destination_path.as_str(), pin.root_exists), ("5", "/music", false));
     }
 }

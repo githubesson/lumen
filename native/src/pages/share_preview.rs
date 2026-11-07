@@ -7,7 +7,8 @@ use rune::{Align, Color, Cursor, Cx, Drag, El, Phase, Side, Tx, col, el, row, te
 use crate::app::App;
 use crate::player::adapter::{AdapterEvent, AudioAdapter};
 use crate::format::fmt_duration_sec;
-use crate::pages::auth::requests::{self, PublicTrackShare, TrackShareRef};
+use crate::api::share::{PublicTrackShare, TrackShareRef, get_public_track_share, track_share_preview_video_path};
+use crate::core::share_snippet::{parse_track_share_params, share_clip_name};
 use crate::route::Location;
 use crate::theme::{Theme, color_mix};
 use crate::ui::kit::{error_banner_in, eyebrow, menu_panel};
@@ -49,7 +50,7 @@ fn link_of(loc: &Location) -> Option<TrackShareRef> {
     let id = urlencoding::decode(id)
         .map(|s| s.into_owned())
         .unwrap_or_else(|_| id.to_string());
-    requests::parse_track_share_params(&id, loc.get("t"), loc.get("d"), loc.get("sig"))
+    parse_track_share_params(Some(&id), loc.get("t"), loc.get("d"), loc.get("sig"))
 }
 
 /// A new link starts a new request (the effect keyed on the link's parts).
@@ -72,7 +73,9 @@ pub fn enter(app: &mut App, loc: &Location) {
     };
     let asked = link.clone();
     app.net.run(
-        move || requests::public_track_share(&client, &link),
+        move || {
+            get_public_track_share(&client, &link.track_id, link.start_sec as f64, &link.sig, link.duration_sec.map(f64::from))
+        },
         move |app, result| {
             let s = &mut app.pages.share_preview;
             if s.link.as_ref() != Some(&asked) {
@@ -81,7 +84,7 @@ pub fn enter(app: &mut App, loc: &Location) {
             s.loading = false;
             match result {
                 Ok(share) => s.share = Some(share),
-                Err(e) => s.error = Some(requests::error_message(&e, "Share link unavailable.")),
+                Err(e) => s.error = Some(crate::api::error_message(&e, "Share link unavailable.")),
             }
         },
     );
@@ -241,42 +244,9 @@ fn open_lumen(app: &mut App, tx: &mut Tx) {
     {
         Some(path) => app.navigate_to(path),
         None => {
-            let _ = tx.open_url(&url);
+            let _ = crate::desktop::open_external(tx, &url);
         }
     }
-}
-
-/// `sanitizeFilename`.
-fn sanitize_filename(name: &str) -> String {
-    let swapped: String = name
-        .chars()
-        .map(|c| {
-            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-                || (c as u32) < 0x20
-            {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let spaced = swapped.split_whitespace().collect::<Vec<_>>().join(" ");
-    let trimmed = spaced.trim_end_matches(['.', ' ']);
-    trimmed.chars().take(180).collect()
-}
-
-/// `shareClipName`: "Artist - Title (clip)", filename-safe.
-fn clip_name(share: &PublicTrackShare) -> String {
-    let artist = share.artist.as_deref().unwrap_or("").trim();
-    let title = Some(share.title.trim())
-        .filter(|t| !t.is_empty())
-        .unwrap_or("Lumen");
-    let prefix = if artist.is_empty() {
-        String::new()
-    } else {
-        format!("{artist} - ")
-    };
-    sanitize_filename(&format!("{prefix}{title} (clip)"))
 }
 
 /// `<a href download>`: Electron asks where to save it, then downloads it.
@@ -311,9 +281,7 @@ const CARD_W: f32 = 346.0;
 /// Text boxed as CSS boxes it, `CARD_W` wide (rune rounds each box up).
 fn boxed(e: El, s: &str, style: rune::TextStyle, anywhere: bool) -> El {
     let opts = if anywhere { rune::text::RichLayoutOptions::new().wrap_anywhere() } else { rune::text::RichLayoutOptions::new() };
-    let (_, h) = rune::text::measure_with(s, &[], style, Some(CARD_W), opts);
-    let lh = style.line_height;
-    e.h((h / lh + 1e-3).floor().max(1.0) * lh)
+    e.h(crate::ui::css_text_h_with(s, style, Some(CARD_W), opts))
 }
 
 fn header(t: &Theme, eyebrow_text: &str, title: &str, meta: Option<String>) -> El {
@@ -587,7 +555,7 @@ fn download_menu(app: &App, t: &Theme) -> Option<El> {
     let share = s.share.as_ref()?;
     let link = s.link.as_ref()?;
     let client = app.client.as_ref()?;
-    let base = clip_name(share);
+    let base = share_clip_name(Some(&share.title), share.artist.as_deref(), &[]);
     let mut items: Vec<(
         &'static str,
         &'static str,
@@ -601,7 +569,7 @@ fn download_menu(app: &App, t: &Theme) -> Option<El> {
     items.push((
         "Video",
         "MP4",
-        requests::preview_video_url(client, link),
+        client.url(&track_share_preview_video_path(link)),
         "mp4",
         &i::FILM,
     ));
@@ -658,7 +626,7 @@ fn download_menu(app: &App, t: &Theme) -> Option<El> {
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let s = &app.pages.share_preview;
-    let h = crate::pages::auth::window_h(cx, "signed-out");
+    let h = crate::pages::auth::window_h(cx);
     let brand = row()
         .key("share-brand")
         .self_center()
@@ -731,22 +699,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn clip_names_are_filename_safe() {
-        let share = PublicTrackShare {
-            title: "A/B: C?".into(),
-            artist: Some("Hana".into()),
-            ..Default::default()
-        };
-        assert_eq!(clip_name(&share), "Hana - A_B_ C_ (clip)");
-        let share = PublicTrackShare {
-            title: "  ".into(),
-            ..Default::default()
-        };
-        assert_eq!(clip_name(&share), "Lumen (clip)");
-        assert_eq!(sanitize_filename("x  y. . "), "x y");
-    }
 
     #[test]
     fn links_come_from_the_route() {

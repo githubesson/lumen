@@ -125,7 +125,6 @@ fn decodes_every_mock_route() {
         };
         run.check(&format!("search::search_page {}", kind.as_str()), search::search_page(&c, &params));
     }
-    run.check("covers/remote", c.bytes(&media::remote_cover_path("https://resources.tidal.com/x.jpg")));
     if let Some(a) = albums.first() {
         let signed = run.check("media::sign_album_cover", media::sign_album_cover(&c, &a.id));
         if let Some(s) = signed {
@@ -149,16 +148,14 @@ fn decodes_every_mock_route() {
             run.check("stats::get_replay monthly", stats::get_replay(&c, &m.params));
         }
     }
-    run.check("activity::current_activity", activity::current_activity(&c, Some("rune-test")));
-    let input = PlaybackActivityInput {
-        device_id: "rune-test".into(),
-        device_name: "Rune test".into(),
-        track_id: t.id.clone(),
-        title: t.title.clone(),
-        position_sec: 1.0,
-        is_playing: false,
-        ..Default::default()
-    };
+    let input = serde_json::json!({
+        "device_id": "rune-test",
+        "device_name": "Rune test",
+        "track_id": t.id,
+        "title": t.title,
+        "position_sec": 1,
+        "is_playing": false,
+    });
     run.check("activity::upsert_playback_activity", activity::upsert_playback_activity(&c, &input));
     run.check("activity::clear_playback_activity", activity::clear_playback_activity(&c, "rune-test"));
     run.check("lastfm::get_lastfm_status", lastfm::get_lastfm_status(&c));

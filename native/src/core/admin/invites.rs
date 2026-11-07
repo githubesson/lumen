@@ -3,8 +3,7 @@
 
 use crate::api::Role;
 use crate::api::auth::Invite;
-use crate::core::dates::{self, DAY_MS};
-use crate::format::pluralize;
+use crate::core::dates;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InviteStatus {
@@ -15,13 +14,13 @@ pub enum InviteStatus {
 }
 
 impl InviteStatus {
-    /// `INVITE_STATUS_LABELS`.
-    pub fn label(self) -> &'static str {
+    /// `inviteStatus`'s value, as the past invites' badge shows it.
+    pub fn as_str(self) -> &'static str {
         match self {
-            InviteStatus::Active => "Active",
-            InviteStatus::Revoked => "Revoked",
-            InviteStatus::Expired => "Expired",
-            InviteStatus::Exhausted => "Exhausted",
+            InviteStatus::Active => "active",
+            InviteStatus::Revoked => "revoked",
+            InviteStatus::Expired => "expired",
+            InviteStatus::Exhausted => "exhausted",
         }
     }
 }
@@ -48,8 +47,8 @@ pub fn invite_status(inv: &Invite, now_ms: i64) -> InviteStatus {
 
 /// Active invites (redeemable, revocable) and past ones, each in the
 /// server's order.
-pub fn partition_invites(invites: &[Invite], now_ms: i64) -> (Vec<Invite>, Vec<Invite>) {
-    invites.iter().cloned().partition(|i| invite_status(i, now_ms) == InviteStatus::Active)
+pub fn partition_invites(invites: &[Invite], now_ms: i64) -> (Vec<&Invite>, Vec<&Invite>) {
+    invites.iter().partition(|i| invite_status(i, now_ms) == InviteStatus::Active)
 }
 
 pub fn invite_role_label(role: Role) -> &'static str {
@@ -66,12 +65,6 @@ pub fn invite_expiry_label(inv: &Invite, format_date: impl Fn(&str) -> String) -
         Some(at) => format!("expires {}", format_date(at)),
         None => "no expiry".into(),
     }
-}
-
-/// "User · 5 uses · expires Oct 9, 2026".
-pub fn invite_summary(inv: &Invite, format_date: impl Fn(&str) -> String) -> String {
-    [invite_role_label(inv.target_role).to_string(), pluralize(inv.max_uses, "use"), invite_expiry_label(inv, format_date)]
-        .join(" · ")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,29 +114,16 @@ fn with_max_uses(max_uses_input: &str, (expires_at, expires_error): Expiry) -> I
     }
 }
 
-/// An invite whose expiry is a whole number of days from now (blank for none).
-pub fn validate_invite_creation_input(max_uses: &str, expires_days: &str, now_ms: i64) -> InviteCreationValidation {
-    let days = expires_days.trim();
-    let expiry = if days.is_empty() {
-        (None, None)
-    } else {
-        match parse_positive_integer(days) {
-            None => (None, Some("Expiry must be a whole number of days greater than 0.")),
-            // Enough days overflow the Date range, which is just as far out.
-            Some(d) => expiry_at(Some(now_ms as i128 + d as i128 * DAY_MS as i128), now_ms, TOO_FAR),
-        }
-    };
-    with_max_uses(max_uses, expiry)
-}
-
 /// An invite whose expiry is a date and time (blank for none), e.g. a
-/// `datetime-local` value, which reads as local time.
+/// `datetime-local` value, which reads as local time, or the date and time
+/// as typed into the field ("11/20/2026, 9:30 AM").
 pub fn validate_invite_creation_with_date(max_uses: &str, expires_at: &str, now_ms: i64) -> InviteCreationValidation {
     let text = expires_at.trim();
     let expiry = if text.is_empty() {
         (None, None)
     } else {
-        expiry_at(dates::parse(text).map(i128::from), now_ms, "Enter a valid expiry date.")
+        let at = dates::parse(text).or_else(|| dates::parse_local_input(text));
+        expiry_at(at.map(i128::from), now_ms, "Enter a valid expiry date.")
     };
     with_max_uses(max_uses, expiry)
 }
@@ -221,7 +201,7 @@ mod tests {
             }),
         ];
         let (active, past) = partition_invites(&rows, now());
-        let ids = |v: &[Invite]| v.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
+        let ids = |v: &[&Invite]| v.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&active), ["a", "b"]);
         assert_eq!(ids(&past), ["expired", "spent", "revoked"]);
     }
@@ -229,41 +209,29 @@ mod tests {
     #[test]
     fn labels() {
         let fmt = |iso: &str| iso[..10].to_string();
-        let admin = invite(|i| {
-            i.target_role = Role::Admin;
-            i.max_uses = 5;
-            i.expires_at = Some("2026-10-09T00:00:00Z".into());
-        });
-        assert_eq!(invite_summary(&admin, fmt), "Admin · 5 uses · expires 2026-10-09");
-        assert_eq!(invite_summary(&invite(|_| {}), fmt), "User · 1 use · no expiry");
+        let expiring = invite(|i| i.expires_at = Some("2026-10-09T00:00:00Z".into()));
+        assert_eq!(invite_expiry_label(&expiring, fmt), "expires 2026-10-09");
+        assert_eq!(invite_role_label(Role::Admin), "Admin");
         assert_eq!(invite_role_label(Role::User), "User");
         assert_eq!(invite_usage(&invite(|i| {
             i.uses = 2;
             i.max_uses = 5;
         })), "2 / 5");
         assert_eq!(invite_expiry_label(&invite(|_| {}), fmt), "no expiry");
-        assert_eq!(InviteStatus::Exhausted.label(), "Exhausted");
+        assert_eq!(InviteStatus::Exhausted.as_str(), "exhausted");
     }
 
     #[test]
     fn creation_validation() {
         assert_eq!(
-            validate_invite_creation_input(" 1 ", " ", now()),
+            validate_invite_creation_with_date(" 1 ", " ", now()),
             InviteCreationValidation { max_uses: Some(1), expires_at: None, max_uses_error: None, expires_error: None, valid: true }
         );
         assert!(validate_invite_creation_with_date("2147483647", "", now()).valid);
         for v in ["", "0", "-1", "1.5", "1e3", "2147483648", "many"] {
-            for r in [validate_invite_creation_input(v, "", now()), validate_invite_creation_with_date(v, "", now())] {
-                assert!(!r.valid && r.max_uses.is_none(), "{v}");
-                assert_eq!(r.max_uses_error, Some("Max uses must be a whole number from 1 to 2,147,483,647."));
-            }
-        }
-        let r = validate_invite_creation_input("2", "3", now());
-        assert_eq!((r.max_uses, r.expires_at.as_deref(), r.expires_error, r.valid), (Some(2), Some("2026-10-05T12:00:00.000Z"), None, true));
-        let whole = "Expiry must be a whole number of days greater than 0.";
-        for (v, msg) in [("0", whole), ("-1", whole), ("1.5", whole), ("later", whole), ("3000000", TOO_FAR), ("9007199254740991", TOO_FAR)] {
-            let r = validate_invite_creation_input("1", v, now());
-            assert_eq!((r.valid, r.expires_at, r.expires_error), (false, None, Some(msg)), "{v}");
+            let r = validate_invite_creation_with_date(v, "", now());
+            assert!(!r.valid && r.max_uses.is_none(), "{v}");
+            assert_eq!(r.max_uses_error, Some("Max uses must be a whole number from 1 to 2,147,483,647."));
         }
         let r = validate_invite_creation_with_date("3", "2026-10-09T08:30:00.000Z", now());
         assert_eq!((r.max_uses, r.expires_at.as_deref(), r.valid), (Some(3), Some("2026-10-09T08:30:00.000Z"), true));
@@ -271,11 +239,17 @@ mod tests {
             validate_invite_creation_with_date("1", "2026-10-09T08:30", now()).expires_at,
             Some(dates::to_iso(dates::local_ms(2026, 9, 9, 8) + 30 * 60_000))
         );
+        // As typed into the field.
+        assert_eq!(
+            validate_invite_creation_with_date("1", "10/09/2026, 8:30 PM", now()).expires_at,
+            Some(dates::to_iso(dates::local_ms(2026, 9, 9, 20) + 30 * 60_000))
+        );
         for (v, msg) in [
             ("2026-10-02T12:00:00.000Z", "Expiry must be in the future."),
             ("2026-01-01T00:00", "Expiry must be in the future."),
             ("+010000-01-01T00:00:00.000Z", TOO_FAR),
             ("soon", "Enter a valid expiry date."),
+            ("01/02/2020, 10:00 AM", "Expiry must be in the future."),
         ] {
             let r = validate_invite_creation_with_date("1", v, now());
             assert_eq!((r.valid, r.expires_at, r.expires_error), (false, None, Some(msg)), "{v}");

@@ -8,10 +8,12 @@ use std::collections::HashSet;
 
 use rune::{Color, Cx, El, Shadow, col, el, row, text};
 
-use super::settings::desktop_bridge::{self as bridge, UpdateStatus};
+use super::settings::desktop_bridge as bridge;
 use crate::app::App;
+use crate::desktop::updater::{UpdateState, UpdateStatus};
 use crate::theme::Theme;
 use crate::ui::{Btn, brand_mark, font, ico, icons as i, motion, tnum, with_lh};
+use crate::ui::ShadowMd;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -33,23 +35,23 @@ pub struct State {
     /// The last status that wasn't "checking": a background re-check doesn't
     /// blink the toast away.
     last: Option<UpdateStatus>,
-    prev_state: Option<String>,
+    prev_state: Option<UpdateState>,
 }
 
 /// The updater's status as the toast follows it ("checking" keeps the last).
-fn status(app: &App) -> Option<UpdateStatus> {
+fn status(app: &App) -> Option<&UpdateStatus> {
     match bridge::update_status(app) {
-        Some(s) if s.state != "checking" => Some(s),
-        _ => app.overlays.toast.last.clone(),
+        Some(s) if s.state != UpdateState::Checking => Some(s),
+        _ => app.overlays.toast.last.as_ref(),
     }
 }
 
 fn phase(app: &App, s: &UpdateStatus) -> Option<Phase> {
-    match s.state.as_str() {
-        "available" => Some(Phase::Available),
-        "downloading" => Some(Phase::Downloading),
-        "downloaded" => Some(Phase::Downloaded),
-        "error" if app.overlays.toast.download_started => Some(Phase::Failed),
+    match s.state {
+        UpdateState::Available => Some(Phase::Available),
+        UpdateState::Downloading => Some(Phase::Downloading),
+        UpdateState::Downloaded => Some(Phase::Downloaded),
+        UpdateState::Error if app.overlays.toast.download_started => Some(Phase::Failed),
         _ => None,
     }
 }
@@ -63,13 +65,16 @@ fn dismiss_key(s: &UpdateStatus, phase: Phase) -> String {
 /// before each frame (`overlays::poll`), as the web's status events.
 pub fn on_status(app: &mut App) {
     let Some(s) = bridge::update_status(app) else { return };
+    let state = s.state;
+    // Copied only when it changed.
+    let fresh = (state != UpdateState::Checking && app.overlays.toast.last.as_ref() != Some(s)).then(|| s.clone());
     let t = &mut app.overlays.toast;
-    if s.state != "checking" {
-        t.last = Some(s.clone());
+    if fresh.is_some() {
+        t.last = fresh;
     }
-    if t.prev_state.as_deref() != Some(&s.state) {
-        t.prev_state = Some(s.state.clone());
-        if matches!(s.state.as_str(), "available" | "downloaded" | "up-to-date") {
+    if t.prev_state != Some(state) {
+        t.prev_state = Some(state);
+        if matches!(state, UpdateState::Available | UpdateState::Downloaded | UpdateState::UpToDate) {
             t.download_started = false;
         }
     }
@@ -82,7 +87,7 @@ fn dismiss(app: &mut App) {
 }
 
 fn download(app: &mut App) {
-    let s = status(app);
+    let s = status(app).cloned();
     let t = &mut app.overlays.toast;
     t.requested_at = s;
     t.download_started = true;
@@ -100,13 +105,13 @@ fn retry(app: &mut App) {
 fn install(app: &mut App, tx: &mut rune::Tx) {
     app.overlays.toast.installing = true;
     bridge::install_update(app, tx);
-    if bridge::update_status(app).is_some_and(|s| s.state == "error") {
+    if bridge::update_status(app).is_some_and(|s| s.state == UpdateState::Error) {
         app.overlays.toast.installing = false;
     }
 }
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
-    let s = &status(app)?;
+    let s = status(app)?;
     let p = phase(app, s)?;
     if app.overlays.toast.dismissed.contains(&dismiss_key(s, p)) {
         return None;
@@ -172,7 +177,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                 Btn::new("update-toast-download", "Download")
                     .small()
                     .primary()
-                    .disabled(st.requested_at.as_ref() == Some(s) || !bridge::can_download())
+                    .disabled(st.requested_at.as_ref() == Some(s))
                     .build(t)
                     .on_press(download),
             );
@@ -211,7 +216,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         }
     }
     let r = t.radius_xl();
-    let a = t.c.shadow_md_alpha;
     Some(
         crate::ui::css_border(col(), 1.0, t.c.border, r)
             .key("update-toast")
@@ -221,8 +225,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
             .gap(12.0)
             .radius(r)
             .fill(t.c.popover)
-            .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-            .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+            .shadow_md(t)
             .box_shadow(Shadow { x: 0.0, y: 12.0, blur: 32.0, spread: -12.0, color: Color::BLACK.alpha(0.25), inset: false })
             .role("status")
             .label("App update")

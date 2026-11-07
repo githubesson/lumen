@@ -5,13 +5,15 @@
 //! without `--features alsa`) the mix still plays, silently, on a clock, so
 //! the player behaves the same.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::net::LateWaker;
+
+use super::OutFormat;
 use super::mixer::Mixer;
-use super::{EngineEvent, EventSink, OutFormat};
 
 /// An output device as Settings lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +34,17 @@ pub struct OutputShared {
     pub lost: AtomicBool,
     /// Devices can be listed and chosen.
     pub supported: AtomicBool,
+    /// Moves whenever `devices` or `error` change, so the player redraws
+    /// (the Settings row lists them).
+    pub changes: AtomicU64,
+}
+
+impl OutputShared {
+    /// The devices or the error changed: count it and wake the UI.
+    fn changed(&self, waker: &LateWaker) {
+        self.changes.fetch_add(1, Ordering::Relaxed);
+        waker.wake();
+    }
 }
 
 pub enum OutputCmd {
@@ -39,13 +52,13 @@ pub enum OutputCmd {
     Refresh,
 }
 
-pub fn start(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, sink: EventSink, device: Option<String>) -> Sender<OutputCmd> {
+pub fn start(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, waker: LateWaker, device: Option<String>) -> Sender<OutputCmd> {
     let (tx, rx) = channel();
-    let _ = std::thread::Builder::new().name("lumen-output".into()).spawn(move || run(mixer, shared, sink, rx, device));
+    let _ = std::thread::Builder::new().name("lumen-output".into()).spawn(move || run(mixer, shared, waker, rx, device));
     tx
 }
 
-fn run(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, sink: EventSink, rx: Receiver<OutputCmd>, mut selected: Option<String>) {
+fn run(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, waker: LateWaker, rx: Receiver<OutputCmd>, mut selected: Option<String>) {
     shared.supported.store(device::SUPPORTED, Ordering::Relaxed);
     let refresh = |shared: &OutputShared| *shared.devices.lock().unwrap() = device::list();
     refresh(&shared);
@@ -63,20 +76,20 @@ fn run(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, sink: EventSink, rx:
                     *shared.error.lock().unwrap() = None;
                     default_id = if selected.is_none() { opened.id } else { None };
                     stream = Some(opened.stream);
-                    sink.send(EngineEvent::Output);
+                    shared.changed(&waker);
                 }
                 Err(device::OpenError::NotFound) => {
                     // The chosen device is gone: play on the default, and say so.
                     selected = None;
                     shared.lost.store(true, Ordering::Relaxed);
                     *shared.error.lock().unwrap() = Some("Requested device not found".into());
-                    sink.send(EngineEvent::Output);
+                    shared.changed(&waker);
                     continue;
                 }
                 Err(device::OpenError::Failed(message)) => {
                     *shared.error.lock().unwrap() = Some(message);
                     retry_at = Instant::now() + Duration::from_secs(3);
-                    sink.send(EngineEvent::Output);
+                    shared.changed(&waker);
                 }
             }
             clock = Instant::now();
@@ -104,7 +117,7 @@ fn run(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, sink: EventSink, rx:
             }
             Ok(OutputCmd::Refresh) => {
                 refresh(&shared);
-                sink.send(EngineEvent::Output);
+                shared.changed(&waker);
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
@@ -114,14 +127,14 @@ fn run(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, sink: EventSink, rx:
             stream = None;
             retry_at = Instant::now();
             refresh(&shared);
-            sink.send(EngineEvent::Output);
+            shared.changed(&waker);
         }
         if stream.is_some() && selected.is_none() && device::default_id() != default_id {
             // The system default moved: follow it, as the browser does.
             stream = None;
             retry_at = Instant::now();
             refresh(&shared);
-            sink.send(EngineEvent::Output);
+            shared.changed(&waker);
         }
     }
 }
@@ -247,6 +260,7 @@ mod device {
     }
 
     pub enum OpenError {
+        #[cfg_attr(not(windows), allow(dead_code))]
         NotFound,
         Failed(String),
     }

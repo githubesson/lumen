@@ -2,13 +2,16 @@
 //! `ReleaseCard`, Library's `TracksGrid` card, and the `.grid-cards` grid
 //! they sit in (`cards.css`, `library.css`).
 
-use rune::{Color, Cursor, El, Shadow, col, el, row};
+use std::rc::Rc;
+
+use rune::{El, col, el, row};
 
 use crate::api::{Album, Artist, SearchAlbum, SearchArtist, TrackListItem, TrackSource, media};
 use crate::app::App;
 use crate::format::display_text;
 use crate::theme::{Density, Theme};
-use crate::ui::{self, font, ico, icons as i, line};
+use crate::ui::cards::{card_box, card_metrics, card_play};
+use crate::ui::{self, font, line};
 
 use super::logic::{self, ArtistRelease, EntityTarget};
 
@@ -54,14 +57,9 @@ pub struct Card<'a> {
     pub badge: Option<&'static str>,
 }
 
-fn pad(t: &Theme) -> (f32, f32, f32) {
-    // (padding, gap, title size)
-    if t.density == Density::Dense { (6.0, 8.0, 12.0) } else { (8.0, 10.0, 14.0) }
-}
-
 /// `.card`: the cover, the title and a muted line under it.
 pub fn card(app: &App, t: &Theme, c: Card, width: f32, play: Option<El>) -> El {
-    let (p, gap, title_size) = pad(t);
+    let (p, _, title_size) = card_metrics(t);
     let art_w = (width - 2.0 * p).max(0.0);
     let radius = if c.round { 999.0 } else { t.radius_lg() };
     let mut art = el().size(art_w, art_w).child(ui::cover_art(t, &app.images, c.cover.as_deref(), c.letter_of, art_w, art_w, radius));
@@ -79,20 +77,7 @@ pub fn card(app: &App, t: &Theme, c: Card, width: f32, play: Option<El>) -> El {
     if let Some(b) = c.badge {
         texts = texts.child(row().mt(6.0).child(crate::ui::track_row::badge(t, b)));
     }
-    col()
-        .key(c.key)
-        .w(width)
-        .min_w(0.0)
-        .padding(p)
-        .gap(gap)
-        .radius(t.radius_xl())
-        .role("button")
-        .cursor(Cursor::Pointer)
-        .focusable(true)
-        .hover(t.c.ghost_hover)
-        .hover_motion(ui::motion::ease(140.0), ui::motion::ease(140.0))
-        .child(art)
-        .child(texts)
+    card_box(t, &c.key).w(width).role("button").focusable(true).child(art).child(texts)
 }
 
 /// `AlbumCard`: opens the album (its TIDAL page for a TIDAL result).
@@ -138,7 +123,7 @@ pub fn artist_card(
     extra: Option<&SearchArtist>,
     width: f32,
 ) -> El {
-    let cover = logic::artist_image_url(extra.and_then(|s| s.cover_url.as_deref()), &[], Some(384));
+    let cover = media::artist_image(extra.and_then(|s| s.cover_url.as_deref()), &[], Some(384));
     let target = logic::search_entity_target(&a.id, source, extra.and_then(|s| s.source_id.as_deref()));
     let name = a.name.clone();
     card(
@@ -188,28 +173,19 @@ pub fn release_card(app: &App, t: &Theme, key: &str, r: &ArtistRelease, width: f
 /// `queue` is read when the card is pressed: a card holding its own copy of
 /// the list made a grid of n tracks keep n² of them.
 pub fn track_card(app: &App, t: &Theme, key: &str, tr: &TrackListItem, queue: crate::ui::track_select::Source, width: f32) -> El {
-    let cover = Some(media::track_cover(&tr.id, tr.album_id.as_deref(), tr.cover_url.as_deref(), Some(384)));
+    let cover = Some(tr.cover_at(Some(384)));
     let id = tr.id.clone();
-    let play = el()
-        .key(format!("{key}-play"))
-        .size(32.0, 32.0)
-        .radius(999.0)
-        .fill(t.c.primary)
-        .center()
-        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(t.c.shadow_md_alpha), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(t.c.shadow_md_alpha), inset: false })
-        .role("button")
-        .label(format!("Play {}", tr.title))
-        .cursor(Cursor::Pointer)
-        .group_opacity(0.0, 1.0)
-        .press_scale(0.95)
-        .child(ico(&i::PLAY_FILLED, 16.0, t.c.primary_foreground))
-        .on_press(move |app: &mut App| {
+    let play = card_play(
+        t,
+        &format!("{key}-play"),
+        &format!("Play {}", tr.title),
+        Rc::new(move |app: &mut App| {
             let q = queue(app).to_vec();
             if let Some(tr) = q.iter().find(|t| t.id == id).cloned() {
                 crate::ui::track_row::play_from(app, &tr, &q)
             }
-        });
+        }),
+    );
     let letter = tr.album_title.as_deref().filter(|s| !s.is_empty()).unwrap_or(&tr.title);
     let menu_track = tr.clone();
     card(

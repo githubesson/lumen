@@ -6,16 +6,16 @@
 
 use std::rc::Rc;
 
-use rune::{Color, Cursor, Cx, El, Link, LinkPaint, PointerPress, Shadow, col, el, row, text};
+use rune::{Color, Cursor, Cx, El, Link, LinkPaint, PointerPress, col, el, row, text};
 
-use super::layout::{Areas, BentoTiles, bands, bento_areas, cells, column, span_width};
+use super::layout::{Areas, BentoTiles, Feat, arrange, bands, cells, column, minis, span_width};
 use crate::api::stats::{ReplayActivityBucket, ReplayBucket, ReplayData, ReplayTrack};
 use crate::api::{TrackListItem, media};
 use crate::app::App;
 use crate::core::dates::{self, MONTHS_LONG, MONTHS_SHORT};
-use crate::core::entity_target::{EntityKind, EntityTarget, replay_album_target, track_album_target};
+use crate::core::entity_target::{replay_album_target, track_album_target};
 use crate::core::replay::figures::{
-    CalendarUnit, ReplayCalendar, TopArtistAction, activity_peak, activity_series, genre_shares, plays_per_unit,
+    CalendarUnit, ReplayCalendar, activity_peak, activity_series, genre_shares, plays_per_unit,
     replay_album_subtitle, replay_track_artists, top_artist_action, top_artist_tracks,
 };
 use crate::core::replay::period::{ListeningTimeStyle, format_listening_time};
@@ -24,12 +24,13 @@ use crate::overlays::track_menu::{self, MenuContext};
 use crate::theme::Theme;
 use crate::ui::blocks::animated_value;
 use crate::ui::cards::{self, MediaCard};
-use crate::ui::chart::{self, Bar, Bucket};
+use crate::ui::chart;
 use crate::ui::shelf::shelf_pb;
 use crate::ui::tooltip::TipExt;
 use crate::ui::track_list::{Extra, TrackList};
 use crate::ui::track_row;
 use crate::ui::{Btn, BtnState, css_border, exact, font, ico, icons as i, iconbtn, line, motion, tnum, with_lh};
+use crate::ui::ShadowMd;
 
 /// The day strip has a cell per day up to a month's worth; longer periods
 /// get a bar.
@@ -55,23 +56,15 @@ pub(super) const CHART_H: f32 = 124.0;
 /// the phone layout under 560.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Fit {
-    /// `.replay-results`'s width.
-    pub panel: f32,
     pub wide: bool,
     pub small: bool,
 }
 
 impl Fit {
+    /// For `.replay-results` `panel` wide.
     pub fn of(panel: f32) -> Fit {
-        Fit { panel, wide: panel >= 880.0, small: panel < 560.0 }
+        Fit { wide: panel >= 880.0, small: panel < 560.0 }
     }
-}
-
-/// Text that a row centres (`align-items: center`): Rune rounds a text's
-/// box up to whole pixels, so it goes down by half the rounding to sit
-/// where Chromium centres the fractional box.
-pub(super) fn centred(e: El, lh: f32) -> El {
-    e.offset(0.0, (lh.ceil() - lh) / 2.0)
 }
 
 /// `.replay-enter > .bento-tile > *`: when a period's results land, each
@@ -230,12 +223,6 @@ fn peak_label(start: &str, bucket: ReplayBucket, spans_years: bool) -> (String, 
     }
 }
 
-/// A library album's page, or TIDAL's.
-pub(super) fn album_href(target: &EntityTarget) -> String {
-    let param = if target.kind == EntityKind::Tidal { "tidalAlbum" } else { "album" };
-    format!("/library?view=albums&{param}={}", urlencoding::encode(&target.id))
-}
-
 /// The menu a Replay track opens: Play with the top tracks, Song info, and
 /// Share where the track can be.
 fn open_menu(app: &mut App, track: &TrackListItem, at: [f32; 2]) {
@@ -366,11 +353,7 @@ pub(super) fn view(
         art: !d.top_artists.is_empty(),
         alb: !d.top_albums.is_empty(),
     };
-    let (wide, narrow) = bento_areas(tiles, s.all_tracks);
-    let (areas, columns) = if fit.wide { (wide, 4) } else { (narrow, 2) };
-    let col_w = column(panel_w - 2.0, columns);
-    let all = cells(&areas);
-    let width = |name: &str| all.iter().find(|c| c.name == name).map_or(0.0, |c| span_width(col_w, c.c1 - c.c0));
+    let (areas, columns, width) = arrange(tiles, s.all_tracks, fit, panel_w);
     let unit = if calendar.is_some_and(|c| c.unit == CalendarUnit::Month) { "month" } else { "day" };
 
     let mut out: Vec<Tile> = Vec::new();
@@ -506,10 +489,10 @@ pub(super) fn view(
             .enumerate()
             .map(|(n, a)| {
                 MediaCard::new(format!("replay-alb-{n}"), display_text(Some(&a.title), ""))
-                    .to(album_href(&replay_album_target(a)))
+                    .to(replay_album_target(a).album_href())
                     .cover(Some(media::album_cover_path(&a.id, Some(384), None)))
                     .subtitle(replay_album_subtitle(a.artist.as_deref(), a.plays))
-                    .rank_badge(rank_badge(t, n + 1))
+                    .rank_badge(cards::replay_rank(t, n + 1))
                     .build(app, t)
             })
             .collect();
@@ -552,7 +535,7 @@ fn with_plays(t: &Theme, c: &ReplayCalendar) -> El {
 /// whole words and "…" follows them. Returns the text and its line count.
 fn clamp_lines(s: &str, style: rune::TextStyle, width: f32, max: usize) -> (String, f32) {
     let options = rune::text::RichLayoutOptions::new().wrap_anywhere();
-    let lines = |s: &str| (rune::text::measure_with(s, &[], style, Some(width), options).1 / style.line_height).round();
+    let lines = |s: &str| crate::ui::css_lines(s, &[], style, Some(width), options) as f32;
     let all = lines(s);
     if all <= max as f32 {
         return (s.to_string(), all.max(1.0));
@@ -569,22 +552,21 @@ fn clamp_lines(s: &str, style: rune::TextStyle, width: f32, max: usize) -> (Stri
 /// actions. Returns the tile and the height its content needs.
 fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> (El, f32) {
     let tr = &track.track;
-    let (pad, gap, art) = if fit.small { (16.0, 16.0, 112.0) } else { (20.0, 20.0, 208.0) };
-    let (title_size, title_lh) = if fit.small { (20.0, 24.0) } else { (24.0, 28.8) };
+    let f = Feat::of(fit);
+    let Feat { pad, gap, art, title_size, title_lh } = f;
     let body_w = (width - 2.0 * pad - art - gap).max(0.0);
     let title = display_text(Some(&tr.title), "");
     let title_style = with_lh(font(title_size, 600.0), title_lh).tracking(-0.025 * title_size);
     let (shown, lines) = clamp_lines(&title, title_style, body_w, 2);
-    let body_h = LH14 + 6.0 + lines * title_lh + 2.0 + LH14 + 12.0 + LH14 + 16.0 + 40.0;
-    let need = 2.0 * pad + art.max(body_h);
+    let need = f.need(lines);
 
     let album = track_album_target(tr);
     let mut cover = el()
         .key("replay-feat-cover")
         .size(art, art)
-        .child(crate::ui::cover_art(t, &app.images, Some(&track_row::cover_url(tr, 512)), &tr.title, art, art, t.radius_lg()));
+        .child(crate::ui::cover_art(t, &app.images, Some(&tr.cover_at(Some(512))), &tr.title, art, art, t.radius_lg()));
     if let Some(a) = &album {
-        let href = album_href(a);
+        let href = a.album_href();
         cover = cover.cursor(Cursor::Pointer).on_press(move |app: &mut App| app.navigate_to(&href));
     }
 
@@ -610,7 +592,7 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         let start = sub.len();
         sub.push_str(&display_text(Some(album_title), ""));
         if let Some(a) = &album {
-            links.push((start..sub.len(), album_href(a)));
+            links.push((start..sub.len(), a.album_href()));
         }
     }
     let sub_tip: Vec<String> = [Some(tr.artist.as_deref().filter(|s| !s.is_empty()).unwrap_or("Unknown artist")), tr.album_title.as_deref()]
@@ -643,9 +625,7 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
     let pop = app.widgets.lists.pops.get(&tr.id).copied().unwrap_or(0);
     let mut heart = ico(if fav { &i::HEART_FILLED } else { &i::HEART }, 14.0, t.c.foreground);
     if fav && pop > 0 {
-        static POP: [rune_motion::Beat; 3] =
-            [rune_motion::Beat::new(0.0), rune_motion::Beat::new(0.096).scale(1.25), rune_motion::Beat::new(0.24)];
-        heart = heart.key(format!("replay-feat-heart-pop{pop}")).sequence(rune_motion::Sequence::new(&POP));
+        heart = heart.key(format!("replay-feat-heart-pop{pop}")).sequence(rune_motion::Sequence::new(&track_row::HEART_POP));
     }
     let fav_label = if fav { "Remove from favorites" } else { "Add to favorites" };
     let id = tr.id.clone();
@@ -785,7 +765,7 @@ fn full_list(app: &App, t: &Theme, d: &ReplayData, more: bool) -> El {
 fn plays_cell(app: &App, t: &Theme, tr: &TrackListItem) -> El {
     let plays = app.pages.replay.data().and_then(|d| d.top_tracks.iter().find(|x| x.track.id == tr.id)).map_or(0, |x| x.plays);
     let lit = app.player.current().is_some_and(|c| c.id == tr.id)
-        || app.widgets.lists.selection("replay-top").is_some_and(|s| s.ids.contains(&tr.id));
+        || app.widgets.lists.selection("replay-top").ids.contains(&tr.id);
     crate::ui::text_end(group_thousands(plays), tnum(font(12.0, 400.0)), if lit { t.c.foreground } else { t.c.muted_foreground })
 }
 
@@ -797,7 +777,7 @@ fn rank_cell(t: &Theme, key: &str, rank: usize, play_button: El) -> El {
     let number = text(rank.to_string()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground);
     el().key(key.to_string())
         .size(18.0, 18.0)
-        .child(track().child(centred(number, LH12).group_opacity(1.0, 0.0)))
+        .child(track().child(crate::ui::centred_lh(number, LH12).group_opacity(1.0, 0.0)))
         .child(track().child(play_button.group_opacity(0.0, 1.0)))
 }
 
@@ -828,7 +808,7 @@ fn repeat_row(app: &App, t: &Theme, track: &ReplayTrack, rank: usize, max: u64, 
         .hover(t.c.ghost_hover)
         .hover_motion(motion::ease(120.0), motion::ease(120.0))
         .child(el().w(24.0).h(18.0).pl(3.0).child(rank_cell(t, &format!("{key}-rank"), rank, play_button)))
-        .child(crate::ui::cover_art(t, &app.images, Some(&track_row::cover_url(tr, 64)), &tr.title, 32.0, 32.0, t.radius_md()))
+        .child(crate::ui::cover_art(t, &app.images, Some(&tr.cover_at(Some(64))), &tr.title, 32.0, 32.0, t.radius_md()))
         .child(words);
     // The bars would leave the titles a few letters on a phone; the counts stay.
     if !fit.small {
@@ -855,13 +835,7 @@ fn repeat_row(app: &App, t: &Theme, track: &ReplayTrack, rank: usize, max: u64, 
 
 /// The activity chart, by the series' own bucket.
 fn activity(t: &Theme, series: &[ReplayActivityBucket], bucket: ReplayBucket) -> El {
-    let bars: Vec<Bar> = series.iter().map(|b| Bar { start: b.bucket_start.clone(), plays: b.plays }).collect();
-    let bucket = match bucket {
-        ReplayBucket::Day => Bucket::Day,
-        ReplayBucket::Week => Bucket::Week,
-        ReplayBucket::Month => Bucket::Month,
-    };
-    chart::activity_chart_sized(t, "replay-chart", &bars, bucket, CHART_H)
+    chart::activity_chart_sized(t, "replay-chart", series, bucket, CHART_H)
 }
 
 /// `.genre-row` in the bento: the label in a 112 px column, the share's
@@ -876,23 +850,11 @@ pub(super) fn genre_row(t: &Theme, key: &str, label: El, share: Option<f64>, cou
         Some(c) => {
             // An `auto` column: exactly the count's advance wide.
             let style = tnum(font(12.0, 400.0));
-            el().w(rune::text::advance(&c, style)).child(centred(text(c).font(style).color(t.c.muted_foreground), LH12))
+            el().w(rune::text::advance(&c, style)).child(crate::ui::centred_lh(text(c).font(style).color(t.c.muted_foreground), LH12))
         }
         // The count's column, empty: its gap stays.
         None => el().w(0.0),
     })
-}
-
-/// `.replay-rank`: a card's place, over its cover's corner.
-pub(super) fn rank_badge(t: &Theme, rank: usize) -> El {
-    el().absolute(6.0, 6.0)
-        .min_w(20.0)
-        .h(20.0)
-        .px(6.0)
-        .radius(999.0)
-        .fill(t.c.background)
-        .center()
-        .child(centred(text(rank.to_string()).font(tnum(font(12.0, 500.0))).color(t.c.foreground), LH12))
 }
 
 /// A top artist's card: their top track's cover, opening their page or
@@ -901,21 +863,10 @@ pub(super) fn rank_badge(t: &Theme, rank: usize) -> El {
 fn artist_card(app: &App, t: &Theme, n: usize, id: &str, name: &str, plays: u64, has_page: Option<bool>, own: Vec<TrackListItem>) -> El {
     let key = format!("replay-art-{n}");
     let action = top_artist_action(has_page, &own);
-    let url = own.first().map(|tr| track_row::cover_url(tr, 384));
-    let mut art = el().w_full().child(cards::square_art(t, &app.images, url.as_deref(), name, t.radius_lg())).child(rank_badge(t, n + 1));
-    if let Some(act) = action {
-        let a = t.c.shadow_md_alpha;
-        let glyph = el()
-            .size(32.0, 32.0)
-            .radius(999.0)
-            .fill(t.c.primary)
-            .center()
-            .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-            .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
-            .group_opacity(0.0, 1.0)
-            .a11y_hidden()
-            .child(ico(if act == TopArtistAction::Open { &i::ARROW_RIGHT } else { &i::PLAY_FILLED }, 16.0, t.c.primary_foreground));
-        art = art.child(el().pin(None, None, Some(8.0), Some(8.0)).child(glyph));
+    let url = own.first().map(|tr| tr.cover_at(Some(384)));
+    let mut art = el().w_full().child(cards::square_art(t, &app.images, url.as_deref(), name, t.radius_lg())).child(cards::replay_rank(t, n + 1));
+    if let Some(glyph) = cards::top_artist_glyph(t, action, 32.0, 16.0) {
+        art = art.child(el().pin(None, None, Some(8.0), Some(8.0)).child(glyph.shadow_md(t)));
     }
     let (_, _, title_fs) = cards::card_metrics(t);
     let words = cards::card_text(t, line(name.to_string(), font(title_fs, 500.0), t.c.foreground), Some(&pluralize_grouped(plays, "play")));
@@ -928,16 +879,12 @@ fn artist_card(app: &App, t: &Theme, n: usize, id: &str, name: &str, plays: u64,
     }
     .child(art)
     .child(words);
-    let ui_action = action.map(|a| match a {
-        TopArtistAction::Open => cards::TopArtistAction::Open,
-        TopArtistAction::Play => cards::TopArtistAction::Play,
-    });
     // As on Home: the library has nothing by them, so their top tracks are
     // what there is to play.
     let on_play: cards::Action = Rc::new(move |app: &mut App| {
         track_row::start_list(app, &own, false);
     });
-    cards::top_artist_press(card, ui_action, id, name, on_play)
+    cards::top_artist_press(card, action, id, name, on_play)
 }
 
 /// `CardsTile`: Home's scrolling shelf, four covers to the tile (eight when
@@ -945,17 +892,7 @@ fn artist_card(app: &App, t: &Theme, n: usize, id: &str, name: &str, plays: u64,
 /// bit on a phone).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cards_tile(app: &App, t: &Theme, area: &str, label_text: &str, alone: bool, cards: Vec<El>, width: f32, fit: Fit) -> El {
-    // `.bento-minis`: the cards' own 8 px padding lines their covers up with
-    // the tile's edge.
-    let minis = width - 2.0 * PAD + 16.0;
-    let gap = t.gap();
-    let col_w = if fit.small {
-        (minis - 2.0 * gap) / 2.3
-    } else if alone && fit.wide {
-        (minis - 7.0 * gap) / 8.0
-    } else {
-        (minis - 3.0 * gap) / 4.0
-    };
+    let (minis, col_w) = minis(t, width, alone, fit);
     let key = format!("replay-{area}");
     tile(t, &key)
         .role("region")

@@ -45,54 +45,6 @@ pub fn library_album_subtitle(album: &Album, show_track_count: bool) -> String {
     album_subtitle(album.artist_name.as_deref(), album.is_compilation, album.track_count, None, show_track_count)
 }
 
-/// `albumArtists`: who an album page credits: every main artist of a TIDAL
-/// release when known (`names`), else the album artist. Empty when unknown.
-pub fn album_artists(names: &[String], artist: Option<&str>) -> String {
-    let joined = names.join(", ");
-    if !joined.is_empty() {
-        return clean_text(Some(&joined));
-    }
-    clean_text(artist.filter(|a| !a.is_empty()))
-}
-
-/// What an album page's facts are made of.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AlbumMetaKey {
-    Tracks,
-    Saved,
-    Year,
-}
-
-/// One fact on an album page, keyed so a page can style a kind of part.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AlbumMetaPart {
-    pub key: AlbumMetaKey,
-    pub text: String,
-}
-
-fn album_meta_parts(track_count: u32, saved: Option<u32>, release_year: Option<i32>) -> Vec<AlbumMetaPart> {
-    let mut parts = vec![AlbumMetaPart { key: AlbumMetaKey::Tracks, text: pluralize(track_count as u64, "track") }];
-    if let Some(s) = saved {
-        parts.push(AlbumMetaPart { key: AlbumMetaKey::Saved, text: format!("{s} saved") });
-    }
-    if let Some(y) = release_year.filter(|y| *y != 0) {
-        parts.push(AlbumMetaPart { key: AlbumMetaKey::Year, text: y.to_string() });
-    }
-    parts
-}
-
-/// "12 tracks", "3 saved", "2021" under a library album page's title. Only
-/// an album copying a TIDAL release has a part to save.
-pub fn library_album_meta_parts(album: &Album) -> Vec<AlbumMetaPart> {
-    let saved = if album.tidal_album_id.as_deref().is_some_and(|s| !s.is_empty()) { album.saved_count } else { None };
-    album_meta_parts(album.track_count, saved, album.release_year)
-}
-
-/// The same for a TIDAL album page, where nothing saved is the usual case.
-pub fn tidal_album_meta_parts(album: &TidalAlbum) -> Vec<AlbumMetaPart> {
-    album_meta_parts(album.track_count, album.saved_count.filter(|s| *s != 0), album.release_year)
-}
-
 /// One artist an album page credits under its title.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlbumCredit {
@@ -295,16 +247,6 @@ pub fn tidal_artist_meta_parts(release_count: usize, popular_track_count: usize)
     parts
 }
 
-/// Meta parts joined for a single line.
-pub fn meta_line<S: AsRef<str>>(parts: &[S]) -> String {
-    join_parts(parts)
-}
-
-/// [`meta_line`] for album meta parts.
-pub fn meta_line_parts(parts: &[AlbumMetaPart]) -> String {
-    join_parts(&parts.iter().map(|p| p.text.as_str()).collect::<Vec<_>>())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,10 +267,6 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
-    fn texts(parts: &[AlbumMetaPart]) -> Vec<String> {
-        parts.iter().map(|p| p.text.clone()).collect()
-    }
-
     const MIN: u64 = 60_000;
 
     #[test]
@@ -337,7 +275,6 @@ mod tests {
         assert_eq!(album_artist_name(None, true), "Various Artists");
         assert_eq!(album_artist_name(Some(""), false), "Unknown artist");
         assert_eq!(album_artist_name(Some("Foo Â· Bar"), false), "Foo · Bar");
-        assert_eq!(album_artists(&s(&["Foo Â· Bar"]), None), "Foo · Bar");
     }
 
     #[test]
@@ -345,74 +282,6 @@ mod tests {
         assert_eq!(album_subtitle(Some("Band"), false, 1, None, true), "Band · 1 track");
         assert_eq!(album_subtitle(None, true, 12, Some(TrackSource::Tidal), true), "Various Artists · 12 tracks · TIDAL");
         assert_eq!(album_subtitle(Some("Band"), false, 12, Some(TrackSource::Tidal), false), "Band · TIDAL");
-    }
-
-    #[test]
-    fn album_page_credits_every_main_artist() {
-        assert_eq!(album_artists(&s(&["A", "B"]), Some("A")), "A, B");
-        assert_eq!(album_artists(&[], Some("A")), "A");
-        assert_eq!(album_artists(&[], None), "");
-    }
-
-    #[test]
-    fn library_meta_parts() {
-        assert_eq!(
-            library_album_meta_parts(&album(|a| a.track_count = 1)),
-            vec![AlbumMetaPart { key: AlbumMetaKey::Tracks, text: "1 track".into() }]
-        );
-        assert_eq!(
-            library_album_meta_parts(&album(|a| {
-                a.track_count = 12;
-                a.tidal_album_id = Some("9".into());
-                a.saved_count = Some(0);
-                a.release_year = Some(2021);
-            })),
-            vec![
-                AlbumMetaPart { key: AlbumMetaKey::Tracks, text: "12 tracks".into() },
-                AlbumMetaPart { key: AlbumMetaKey::Saved, text: "0 saved".into() },
-                AlbumMetaPart { key: AlbumMetaKey::Year, text: "2021".into() },
-            ]
-        );
-        assert_eq!(
-            texts(&library_album_meta_parts(&album(|a| {
-                a.track_count = 12;
-                a.saved_count = Some(4);
-            }))),
-            ["12 tracks"]
-        );
-        assert_eq!(
-            texts(&library_album_meta_parts(&album(|a| {
-                a.track_count = 12;
-                a.tidal_album_id = Some("9".into());
-            }))),
-            ["12 tracks"]
-        );
-    }
-
-    #[test]
-    fn tidal_meta_parts() {
-        assert_eq!(
-            texts(&tidal_album_meta_parts(&tidal(|a| {
-                a.track_count = 10;
-                a.saved_count = Some(0);
-                a.release_year = Some(2020);
-            }))),
-            ["10 tracks", "2020"]
-        );
-        assert_eq!(
-            texts(&tidal_album_meta_parts(&tidal(|a| {
-                a.track_count = 10;
-                a.saved_count = Some(3);
-            }))),
-            ["10 tracks", "3 saved"]
-        );
-        let all = tidal(|a| {
-            a.track_count = 10;
-            a.saved_count = Some(3);
-            a.release_year = Some(2020);
-        });
-        assert_eq!(meta_line_parts(&tidal_album_meta_parts(&all)), "10 tracks · 3 saved · 2020");
-        assert_eq!(meta_line(&["a", "", "b"]), "a · b");
     }
 
     fn credit(name: &str, id: Option<&str>) -> AlbumCredit {

@@ -38,7 +38,6 @@ use updater::{UpdateBranch, UpdateStatus, Updater};
 
 /// This build's version (`LUMEN_BUILD_VERSION` when CI stamps one).
 pub const VERSION: &str = env!("LUMEN_VERSION");
-pub const USER_AGENT: &str = concat!("Lumen-Desktop/", env!("LUMEN_VERSION"));
 const FALLBACK_UPDATE_REPO_URL: &str = "https://github.com/githubesson/lumen";
 
 /// Rich Presence's application, baked in at build time (`DISCORD_CLIENT_ID`; blank = off).
@@ -167,6 +166,17 @@ struct Applied {
 
 type Save<'a> = &'a dyn Fn(&crate::config::Config) -> std::io::Result<()>;
 
+/// Change `config` with `edit` and save it. A failed save puts everything
+/// back, so nothing changes (the main process's `saveConfigPatch`).
+fn save_with(config: &mut crate::config::Config, save: Save, edit: impl FnOnce(&mut crate::config::Config)) -> Result<(), String> {
+    let before = config.clone();
+    edit(config);
+    save(config).map_err(|e| {
+        *config = before;
+        e.to_string()
+    })
+}
+
 /// `applyConfigPatch`'s validation and save. On a failed save nothing changes.
 fn apply_patch(config: &mut crate::config::Config, save: Save, np: &NowPlayingServer, port: u16, patch: &ConfigPatch) -> Result<Applied, String> {
     let backend = patch.backend_url.as_deref().map(normalize_backend_url).transpose()?;
@@ -175,36 +185,36 @@ fn apply_patch(config: &mut crate::config::Config, save: Save, np: &NowPlayingSe
     if patch.now_playing_api_enabled == Some(true) {
         np.start(port)?;
     }
-    let before = config.clone();
-    if let Some(url) = &backend {
-        config.backend_url = Some(url.clone());
-    }
-    if let Some(on) = patch.discord_enabled {
-        config.discord_enabled = on;
-    }
     // Settings sends only the options that changed; they go onto the card as saved.
     let card = patch.discord_card.as_ref().map(|changes| DiscordCard::normalize(Some(changes), &card_of(config)));
-    if let Some(card) = &card {
-        config.discord_card = Some(card.to_json());
-    }
-    if let Some(on) = patch.always_on_top {
-        config.always_on_top = on;
-    }
-    if let Some(on) = patch.now_playing_api_enabled {
-        config.now_playing_api_enabled = on;
-        if on {
-            // Turning it on keeps the saved token, or saves the one made at launch.
-            let saved = now_playing::token_from_config(config.now_playing_api_token.as_deref());
-            config.now_playing_api_token = Some(if saved.is_empty() { np.token() } else { saved });
+    let written = save_with(config, save, |config| {
+        if let Some(url) = &backend {
+            config.backend_url = Some(url.clone());
         }
-    }
-    if let Err(e) = save(config) {
-        *config = before;
+        if let Some(on) = patch.discord_enabled {
+            config.discord_enabled = on;
+        }
+        if let Some(card) = &card {
+            config.discord_card = Some(card.to_json());
+        }
+        if let Some(on) = patch.always_on_top {
+            config.always_on_top = on;
+        }
+        if let Some(on) = patch.now_playing_api_enabled {
+            config.now_playing_api_enabled = on;
+            if on {
+                // Turning it on keeps the saved token, or saves the one made at launch.
+                let saved = now_playing::token_from_config(config.now_playing_api_token.as_deref());
+                config.now_playing_api_token = Some(if saved.is_empty() { np.token() } else { saved });
+            }
+        }
+    });
+    if let Err(e) = written {
         // Not saved on, so not left on.
         if patch.now_playing_api_enabled == Some(true) && !listening {
             np.close();
         }
-        return Err(e.to_string());
+        return Err(e);
     }
     if patch.now_playing_api_enabled.is_some() {
         follow_now_playing(config, np, port);
@@ -224,19 +234,13 @@ pub fn update_config(app: &mut App, patch: ConfigPatch) -> Result<ConfigUpdate, 
     if let Some(on) = patch.always_on_top {
         window::set_always_on_top(on);
     }
+    // A different server: the app starts again there, signed out.
     let changed = match applied.backend {
-        Some(url) => {
-            let changed = app.client.as_ref().map(|c| c.base()) != Some(url.as_str());
-            if changed {
-                // A different server: its session cookies mean nothing there.
-                if let Some(client) = &app.client {
-                    client.clear_cookies();
-                }
-                app.connect(&url);
-            }
-            changed
+        Some(url) if app.client.as_ref().map(|c| c.base()) != Some(url.as_str()) => {
+            app.switch_server(&url);
+            true
         }
-        None => false,
+        _ => false,
     };
     Ok(ConfigUpdate { config: desktop_config(app), changed })
 }
@@ -258,11 +262,7 @@ fn follow_now_playing(config: &crate::config::Config, np: &NowPlayingServer, por
 /// `now-playing:new-token`'s save, then the swap.
 fn renew_token(config: &mut crate::config::Config, save: Save, np: &NowPlayingServer) -> Result<(), String> {
     let token = now_playing::new_token();
-    let before = config.now_playing_api_token.replace(token.clone());
-    if let Err(e) = save(config) {
-        config.now_playing_api_token = before;
-        return Err(e.to_string());
-    }
+    save_with(config, save, |c| c.now_playing_api_token = Some(token.clone()))?;
     np.set_token(&token);
     Ok(())
 }
@@ -280,26 +280,24 @@ pub fn new_now_playing_token(app: &mut App) -> Result<DesktopConfig, String> {
 pub fn save_update_config(app: &mut App, branch: &str, repo_url: &str) -> Result<UpdateStatus, String> {
     let branch = UpdateBranch::parse(branch).ok_or("Update branch must be main or dev.")?;
     let repo = updater::parse_github_repo_url(repo_url).ok_or("Repository must be an https://github.com/owner/repo URL.")?;
-    let before = app.config.clone();
-    app.config.update_branch = Some(branch.as_str().into());
-    app.config.update_repo_url = Some(repo.url.clone());
-    if let Err(e) = app.config.try_save() {
-        app.config = before;
-        return Err(e.to_string());
-    }
+    save_with(&mut app.config, &|c| c.try_save(), |c| {
+        c.update_branch = Some(branch.as_str().into());
+        c.update_repo_url = Some(repo.url.clone());
+    })?;
     let status = app.desktop.updater.configure(branch.as_str(), &repo.url)?;
     updater::start_automatic_checks(app);
     Ok(status)
 }
 
-/// `config:test-server`: is there a Lumen server at this address? Forgiving
-/// about what's typed (no scheme, a pasted page URL); answers with the origin
-/// to save, after any redirect (say, to https). Blocks: run it on `app.net`.
-pub fn test_server(raw: &str) -> Result<String, String> {
+/// The address typed into Welcome or Settings, read as `config:test-server`
+/// reads it (`new URL(...)`): forgiving about what's typed (no scheme means
+/// https, a pasted page URL is fine), or the message to show.
+pub fn server_address(raw: &str) -> Result<url::Url, String> {
     let text = raw.trim();
     if text.is_empty() {
         return Err("Enter your server's address.".into());
     }
+    // `/^[a-z][a-z\d+.-]*:\/\//i`
     let has_scheme = text.find("://").is_some_and(|i| {
         let scheme = &text[..i];
         scheme.starts_with(|c: char| c.is_ascii_alphabetic())
@@ -313,16 +311,26 @@ pub fn test_server(raw: &str) -> Result<String, String> {
     if !target.username().is_empty() || target.password().is_some() {
         return Err("Leave the username and password out of the address.".into());
     }
-    let host = match (target.host_str(), target.port()) {
-        (Some(h), Some(p)) => format!("{h}:{p}"),
-        (Some(h), None) => h.to_string(),
-        _ => return Err("That doesn't look like a web address.".into()),
-    };
+    if target.host_str().is_none() {
+        return Err("That doesn't look like a web address.".into());
+    }
+    Ok(target)
+}
+
+/// `URL.host`: the host, and the port when it isn't the scheme's default.
+pub fn url_host(url: &url::Url) -> &str {
+    &url[url::Position::BeforeHost..url::Position::AfterPort]
+}
+
+/// `config:test-server`: is there a Lumen server at this address? Answers
+/// with the origin to save, after any redirect (say, to https). Blocks: run
+/// it on `app.net`.
+pub fn test_server(raw: &str) -> Result<String, String> {
+    let target = server_address(raw)?;
+    let host = url_host(&target);
     let origin = target.origin().ascii_serialization();
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
+    let agent: ureq::Agent = crate::net::agent_config()
         .timeout_global(Some(Duration::from_secs(8)))
-        .user_agent(USER_AGENT)
         .build()
         .into();
     let mut response = agent.get(&format!("{origin}/api/health")).header("Cache-Control", "no-store").call().map_err(|e| match e {
@@ -403,13 +411,13 @@ pub fn poll(app: &mut App) -> bool {
     if !app.desktop.started {
         return false;
     }
-    let origin = app.client.as_ref().map(|c| c.base().to_string()).unwrap_or_default();
+    let origin = app.client.as_ref().map_or("", |c| c.base());
     if origin != app.desktop.origin {
-        app.desktop.now_playing.set_app_origin(&origin);
+        app.desktop.now_playing.set_app_origin(origin);
         if let Some(discord) = &app.desktop.discord {
-            discord.configure(Configure { backend_url: Some(origin.clone()), ..Configure::default() });
+            discord.configure(Configure { backend_url: Some(origin.to_string()), ..Configure::default() });
         }
-        app.desktop.origin = origin;
+        app.desktop.origin = origin.to_string();
     }
     presence::tick(app);
     false

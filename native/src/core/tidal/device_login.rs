@@ -218,6 +218,17 @@ impl TidalDeviceLogin {
         self.cancel_poll();
     }
 
+    /// The screen mounted afresh: stop waiting and start over. Tickets keep
+    /// counting, so an earlier wait's late answer is still ignored.
+    pub fn reset(&mut self) {
+        self.close();
+        self.flow = None;
+        self.starting = false;
+        self.unlinking_id = None;
+        self.error = None;
+        self.notice = None;
+    }
+
     fn cancel_poll(&mut self) {
         if let Some((_, c)) = self.poll.take() {
             c.cancel();
@@ -350,6 +361,21 @@ mod tests {
             PollOutcome::Ignored
         );
         assert_eq!(s.notice, None);
+    }
+
+    #[test]
+    fn a_remount_ignores_the_last_mounts_answer() {
+        let mut s = TidalDeviceLogin::default();
+        s.start();
+        let old = s.started(Ok(flow()), now()).unwrap();
+        s.reset();
+        assert!(old.poll.cancel.is_cancelled());
+        assert!(s.flow.is_none() && !s.starting);
+        s.start();
+        let new = s.started(Ok(flow()), now()).unwrap();
+        assert_ne!(old.poll.ticket, new.poll.ticket);
+        assert_eq!(s.poll_finished(old.poll.ticket, Ok(poll(TidalAuthState::Linked, None, None))), PollOutcome::Ignored);
+        assert!(s.flow.is_some());
     }
 
     #[test]

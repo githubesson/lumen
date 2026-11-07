@@ -127,14 +127,8 @@ pub fn view(app: &App, t: &Theme, head: El, query: &str, ty: SearchType, width: 
     if has_tracks {
         // `<section aria-label="Songs">`: its heading ends the list's head.
         v = v.child(crate::ui::exact(heading(t, "Songs"), 20.3).label("Songs"));
-        let mut tail = col().key("lib-search-tail").w_full();
-        for e in paging::sentinel(t, "lib-search", p, slot) {
-            tail = tail.child(e);
-        }
+        let tail = col().key("lib-search-tail").w_full().children(paging::sentinel(t, "lib-search", p, slot));
         return TrackList::new(TRACKS_LIST, tracks_source).stale(stale).head_gap(0.0).page(app, t, head.child(v), Some(tail));
     }
-    for e in paging::sentinel(t, "lib-search", p, slot) {
-        v = v.child(e);
-    }
-    super::browse::padded(t, head.child(v))
+    super::browse::padded(t, head.child(v.children(paging::sentinel(t, "lib-search", p, slot))))
 }

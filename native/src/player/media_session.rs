@@ -9,7 +9,7 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use crate::api::{Client, TrackListItem, media};
+use crate::api::{Client, TrackListItem};
 use crate::format::display_text;
 use crate::net::LateWaker;
 
@@ -32,17 +32,19 @@ pub fn now_playing(track: &TrackListItem) -> NowPlaying {
         title: display_text(Some(&track.title), ""),
         artist: nonempty(track.artist.as_deref()),
         album: nonempty(track.album_title.as_deref()),
-        artwork: media::track_cover(&track.id, track.album_id.as_deref(), track.cover_url.as_deref(), Some(NOW_PLAYING_ARTWORK_PX)),
+        artwork: track.cover_at(Some(NOW_PLAYING_ARTWORK_PX)),
     }
 }
 
-/// `shouldExposeNowPlayingSession`.
-pub fn should_expose(has_track: bool, casting: bool) -> bool {
-    has_track && !casting
+/// `shouldExposeNowPlayingSession` for a loaded track: not while another
+/// device is controlled (`casting`).
+pub fn should_expose(casting: bool) -> bool {
+    !casting
 }
 
 /// A press in the OS controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Button {
     Play,
     Pause,
@@ -58,6 +60,7 @@ pub struct Shown {
 }
 
 enum Update {
+    #[cfg_attr(not(windows), allow(dead_code))]
     Show(Shown, Option<Client>),
 }
 
@@ -225,7 +228,7 @@ mod tests {
         assert_eq!(m.artist, None);
         assert_eq!(m.album.as_deref(), Some("LP"));
         assert!(m.artwork.contains("1024"), "{}", m.artwork);
-        assert!(should_expose(true, false));
-        assert!(!should_expose(true, true) && !should_expose(false, false));
+        assert!(should_expose(false));
+        assert!(!should_expose(true));
     }
 }

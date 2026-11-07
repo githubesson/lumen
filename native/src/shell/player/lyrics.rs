@@ -12,7 +12,7 @@ use std::rc::Rc;
 use rune::{Color, Cx, El, Span, Tx, col, el, row, text};
 
 use crate::api::lyrics::LyricsResult;
-use crate::api::{TrackListItem, media};
+use crate::api::TrackListItem;
 use crate::app::App;
 use crate::ui::tooltip::TipExt;
 use crate::core::lyrics::{
@@ -22,6 +22,7 @@ use crate::core::lyrics::{
 use crate::format::display_text;
 use crate::theme::{Theme, color_mix};
 use crate::ui::{BtnState, cover_art, css_border, font, ico, iconbtn, icons as i, line, with_lh};
+use crate::ui::ShadowMd;
 
 /// The lyrics cache (`lyricsCache.ts`), shared by every lyrics view.
 #[derive(Clone, Default)]
@@ -205,7 +206,8 @@ pub fn drawer(app: &App, t: &Theme, cx: &mut Cx<App>, window_w: f32) -> Option<E
         return None;
     }
     let w = 320.0f32.min(window_w - 48.0);
-    let panel = super::shadow_md(t, sidebar(app, t, cx))
+    let panel = sidebar(app, t, cx)
+        .shadow_md(t)
         .pin(None, Some(4.0), Some(4.0), Some(4.0))
         .w(w)
         .transition(rune::Transition::offset(12.0, 0.0).combined(rune::Transition::opacity()));
@@ -244,7 +246,7 @@ fn sidebar(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
                 .gap(8.0)
                 .items_center()
                 .child(ico(&i::MIC_VOCAL, 16.0, t.c.foreground))
-                .child(super::centred(text("Lyrics").font(font(14.0, 600.0)).color(t.c.foreground), 20.3)),
+                .child(crate::ui::centred_lh(text("Lyrics").font(font(14.0, 600.0)).color(t.c.foreground), 20.3)),
         )
         .child(close);
     let mut aside = css_border(col(), 1.0, t.c.border, r)
@@ -259,7 +261,7 @@ fn sidebar(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     match app.player.current() {
         Some(track) => {
             let cover = (track.has_cover != Some(false))
-                .then(|| media::track_cover(&track.id, track.album_id.as_deref(), track.cover_url.as_deref(), None));
+                .then(|| track.cover_at(None));
             let letter = display_text(track.album_title.as_deref().filter(|s| !s.is_empty()).or(Some(&track.title)), "·");
             aside = aside.child(
                 row()
@@ -285,7 +287,7 @@ fn sidebar(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     }
     let mut body = col().key("lyrics-body").w_full().grow(1.0).min_h(0.0).pt(8.0).pb(12.0);
     if app.player.current().is_some() {
-        body = body.child(content(app, t, cx, "lyrics-scroll", false));
+        body = body.child(content(app, t, cx, "lyrics-scroll"));
     }
     aside.child(body)
 }
@@ -299,7 +301,7 @@ fn status(t: &Theme, s: &str) -> El {
 
 /// `PlayerLyricsLine`: what the lyrics state has to show. `scope` keys the
 /// scroll view (the column's or the mini panel's).
-pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, mini: bool) -> El {
+pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str) -> El {
     let l = &app.ui.player.lyrics;
     if l.loading {
         return col()
@@ -309,7 +311,7 @@ pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, mini: bool) 
             .min_h(0.0)
             .items_center()
             .justify_center()
-            .child(super::ios_spinner(t, &format!("{scope}-spinner")));
+            .child(crate::ui::blocks::ios_spinner(t, &format!("{scope}-spinner"), 28.0, "Loading lyrics"));
     }
     if let Some(e) = &l.error {
         return status(t, e);
@@ -335,7 +337,7 @@ pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, mini: bool) 
                 let word = if state == LineState::Active { s.word } else { None };
                 lines = lines.child(synced_line(t, &format!("{scope}-line-{n}"), &line.text, line.section, state, word, wrap_w));
             }
-            scroller(cx, scope, lines, mini)
+            scroller(cx, scope, lines)
         }
         LyricsContent::Plain(plain) => {
             let wrap_w = text_width(cx, scope);
@@ -348,7 +350,7 @@ pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, mini: bool) 
                 };
                 lines = lines.child(el.key(format!("{scope}-line-{n}")));
             }
-            scroller(cx, scope, lines, mini)
+            scroller(cx, scope, lines)
         }
         LyricsContent::None => status(t, LYRICS_NOT_FOUND_MESSAGE),
     }
@@ -382,9 +384,7 @@ fn text_width(cx: &mut Cx<App>, scope: &str) -> Option<f32> {
 /// (Rune rounds a text box up, which would push the lines under it down).
 fn css_lines(e: El, s: &str, style: rune::TextStyle, wrap_w: Option<f32>) -> El {
     let Some(w) = wrap_w else { return e };
-    let (_, h) = rune::text::measure(s, &[], style, Some(w));
-    let lines = (h / style.line_height).round().max(1.0);
-    e.h(lines * style.line_height)
+    e.h(crate::ui::css_text_h(s, style, Some(w)))
 }
 
 /// A synced line in its tier: past lines small and faint, upcoming ones
@@ -446,10 +446,9 @@ fn faded(color: Color, opacity: f32) -> Color {
 
 /// `.player-lyrics-scroll`: scrolls without a scrollbar, its top and bottom
 /// 12% fading out.
-fn scroller(cx: &mut Cx<App>, scope: &str, lines: El, mini: bool) -> El {
+fn scroller(cx: &mut Cx<App>, scope: &str, lines: El) -> El {
     let h = cx.layout_size(scope).map_or(0.0, |s| s[1]);
     let fade = h * 0.12;
-    let _ = mini;
     col()
         .key(scope)
         .w_full()

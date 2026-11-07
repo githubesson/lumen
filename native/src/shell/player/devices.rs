@@ -3,7 +3,7 @@
 //! device and every other online one, picked to play there; the bar's
 //! button with its live dot; the "controlled from another device" notice.
 
-use rune::{Align, Color, Cursor, Cx, El, Icon, Side, col, el, row, text};
+use rune::{Align, Color, Cursor, El, Icon, Side, col, el, row, text};
 
 use super::{Popover, close_btn, pop_box, pop_head, pop_layer, status_pill};
 use crate::app::App;
@@ -13,6 +13,7 @@ use crate::player::{DeviceKind, playback_device_button_label, playback_device_ki
 use crate::shell::player_bar::t_btn_with;
 use crate::theme::Theme;
 use crate::ui::{css_border, font, ico, icons as i, line, with_lh};
+use crate::ui::ShadowMd;
 
 /// The bar's device button (`.device-picker-btn`): lit while another device
 /// is controlled or the picker is open, pulsing while a command is on its
@@ -59,7 +60,7 @@ pub fn button(app: &App, t: &Theme) -> El {
 }
 
 /// The open device popover, 300 px wide above its button.
-pub fn popover(app: &App, t: &Theme, _cx: &mut Cx<App>) -> Option<El> {
+pub fn popover(app: &App, t: &Theme) -> Option<El> {
     if app.ui.player.popover != Some(Popover::Devices) || app.ui.player.mini.on {
         return None;
     }
@@ -115,13 +116,12 @@ pub fn list(app: &App, t: &Theme, scope: &str, close_on_select: bool, inner_w: f
     let mut parts = vec![body];
     if let Some(e) = p.command_error() {
         parts.push(
-            el().w_full()
+            crate::ui::css_border_top(el(), 1.0, t.c.border).w_full()
                 .px(12.0)
                 .pt(9.0)
                 .pb(8.0)
                 .fill(t.c.destructive_soft)
                 .role("status")
-                .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert())
                 .child(text(e).font(font(12.0, 400.0)).color(t.c.destructive).wrap()),
         );
     }
@@ -141,8 +141,7 @@ const HINT: &str = "Open Lumen on your phone or another computer.";
 
 /// Wrapped text at its CSS height (whole lines), wrapping at `w`.
 fn css_wrapped(e: El, s: &str, style: rune::TextStyle, w: f32) -> El {
-    let (_, h) = rune::text::measure(s, &[], style, Some(w));
-    e.h((h / style.line_height).round().max(1.0) * style.line_height)
+    e.h(crate::ui::css_text_h(s, style, Some(w)))
 }
 
 /// `.device-pop-empty`: a dashed card saying no other device is online.
@@ -242,7 +241,8 @@ fn device_row(
 /// edge of the bar for 6 s after another device's command lands here.
 pub fn remote_indicator(app: &App, t: &Theme, mini: bool) -> Option<El> {
     app.player.remote_control_event()?;
-    let pill = shadow(t, css_border(row(), 1.0, t.c.border, t.radius_lg()))
+    let pill = css_border(row(), 1.0, t.c.border, t.radius_lg())
+        .shadow_md(t)
         .key("remote-control-indicator")
         .h(28.0)
         .px(11.0)
@@ -260,6 +260,3 @@ pub fn remote_indicator(app: &App, t: &Theme, mini: bool) -> Option<El> {
     Some(row().pin(Some(0.0), Some(top), Some(0.0), None).justify_center().inert().child(pill.transition(enter)))
 }
 
-fn shadow(t: &Theme, e: El) -> El {
-    super::shadow_md(t, e)
-}

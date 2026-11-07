@@ -40,14 +40,7 @@ impl Store {
     }
 
     pub fn save(&self) {
-        let path = Store::path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
         let text = json!({ "volume": self.volume, "activityDeviceId": self.device_id }).to_string();
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
-        }
+        let _ = crate::config::write_atomic(&Store::path(), text.as_bytes());
     }
 }

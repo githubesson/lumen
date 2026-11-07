@@ -38,7 +38,6 @@ pub fn sort_title_key(title: &str) -> String {
 
 /// The track fields the comparator needs, whatever row type wraps them.
 pub trait SortableTrack {
-    fn sort_title(&self) -> &str;
     fn sort_duration_ms(&self) -> u64;
     fn sort_play_count(&self) -> Option<u64> {
         None
@@ -46,9 +45,6 @@ pub trait SortableTrack {
 }
 
 impl SortableTrack for PlaylistTrackEntry {
-    fn sort_title(&self) -> &str {
-        &self.title
-    }
     fn sort_duration_ms(&self) -> u64 {
         self.duration_ms
     }
@@ -58,21 +54,13 @@ impl SortableTrack for PlaylistTrackEntry {
 }
 
 impl SortableTrack for TrackListItem {
-    fn sort_title(&self) -> &str {
-        &self.title
-    }
     fn sort_duration_ms(&self) -> u64 {
         self.duration_ms
     }
 }
 
-/// `compareSortableTracks`: every non-title key falls back to title order;
-/// `Custom` is always equal, keeping the caller's order.
-pub fn compare_sortable_tracks<A: SortableTrack, B: SortableTrack>(a: &A, b: &B, key: SortKey) -> Ordering {
-    compare_with_title_keys(a, b, key, &sort_title_key(a.sort_title()), &sort_title_key(b.sort_title()))
-}
-
-/// [`compare_sortable_tracks`] with title keys the caller computed once.
+/// `compareSortableTracks`, with title keys (`sort_title_key`) the caller
+/// computed once.
 pub fn compare_with_title_keys<A: SortableTrack, B: SortableTrack>(
     a: &A,
     b: &B,
@@ -87,21 +75,6 @@ pub fn compare_with_title_keys<A: SortableTrack, B: SortableTrack>(
         SortKey::Plays => a.sort_play_count().unwrap_or(0).cmp(&b.sort_play_count().unwrap_or(0)).then_with(by_title),
         SortKey::Custom => Ordering::Equal,
     }
-}
-
-/// `sortForDisplay`: the saved order for `Custom`, otherwise a sorted copy,
-/// reversed when descending.
-pub fn sort_for_display<T: SortableTrack + Clone>(items: &[T], key: SortKey, asc: bool) -> Vec<T> {
-    if key == SortKey::Custom {
-        return items.to_vec();
-    }
-    let keyed: Vec<(String, &T)> = items.iter().map(|t| (sort_title_key(t.sort_title()), t)).collect();
-    let mut order: Vec<usize> = (0..items.len()).collect();
-    order.sort_by(|&i, &j| compare_with_title_keys(keyed[i].1, keyed[j].1, key, &keyed[i].0, &keyed[j].0));
-    if !asc {
-        order.reverse();
-    }
-    order.into_iter().map(|i| items[i].clone()).collect()
 }
 
 /// Base letter of a Latin letter with a diacritic (`sensitivity: "base"`).
@@ -186,9 +159,6 @@ mod tests {
 
     struct T(&'static str, u64, Option<u64>);
     impl SortableTrack for T {
-        fn sort_title(&self) -> &str {
-            self.0
-        }
         fn sort_duration_ms(&self) -> u64 {
             self.1
         }
@@ -212,12 +182,13 @@ mod tests {
 
     #[test]
     fn breaks_ties_on_title() {
+        let cmp = |a: &T, b: &T, key| compare_with_title_keys(a, b, key, &sort_title_key(a.0), &sort_title_key(b.0));
         let (a, b) = (T("B", 100, Some(5)), T("A", 100, Some(5)));
-        assert_eq!(compare_sortable_tracks(&a, &b, SortKey::Duration), Ordering::Greater);
-        assert_eq!(compare_sortable_tracks(&a, &b, SortKey::Plays), Ordering::Greater);
-        assert_eq!(compare_sortable_tracks(&a, &b, SortKey::Custom), Ordering::Equal);
+        assert_eq!(cmp(&a, &b, SortKey::Duration), Ordering::Greater);
+        assert_eq!(cmp(&a, &b, SortKey::Plays), Ordering::Greater);
+        assert_eq!(cmp(&a, &b, SortKey::Custom), Ordering::Equal);
         let (a, b) = (T("A", 1, None), T("B", 1, Some(3)));
-        assert_eq!(compare_sortable_tracks(&a, &b, SortKey::Plays), Ordering::Less);
+        assert_eq!(cmp(&a, &b, SortKey::Plays), Ordering::Less);
     }
 
     #[test]
@@ -232,13 +203,20 @@ mod tests {
     }
 
     #[test]
-    fn sorts_for_display() {
+    fn compares_by_key() {
         let items = vec![T("b", 3, Some(1)), T("🔥 a", 1, Some(9)), T("C", 2, None)];
-        let titles = |v: Vec<T>| v.into_iter().map(|t| t.0).collect::<Vec<_>>();
-        assert_eq!(titles(sort_for_display(&items, SortKey::Custom, true)), ["b", "🔥 a", "C"]);
-        assert_eq!(titles(sort_for_display(&items, SortKey::Title, true)), ["🔥 a", "b", "C"]);
-        assert_eq!(titles(sort_for_display(&items, SortKey::Duration, false)), ["b", "C", "🔥 a"]);
-        assert_eq!(titles(sort_for_display(&items, SortKey::Plays, SortKey::Plays.default_asc())), ["🔥 a", "b", "C"]);
+        let sorted = |key: SortKey, asc: bool| {
+            let mut v = items.clone();
+            v.sort_by(|a, b| {
+                let ord = compare_with_title_keys(a, b, key, &sort_title_key(a.0), &sort_title_key(b.0));
+                if asc { ord } else { ord.reverse() }
+            });
+            v.into_iter().map(|t| t.0).collect::<Vec<_>>()
+        };
+        assert_eq!(sorted(SortKey::Custom, true), ["b", "🔥 a", "C"]);
+        assert_eq!(sorted(SortKey::Title, true), ["🔥 a", "b", "C"]);
+        assert_eq!(sorted(SortKey::Duration, false), ["b", "C", "🔥 a"]);
+        assert_eq!(sorted(SortKey::Plays, SortKey::Plays.default_asc()), ["🔥 a", "b", "C"]);
         assert!(SortKey::Title.default_asc() && !SortKey::Plays.default_asc());
     }
 }

@@ -10,9 +10,6 @@ use crate::api::{ApiResult, Client};
 
 use super::figures::{ReplayQueries, ReplayQuery, replay_series_complete};
 
-/// Where the Replay page remembers which past years have plays (its pills).
-pub const REPLAY_YEARS_KEY: &str = "replay:years";
-
 /// The answers by cache key, and the years with plays (the web keeps both
 /// in its resource cache).
 #[derive(Clone, Debug, Default)]

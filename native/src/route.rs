@@ -115,23 +115,11 @@ impl History {
         self.entries[self.index] = loc;
     }
 
-    pub fn can_back(&self) -> bool {
-        self.index > 0
-    }
-
     pub fn back(&mut self) -> bool {
         if self.index == 0 {
             return false;
         }
         self.index -= 1;
-        true
-    }
-
-    pub fn forward(&mut self) -> bool {
-        if self.index + 1 >= self.entries.len() {
-            return false;
-        }
-        self.index += 1;
         true
     }
 }

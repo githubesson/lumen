@@ -12,11 +12,15 @@
 use rune::{Color, El, Icon, Shadow, TextEdit, col, el, row, text};
 use serde_json::{Map, Value};
 
-use super::desktop_bridge::{self as bridge, DesktopConfig, Toggle};
+use std::cell::Cell;
+use std::time::Duration;
+
+use super::desktop_bridge::{self as bridge, Toggle};
 use super::discord_card::{DiscordCard, Fields, lines};
 use super::rows::{Bind, settings_input_with};
 use super::{Desc, RowFn, SettingDef, select, setting_row};
 use crate::app::App;
+use crate::desktop::DesktopConfig;
 use crate::theme::Theme;
 use crate::ui::forms::SelectOption;
 use crate::ui::kit::switch;
@@ -72,8 +76,9 @@ pub struct CardUi {
     unsaved: Map<String, Value>,
     error: Option<String>,
     typing: u64,
-    /// Ticks the paused clock once a second.
-    pub tick: u64,
+    /// The whole seconds the preview's paused clock showed in the last
+    /// frame; None when it wasn't drawn.
+    pub clock_shown: Cell<Option<u64>>,
 }
 
 fn line_text(card: &DiscordCard, n: usize) -> &str {
@@ -86,33 +91,25 @@ fn line_text(card: &DiscordCard, n: usize) -> &str {
 
 /// The dialog opened (or Discord status turned on): start from the saved card.
 pub fn on_open(app: &mut App) {
-    let saved = bridge::config(app).map(|c| c.discord_card).unwrap_or_default();
+    let saved = bridge::config(app).discord_card;
     let ui = &mut app.overlays.settings.discord;
-    ui.card = saved.clone();
     ui.lines = [0, 1, 2].map(|n| TextEdit::new(line_text(&saved, n)));
+    ui.card = saved;
     ui.unsaved.clear();
     ui.error = None;
-    // The paused clock counts on its own.
-    if !app.net.is_sync() {
-        let session = app.overlays.settings.session;
-        let sender = app.net.sender();
-        std::thread::spawn(move || {
-            for _ in 0..3600 {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let (tx, rx) = std::sync::mpsc::channel();
-                sender.send(move |app: &mut App| {
-                    let live = app.ui.settings_open && app.overlays.settings.session == session;
-                    if live {
-                        app.overlays.settings.discord.tick += 1;
-                    }
-                    let _ = tx.send(live);
-                });
-                if rx.recv_timeout(std::time::Duration::from_secs(5)) != Ok(true) {
-                    break;
-                }
-            }
-        });
+}
+
+/// The preview's paused clock counts on its own: while a frame showed it,
+/// draw again as its second turns. Before each frame (`overlays::poll`).
+pub fn poll(app: &App, tx: &mut rune::Tx) -> bool {
+    let Some(shown) = app.overlays.settings.discord.clock_shown.get() else { return false };
+    // Out of the shell (signed out), the last frame's mark is stale.
+    if !app.ui.settings_open || crate::pages::auth::gate(app) != crate::pages::auth::Gate::Shell {
+        return false;
     }
+    let elapsed = started().elapsed();
+    tx.wake_after(Duration::from_secs(elapsed.as_secs() + 1).saturating_sub(elapsed));
+    elapsed.as_secs() != shown
 }
 
 fn apply(card: &mut DiscordCard, key: &str, v: &Value) {
@@ -141,14 +138,11 @@ fn change(app: &mut App, patch: Map<String, Value>, typing: bool) {
         return;
     }
     let id = ui.typing;
-    app.net.run(
-        || std::thread::sleep(std::time::Duration::from_millis(TYPING_SAVE_MS)),
-        move |app, ()| {
-            if app.overlays.settings.discord.typing == id {
-                flush(app);
-            }
-        },
-    );
+    app.net.after(Duration::from_millis(TYPING_SAVE_MS), move |app| {
+        if app.overlays.settings.discord.typing == id {
+            flush(app);
+        }
+    });
 }
 
 /// Save what changed. What fails stays for the next save, at its newest value.
@@ -181,7 +175,7 @@ fn one_patch(key: &str, v: Value) -> Map<String, Value> {
     m
 }
 
-pub fn claims_side(_app: &App, on_screen: &[&'static str]) -> bool {
+pub fn claims_side(on_screen: &[&'static str]) -> bool {
     on_screen.contains(&CARD_KEYWORDS)
 }
 
@@ -355,7 +349,6 @@ fn dots(color: Color) -> El {
 /// `DiscordCardPreview`.
 pub fn preview(app: &App, t: &Theme) -> El {
     let ui = &app.overlays.settings.discord;
-    let _ = ui.tick;
     let card = &ui.card;
     let current = app.player.current();
     let fields = match current {
@@ -438,7 +431,7 @@ pub fn preview(app: &App, t: &Theme) -> El {
 
     if !hidden {
         let src = if card.cover {
-            current.map(|tr| crate::api::media::track_cover(&tr.id, tr.album_id.as_deref(), tr.cover_url.as_deref(), None))
+            current.map(|tr| tr.cover_at(None))
         } else {
             None
         };
@@ -484,13 +477,15 @@ pub fn preview(app: &App, t: &Theme) -> El {
             Some(_) if is_playing => app.player.duration.filter(|d| *d > 0.0).map(|d| bar(app.player.position, d)),
             Some(_) => {
                 let green = hex("#7ec191");
+                let shown = started().elapsed().as_secs();
+                ui.clock_shown.set(Some(shown));
                 Some(
                     row()
                         .mt(6.0)
                         .gap(4.0)
                         .items_center()
                         .child(ico(&NOTE, 14.0, green))
-                        .child(text(discord_clock(started().elapsed().as_secs_f64())).font(clock_font).color(green)),
+                        .child(text(discord_clock(shown as f64)).font(clock_font).color(green)),
                 )
             }
         };

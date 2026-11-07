@@ -1,5 +1,5 @@
 //! Favorites (`favorite`, `unfavorite`, `listFavorites`). The optimistic
-//! toggle state lives in `core::favorites`.
+//! toggle state lives in `pages::favorites`.
 
 use super::client::{ApiResult, Client, seg};
 use super::types::TrackListItem;

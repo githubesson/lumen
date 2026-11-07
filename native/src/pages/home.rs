@@ -34,52 +34,77 @@ use rune::{Cx, El, KeyEvent, Tx, col, el, text};
 
 use crate::api::{Album, ApiResult, Client, Playlist, TrackListItem};
 use crate::app::App;
+use crate::core::entity_target::library_album_target;
+use crate::resource::Res;
 use crate::route::Location;
+use crate::shell::Bp;
 use crate::theme::Theme;
-use crate::ui::{Btn, font, icons as i};
+use crate::ui::{Btn, font, icons as i, track_row};
 
 use arrangement::{CUSTOMIZE_PARAM, DEFAULT_PANEL_IDS, HomeArrangement, HomePanel, default_slots, read_arrangement};
 use kinds::{DEFAULT_PERIOD, PanelKind};
 use layout::{BoardCell, PackItem, board_layout, packed_layout};
 use logic::{Period, error_message, playable_tracks};
 use crate::api::stats::ReplayData;
+use crate::format::clean_text;
 
-/// A source's state as panels read it (`ApiResource` / `SourceState`):
-/// unknown and loading until it reports.
-pub struct Res<T> {
-    pub data: Option<T>,
+/// A source as panels read it (`ApiResource` / `SourceState`): borrowed
+/// from the state, so a frame copies none of it, and unknown and loading
+/// until its first load reports.
+pub struct Source<'a, T: ?Sized> {
+    pub data: Option<&'a T>,
     pub loading: bool,
-    pub error: Option<String>,
-    /// Which load this is: a reply to an older one is dropped.
-    pub serial: u64,
+    pub error: Option<&'a str>,
 }
 
-/// `useFavorites()` as a panel's source: the app-wide favourites store
-/// (`pages::favorites`), most recently hearted first.
-pub fn favorites_res(app: &App) -> Res<Vec<TrackListItem>> {
-    let f = &app.pages.favorites;
-    let known = f.loaded || !f.tracks.is_empty();
-    Res { data: known.then(|| f.tracks.clone()), loading: f.loading, error: f.error.clone(), serial: 0 }
-}
-
-impl<T> Default for Res<T> {
-    fn default() -> Self {
-        Res { data: None, loading: true, error: None, serial: 0 }
+impl<T: ?Sized> Clone for Source<'_, T> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
-impl<T> Res<T> {
+impl<T: ?Sized> Copy for Source<'_, T> {}
+
+impl<'a, T: ?Sized> Source<'a, T> {
+    /// Nothing asked for yet: on its way.
+    pub fn pending() -> Self {
+        Source { data: None, loading: true, error: None }
+    }
+
     /// `answered`: it has data, or has stopped loading.
     pub fn answered(&self) -> bool {
         self.data.is_some() || !self.loading
     }
 }
 
-impl Res<Vec<TrackListItem>> {
+impl<'a, T> Source<'a, T> {
+    pub fn of(r: &'a Res<T>) -> Self {
+        Source { data: r.data.as_ref(), loading: r.loading || !r.started(), error: r.error.as_deref() }
+    }
+}
+
+impl<'a, T> Source<'a, [T]> {
+    pub fn list(r: &'a Res<Vec<T>>) -> Self {
+        Source { data: r.data.as_deref(), loading: r.loading || !r.started(), error: r.error.as_deref() }
+    }
+
     /// A deleted playlist's tracks: none, and none coming.
     pub fn gone() -> Self {
-        Res { data: Some(Vec::new()), loading: false, error: None, serial: 0 }
+        Source { data: Some(&[]), loading: false, error: None }
     }
+
+    /// The rows, none while unknown.
+    pub fn rows(&self) -> &'a [T] {
+        self.data.unwrap_or(&[])
+    }
+}
+
+/// `useFavorites()` as a panel's source: the app-wide favourites store
+/// (`pages::favorites`), most recently hearted first.
+pub fn favorites(app: &App) -> Source<'_, [TrackListItem]> {
+    let f = &app.pages.favorites;
+    let known = f.loaded || !f.tracks.is_empty();
+    Source { data: known.then_some(f.tracks.as_slice()), loading: f.loading, error: f.error.as_deref() }
 }
 
 /// What this page keeps between visits (the web's resource cache, and
@@ -92,9 +117,6 @@ pub struct State {
     pub tracks: Res<Vec<TrackListItem>>,
     pub track_limit: usize,
     pub tracks_sent: usize,
-    pub playlists_loading: bool,
-    pub playlists_error: Option<String>,
-    pub playlists_serial: u64,
     /// The playlists list failed with nothing to show: pinned playlists are
     /// asked for anyway.
     pub list_failed: bool,
@@ -130,22 +152,20 @@ pub struct State {
 }
 
 impl State {
-    pub fn replay_of(&self, period: Option<Period>) -> &Res<ReplayData> {
-        thread_local! { static NONE: &'static Res<ReplayData> = Box::leak(Box::default()); }
+    pub fn replay_of(&self, period: Option<Period>) -> Source<'_, ReplayData> {
         let key = period.unwrap_or(DEFAULT_PERIOD).key();
-        self.replay.get(&key).unwrap_or_else(|| NONE.with(|n| *n))
+        self.replay.get(&key).map_or_else(Source::pending, Source::of)
     }
 
     /// A pinned playlist's tracks: none for one deleted since, unknown until
     /// its request reports.
-    pub fn playlist_of(&self, id: Option<&str>, playlists: Option<&[Playlist]>) -> Option<&Res<Vec<TrackListItem>>> {
-        thread_local! { static NONE: &'static Res<Vec<TrackListItem>> = Box::leak(Box::default()); }
+    pub fn playlist_of(&self, id: Option<&str>, playlists: Option<&[Playlist]>) -> Option<Source<'_, [TrackListItem]>> {
         if let (Some(list), Some(id)) = (playlists, id)
             && !list.iter().any(|p| p.id == id)
         {
             return None;
         }
-        Some(id.and_then(|id| self.playlist_tracks.get(id)).unwrap_or_else(|| NONE.with(|n| *n)))
+        Some(id.and_then(|id| self.playlist_tracks.get(id)).map_or_else(Source::pending, Source::list))
     }
 }
 
@@ -179,7 +199,7 @@ pub fn enter(app: &mut App, loc: &Location) {
     }
     let index = app.history.index;
     let home = &mut app.pages.home;
-    let new_visit = home.visit != Some(index) || home.recent.serial == 0;
+    let new_visit = home.visit != Some(index) || !home.recent.started();
     home.visit = Some(index);
     if !loc.has(CUSTOMIZE_PARAM) {
         editing::reset(app);
@@ -247,14 +267,14 @@ pub fn layer(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
 }
 
 /// What a panel has to show, from the source it draws on.
-struct Content {
+struct Content<'a> {
     /// The source, so only the first panel on it shows its error.
     source: String,
     count: usize,
     /// The source has answered at least once.
     known: bool,
     loading: bool,
-    error: Option<String>,
+    error: Option<&'a str>,
 }
 
 /// Everything the view works out from the state (`Home`'s render).
@@ -274,14 +294,13 @@ pub struct Model {
     pub albums: Vec<albums::HomeAlbum>,
     pub periods: Vec<Period>,
     pub pinned: Vec<String>,
-    pub years: Vec<i32>,
 }
 
 impl Model {
     /// Why a panel is off the board outside customizing, for its tile.
     pub fn note_for(&self, app: &App, panel: &HomePanel) -> Option<String> {
         if panel.kind == PanelKind::Playlist
-            && let Some(list) = app.playlists.as_deref()
+            && let Some(list) = app.playlists.data.as_deref()
             && !list.iter().any(|p| Some(&p.id) == panel.playlist.as_ref())
         {
             return Some(if list.is_empty() {
@@ -296,11 +315,12 @@ impl Model {
 
 pub fn model(app: &App) -> Model {
     let st = &app.pages.home;
-    let favorites = favorites_res(app);
+    let favorites = favorites(app);
     let arrangement = read_arrangement(app.tweaks.home_board.as_ref());
     let enabled: Vec<HomePanel> = arrangement.panels.iter().filter(|p| !p.hidden).cloned().collect();
     let editing = app.location().has(CUSTOMIZE_PARAM);
-    let playlists = app.playlists.as_deref();
+    let lists = Source::list(&app.playlists);
+    let playlists = lists.data;
 
     let mut periods: Vec<Period> = Vec::new();
     for p in &enabled {
@@ -320,17 +340,15 @@ pub fn model(app: &App) -> Model {
         }
     }
 
-    let recent: &[TrackListItem] = st.recent.data.as_deref().unwrap_or(&[]);
-    let tracks: &[TrackListItem] = st.tracks.data.as_deref().unwrap_or(&[]);
+    let (recent_src, tracks_src) = (Source::list(&st.recent), Source::list(&st.tracks));
+    let (recent, tracks) = (recent_src.rows(), tracks_src.rows());
     let album_list = albums::home_albums(tracks);
     // Wait for recently played before picking the hero, so a library track
     // doesn't take the slot and then get swapped out when it lands.
-    let hero = if st.recent.answered() { recent.first().or(tracks.first()).cloned() } else { None };
+    let hero = if recent_src.answered() { recent.first().or(tracks.first()).cloned() } else { None };
 
     let content_of = |p: &HomePanel| -> Option<Content> {
-        let res_content = |source: String, count: usize, known: bool, loading: bool, error: &Option<String>| {
-            Some(Content { source, count, known, loading, error: error.clone() })
-        };
+        let res_content = |source: String, count: usize, known: bool, loading: bool, error| Some(Content { source, count, known, loading, error });
         match p.kind {
             PanelKind::Resume => None,
             PanelKind::Repeat | PanelKind::Artists | PanelKind::TopAlbums | PanelKind::Stats | PanelKind::Genres | PanelKind::Activity => {
@@ -347,29 +365,22 @@ pub fn model(app: &App) -> Model {
                     },
                 };
                 let key = format!("replay:{}", p.period.unwrap_or(DEFAULT_PERIOD).key());
-                res_content(key, count, source.data.is_some(), source.loading, &source.error)
+                res_content(key, count, source.data.is_some(), source.loading, source.error)
             }
-            PanelKind::Recent => res_content("recent".into(), recent.len(), st.recent.data.is_some(), st.recent.loading, &st.recent.error),
+            PanelKind::Recent => res_content("recent".into(), recent.len(), recent_src.data.is_some(), recent_src.loading, recent_src.error),
             PanelKind::Favorites => {
-                let f = &favorites;
-                res_content("favorites".into(), f.data.as_ref().map_or(0, Vec::len), f.data.is_some(), f.loading, &f.error)
+                let f = favorites;
+                res_content("favorites".into(), f.rows().len(), f.data.is_some(), f.loading, f.error)
             }
             PanelKind::Albums | PanelKind::Added => {
                 let count = if p.kind == PanelKind::Albums { album_list.len() } else { tracks.len() };
-                res_content("tracks".into(), count, st.tracks.data.is_some(), st.tracks.loading, &st.tracks.error)
+                res_content("tracks".into(), count, tracks_src.data.is_some(), tracks_src.loading, tracks_src.error)
             }
-            PanelKind::Playlists => res_content(
-                "playlists".into(),
-                playlists.map_or(0, <[Playlist]>::len),
-                playlists.is_some(),
-                st.playlists_loading,
-                &st.playlists_error,
-            ),
+            PanelKind::Playlists => res_content("playlists".into(), lists.rows().len(), playlists.is_some(), lists.loading, lists.error),
             PanelKind::Playlist => {
-                let gone = Res::gone();
-                let source = st.playlist_of(p.playlist.as_deref(), playlists).unwrap_or(&gone);
+                let source = st.playlist_of(p.playlist.as_deref(), playlists).unwrap_or_else(Source::gone);
                 let key = format!("playlist:{}", p.playlist.as_deref().unwrap_or(""));
-                res_content(key, source.data.as_ref().map_or(0, Vec::len), source.data.is_some(), source.loading, &source.error)
+                res_content(key, source.rows().len(), source.data.is_some(), source.loading, source.error)
             }
         }
     };
@@ -392,14 +403,12 @@ pub fn model(app: &App) -> Model {
     // Until every list has settled once, the board keeps its full shape,
     // with placeholders; then it swaps to the panels that have something,
     // in one change. Latched for the visit.
-    let fav_settled = favorites.data.is_some() || !favorites.loading;
-    let playlists_answered = playlists.is_some() || !st.playlists_loading;
-    let all_settled = st.recent.answered()
-        && st.tracks.answered()
-        && fav_settled
-        && playlists_answered
-        && periods.iter().all(|p| st.replay.get(&p.key()).is_some_and(Res::answered))
-        && pinned.iter().all(|id| st.playlist_tracks.get(id).is_some_and(Res::answered));
+    let all_settled = recent_src.answered()
+        && tracks_src.answered()
+        && favorites.answered()
+        && lists.answered()
+        && periods.iter().all(|p| st.replay.get(&p.key()).is_some_and(|r| Source::of(r).answered()))
+        && pinned.iter().all(|id| st.playlist_tracks.get(id).is_some_and(|r| Source::list(r).answered()));
     if all_settled && !st.settled.get() {
         st.settled.set(true);
     }
@@ -414,7 +423,7 @@ pub fn model(app: &App) -> Model {
             .filter(|p| match contents.get(&p.id).and_then(|c| c.as_ref()) {
                 None => true,
                 Some(c) => {
-                    let error = if owners.contains(&p.id) { c.error.as_ref() } else { None };
+                    let error = if owners.contains(&p.id) { c.error } else { None };
                     c.count > 0 || error.is_some() || (!c.known && c.loading && shown.contains(&p.id))
                 }
             })
@@ -447,41 +456,38 @@ pub fn model(app: &App) -> Model {
             (cells, panels)
         }
     };
-
-    let mut years = st.years.clone();
-    years.sort_unstable_by(|a, b| b.cmp(a));
-    years.dedup();
-    Model { arrangement, editing, enabled, present, owners, settled, cells, panels, hero, albums: album_list, periods, pinned, years }
+    Model { arrangement, editing, enabled, present, owners, settled, cells, panels, hero, albums: album_list, periods, pinned }
 }
 
 /// `.view`'s padding: `--pad`, or `clamp(12px, 4vw, --pad)` on a narrow window.
 fn view_pad(t: &Theme, window_w: f32) -> f32 {
-    if window_w <= 760.0 { (window_w * 0.04).clamp(12.0, t.pad()) } else { t.pad() }
+    if Bp::of(window_w) == Bp::Narrow { (window_w * 0.04).clamp(12.0, t.pad()) } else { t.pad() }
 }
 
-/// The board worked out for a width: the model, the grid, each panel laid
-/// out in its slot, and what the panels need loaded.
+/// The board worked out for a width: the grid, each panel laid out in its
+/// slot (with `views`; without, only what the panels want loaded), and what
+/// the panels need loaded.
 struct Plan {
-    m: Model,
     laid: grid::Laid,
     outs: Vec<panels::Out>,
     needs: sources::Needs,
 }
 
-fn plan(app: &App, t: &Theme, width: f32, window_w: f32) -> Plan {
-    let m = model(app);
-    let st = &app.pages.home;
+/// Whether a panel's room decides what it asks to load (`useWant`).
+fn wants_room(kind: PanelKind) -> bool {
+    matches!(kind, PanelKind::Resume | PanelKind::Recent | PanelKind::Added | PanelKind::Albums)
+}
+
+fn plan(app: &App, t: &Theme, m: &Model, width: f32, window_w: f32, views: bool) -> Plan {
     let size = grid::BoardSize::of(width);
     let areas = grid::place(&m.cells, size);
     let ctx = panels::Ctx {
-        state: st,
-        playlists: app.playlists.as_deref(),
-        settled: m.settled,
-        owners: m.owners.clone(),
-        albums: m.albums.clone(),
-        hero: m.hero.clone(),
-        narrow_window: window_w <= 760.0,
-        favorites: favorites_res(app),
+        state: &app.pages.home,
+        playlists: app.playlists.data.as_deref(),
+        m,
+        narrow_window: Bp::of(window_w) == Bp::Narrow,
+        favorites: favorites(app),
+        views,
     };
     let laid = grid::lay_out(&areas, width, t.gap(), size.columns(), |n, w| {
         let natural = panels::panel(app, t, &ctx, &m.panels[n], w, None).natural;
@@ -497,12 +503,15 @@ fn plan(app: &App, t: &Theme, width: f32, window_w: f32) -> Plan {
             _ => {}
         }
     }
-    if let Some(target) = m.hero.as_ref().and_then(logic::track_album_target).filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal) {
+    if let Some(target) = m.hero.as_ref().and_then(library_album_target) {
         needs.hero_album = Some(target.id);
     }
     let mut outs = Vec::with_capacity(laid.rects.len());
     for (n, rect) in laid.rects.iter().enumerate() {
         let panel = &m.panels[n];
+        if !views && !wants_room(panel.kind) {
+            continue;
+        }
         let out = panels::panel(app, t, &ctx, panel, rect[2], Some(rect[3]));
         if let Some(want) = out.want {
             match panel.kind {
@@ -512,20 +521,16 @@ fn plan(app: &App, t: &Theme, width: f32, window_w: f32) -> Plan {
         }
         outs.push(out);
     }
-    Plan { m, laid, outs, needs }
+    Plan { laid, outs, needs }
 }
 
-/// The board's width before its first layout: the window less the shell
-/// (its padding, the sidebar and the content's border and scrollbar) and
-/// the page's padding.
-fn estimate_width(t: &Theme, window_w: f32) -> f32 {
-    let narrow = window_w <= 760.0;
-    let shell = if narrow { 8.0 } else { 16.0 + t.layout.sidebar_w() + 8.0 };
-    window_w - shell - 2.0 - 10.0 - 2.0 * view_pad(t, window_w)
+/// The board's width before its first layout: the page's, less its padding.
+fn estimate_width(app: &App, t: &Theme, window_w: f32) -> f32 {
+    crate::shell::content_estimate(app, t, window_w) - 2.0 * view_pad(t, window_w)
 }
 
 /// After a source reports (React's effects after the render it causes):
-/// start what the board now needs.
+/// start what the board now needs, worked out without building its views.
 pub fn after_load(app: &mut App) {
     if !app.location().is("/") || app.me().is_none() {
         return;
@@ -538,9 +543,9 @@ pub fn after_load(app: &mut App) {
     };
     let width = match st.board_width.get() {
         w if w > 0.0 => w,
-        _ => estimate_width(&t, window_w),
+        _ => estimate_width(app, &t, window_w),
     };
-    let needs = plan(app, &t, width, window_w).needs;
+    let needs = plan(app, &t, &model(app), width, window_w, false).needs;
     if app.pages.home.needs.as_ref() != Some(&needs) {
         app.pages.home.needs = Some(needs.clone());
         sources::apply(app, &needs);
@@ -551,10 +556,11 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let window_w = crate::shell::window_size(cx)[0];
     let pad = view_pad(t, window_w);
     let st = &app.pages.home;
-    let width = cx.layout_size("home-board").map(|s| s[0]).filter(|w| *w > 0.0).unwrap_or_else(|| estimate_width(t, window_w));
+    let width = cx.layout_size("home-board").map(|s| s[0]).filter(|w| *w > 0.0).unwrap_or_else(|| estimate_width(app, t, window_w));
     st.board_width.set(width);
     st.window_w.set(window_w);
-    let Plan { m, laid, outs, needs } = plan(app, t, width, window_w);
+    let m = model(app);
+    let Plan { laid, outs, needs } = plan(app, t, &m, width, window_w, true);
 
     let mut board = el().key("home-board").w_full().h(laid.height);
     for (n, (rect, out)) in laid.rects.iter().zip(outs).enumerate() {
@@ -636,27 +642,17 @@ fn effects(needs: sources::Needs) -> El {
 
 // ── Playing ─────────────────────────────────────────────────────────────────
 
-/// `play(track, queue)`: the track, with the list as the queue.
-pub fn play_from(app: &mut App, track: &TrackListItem, queue: &[TrackListItem]) {
+/// The player's `play(track, queue)`, the queue as it is: the track where
+/// the list has it, else alone (Jump back in's fallback list, unfiltered as
+/// the web plays it).
+fn play_in(app: &mut App, track: &TrackListItem, queue: &[TrackListItem]) {
     if track.unavailable == Some(true) {
         return;
     }
-    let index = queue.iter().position(|t| t.id == track.id);
-    match index {
+    match queue.iter().position(|t| t.id == track.id) {
         Some(i) => app.player.play_list(queue.to_vec(), i),
         None => app.player.play_list(vec![track.clone()], 0),
     }
-}
-
-/// `startListPlayback(play, tracks, false)`: the list from its first
-/// playable track.
-pub fn play_list(app: &mut App, tracks: &[TrackListItem], _start: Option<usize>) -> bool {
-    let queue = playable_tracks(tracks);
-    if queue.is_empty() {
-        return false;
-    }
-    app.player.play_list(queue, 0);
-    true
 }
 
 /// `useFetchAndPlay`: plays a list fetched on demand. When it can't play,
@@ -673,7 +669,7 @@ pub fn play_fetched(
     home.play_seq += 1;
     home.failure = None;
     let seq = home.play_seq;
-    let (panel, label) = (panel.to_string(), logic::display_text(Some(label), ""));
+    let (panel, label) = (panel.to_string(), clean_text(Some(label)));
     app.net.run(
         move || load(&client),
         move |app, result| {
@@ -684,7 +680,8 @@ pub fn play_fetched(
                 Ok(list) => (list, None),
                 Err(e) => (Vec::new(), Some(e)),
             };
-            if play_list(app, &loaded, None) {
+            if loaded.iter().any(|t| t.unavailable != Some(true)) {
+                track_row::start_list(app, &loaded, false);
                 return;
             }
             let message = match error {
@@ -701,8 +698,8 @@ pub fn play_fetched(
 /// list the track came from.
 pub fn play_hero(app: &mut App, track: &TrackListItem) {
     let fallback = sources::fallback_queue(&app.pages.home);
-    let Some(album) = logic::track_album_target(track).filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal) else {
-        play_from(app, track, &fallback);
+    let Some(album) = library_album_target(track) else {
+        play_in(app, track, &fallback);
         return;
     };
     let Some(client) = app.client.clone() else { return };
@@ -723,8 +720,8 @@ pub fn play_hero(app: &mut App, track: &TrackListItem) {
             }
             let queue = result.map(|l| playable_tracks(&l)).unwrap_or_default();
             match queue.iter().find(|t| t.id == track.id).or(queue.first()).cloned() {
-                Some(start) => play_from(app, &start, &queue),
-                None => play_from(app, &track, &fallback),
+                Some(start) => play_in(app, &start, &queue),
+                None => play_in(app, &track, &fallback),
             }
         },
     );

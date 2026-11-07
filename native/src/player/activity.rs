@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::api::{PlaybackActivity, TrackListItem};
+use crate::api::TrackListItem;
 use crate::net::LateWaker;
 
 use super::core::{Repeat, can_start_track};
@@ -75,8 +75,6 @@ pub struct Session {
     /// This connection has heard an authoritative device list.
     pub devices_ready: bool,
     pub devices: Vec<PlaybackDevice>,
-    /// The freshest activity from another device (`getLatestPlaybackActivity`).
-    pub latest_activity: Option<PlaybackActivity>,
     revision: u64,
     published: bool,
     queue_version: Option<(u64, String)>,
@@ -105,7 +103,6 @@ impl Session {
             connected: false,
             devices_ready: false,
             devices: Vec::new(),
-            latest_activity: None,
             revision: 0,
             published: false,
             queue_version: None,
@@ -127,8 +124,8 @@ impl Session {
         if self.socket.is_some() {
             // Take this device's activity down now rather than when its lease runs out.
             if self.published && self.connected {
-                let msg = json!({ "type": "activity.clear", "protocol": PROTOCOL, "revision": self.next_revision(), "device_id": self.device_id });
-                self.send(&msg);
+                let revision = self.next_revision();
+                self.send(&self.clear_message(revision));
                 self.published = false;
             }
             if let Some(s) = &self.socket {
@@ -141,7 +138,6 @@ impl Session {
             self.rest.push(Rest::Clear(self.device_id.clone()));
         }
         self.disconnected();
-        self.latest_activity = None;
         self.server = base;
         let Some((base, cookie)) = server else { return };
         let Some(url) = socket_url(base, &self.device_id) else { return };
@@ -157,6 +153,11 @@ impl Session {
     fn next_revision(&mut self) -> u64 {
         self.revision += 1;
         self.revision
+    }
+
+    /// `activity.clear`: this device stopped playing.
+    fn clear_message(&self, revision: u64) -> Value {
+        json!({ "type": "activity.clear", "protocol": PROTOCOL, "revision": revision, "device_id": self.device_id })
     }
 
     /// `sendSocketMessage`: false when the socket is down or it's too big.
@@ -181,13 +182,7 @@ impl Session {
 
     fn fail_pending(&mut self, error: &str) {
         for (id, p) in self.pending.drain() {
-            let result = CommandResult {
-                command_id: id,
-                source_device_id: self.device_id.clone(),
-                target_device_id: p.target,
-                status: "disconnected".into(),
-                error: Some(error.into()),
-            };
+            let result = CommandResult::failed(id, &self.device_id, &p.target, "disconnected", error);
             self.results.push((result, p.action, p.args));
         }
     }
@@ -231,8 +226,7 @@ impl Session {
                 return;
             }
             self.published = false;
-            let msg = json!({ "type": "activity.clear", "protocol": PROTOCOL, "revision": revision, "device_id": self.device_id });
-            if !self.send(&msg) {
+            if !self.send(&self.clear_message(revision)) {
                 self.rest.push(Rest::Clear(self.device_id.clone()));
             }
             return;
@@ -268,22 +262,16 @@ impl Session {
     /// way (it lands in `results`), or the failure at once.
     pub fn send_command(&mut self, target: &str, action: &str, args: Value) -> Result<String, CommandResult> {
         let command_id = uuid::Uuid::new_v4().to_string();
-        let fail = |status: &str, error: &str| CommandResult {
-            command_id: command_id.clone(),
-            source_device_id: self.device_id.clone(),
-            target_device_id: target.to_string(),
-            status: status.into(),
-            error: Some(error.into()),
-        };
+        let fail = |error: &str| CommandResult::failed(command_id.clone(), &self.device_id, target, "disconnected", error);
         if !self.connected {
-            return Err(fail("disconnected", "playback socket is disconnected"));
+            return Err(fail("playback socket is disconnected"));
         }
         let msg = json!({
             "type": "playback.command", "protocol": PROTOCOL, "revision": self.revision + 1,
             "command_id": command_id, "target_device_id": target, "action": action, "args": args,
         });
         if !self.send(&msg) {
-            return Err(fail("disconnected", "could not send playback command"));
+            return Err(fail("could not send playback command"));
         }
         self.revision += 1;
         self.pending.insert(command_id.clone(), Pending { target: target.into(), action: action.into(), args, deadline: Instant::now() + COMMAND_TIMEOUT });
@@ -329,13 +317,7 @@ impl Session {
         let expired: Vec<String> = self.pending.iter().filter(|(_, p)| p.deadline <= now).map(|(id, _)| id.clone()).collect();
         for id in expired {
             if let Some(p) = self.pending.remove(&id) {
-                let result = CommandResult {
-                    command_id: id,
-                    source_device_id: self.device_id.clone(),
-                    target_device_id: p.target,
-                    status: "timeout".into(),
-                    error: Some("playback command result was not received".into()),
-                };
+                let result = CommandResult::failed(id, &self.device_id, &p.target, "timeout", "playback command result was not received");
                 self.results.push((result, p.action, p.args));
                 work.push(SessionWork::Changed);
             }
@@ -353,10 +335,6 @@ impl Session {
             return Vec::new();
         }
         match msg["type"].as_str() {
-            Some("activity.snapshot") if msg["activity"].is_null() || msg["activity"].is_object() => {
-                self.latest_activity = serde_json::from_value(msg["activity"].clone()).ok();
-                vec![SessionWork::Changed]
-            }
             Some("playback.command")
                 if msg["command_id"].is_string() && msg["source_device_id"].is_string() && msg["target_device_id"].is_string() && is_action(&msg["action"]) =>
             {

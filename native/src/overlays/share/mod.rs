@@ -4,7 +4,6 @@
 //! embed (cover + audio snippet), or save that video. Copy stays disabled
 //! until the window has been moved or trimmed once, so the default is never
 //! shared by accident.
-pub mod snippet;
 mod strip;
 
 use std::sync::Arc;
@@ -12,9 +11,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rune::{Color, Cx, El, Tx, col, el, row, text};
 
-use self::snippet::Grab;
-use crate::api::{TrackDetail, TrackListItem};
+use crate::api::share::{DEFAULT_SHARE_SNIPPET_DURATION_SEC, create_track_share_link, parse_track_share_url, track_share_preview_video_path};
+use crate::api::{ApiError, TrackDetail};
 use crate::app::App;
+use crate::core::share_link_session::{Ensure, ShareLinkSession};
+use crate::core::share_snippet::{
+    SnippetGrab as Grab, SnippetSelection, SnippetState, SnippetWindow, adjust_snippet_window, normalize_snippet_selection,
+    share_clip_name, snippet_drag_target, snippet_handle_bounds, snippet_window,
+};
+use crate::core::track::primary_artist_name;
 use crate::format::{fmt_duration_ms, fmt_duration_sec};
 use crate::theme::Theme;
 use crate::ui::kit::{Dialog, dialog_footer, eyebrow};
@@ -30,13 +35,10 @@ pub struct State {
     pub selected: f64,
     /// The window has been moved or trimmed.
     pub picked: bool,
-    /// The link for the current window, once minted.
-    pub share_url: Option<String>,
-    /// The window the last mint was for ("id:start:duration").
-    minted_for: Option<String>,
+    /// The window's link (`useShareLinkSession`), minted on first use.
+    link: ShareLinkSession<Action>,
     pub busy: bool,
-    pub copied: bool,
-    copy_gen: u64,
+    pub copied: crate::ui::flash::Flag,
     pub copy_error: Option<String>,
     pub downloading: bool,
     pub download_error: Option<String>,
@@ -44,11 +46,18 @@ pub struct State {
     pub current: f64,
     /// What a press on the strip grabbed, and where on it.
     drag: Option<(Grab, f64)>,
-    /// Bumped as the dialog opens or the window moves, so late answers drop.
+    /// Bumped as the dialog opens or closes, so late answers drop.
     gen_: Arc<AtomicU64>,
     /// The dialog's own `<audio>` on the track's stream; made on the first
     /// play (none in headless runs).
     audio: Option<Box<dyn crate::player::adapter::AudioAdapter>>,
+}
+
+/// What waits for the window's link.
+enum Action {
+    Copy,
+    /// Save the preview video, offering this file name.
+    Download(String),
 }
 
 /// Open the dialog for a track id (`useShare().open(trackId)`).
@@ -57,16 +66,11 @@ pub fn open(app: &mut App, track_id: &str) {
     gen_.fetch_add(1, Ordering::Relaxed);
     app.overlays.share = State {
         track_id: Some(track_id.to_string()),
-        selected: snippet::DEFAULT_DURATION_SEC,
+        selected: DEFAULT_SHARE_SNIPPET_DURATION_SEC as f64,
         gen_,
         ..Default::default()
     };
     load(app, track_id.to_string());
-}
-
-/// [`open`] for a track row.
-pub fn open_track(app: &mut App, track: &TrackListItem) {
-    open(app, &track.id);
 }
 
 pub fn close(app: &mut App) {
@@ -108,122 +112,86 @@ fn track_secs(s: &State) -> f64 {
 
 /// `onWindowChange`: store the window rounded and clamped; any link minted
 /// for the old window no longer applies.
-fn set_window(app: &mut App, start: f64, duration: f64) {
+fn set_window(app: &mut App, sel: SnippetSelection) {
     let s = &mut app.overlays.share;
-    let (start, duration) = snippet::normalize(track_secs(s), start, duration);
-    if s.picked && s.start == start && s.selected == duration {
+    let sel = normalize_snippet_selection(track_secs(s), sel.start_sec, sel.duration_sec);
+    if s.picked && s.start == sel.start_sec && s.selected == sel.duration_sec {
         return;
     }
-    s.start = start;
-    s.selected = duration;
+    s.start = sel.start_sec;
+    s.selected = sel.duration_sec;
     s.picked = true;
-    s.share_url = None;
-    s.minted_for = None;
-    s.copied = false;
-    s.gen_.fetch_add(1, Ordering::Relaxed);
+    s.link.invalidate();
+    s.copied.clear();
 }
 
-fn window(s: &State) -> snippet::Window {
-    snippet::window(track_secs(s), s.selected, s.start)
+fn window(s: &State) -> SnippetWindow {
+    snippet_window(track_secs(s), s.selected, s.start)
 }
 
-/// `ensureUrl`: the link for this window, minted once.
-fn ensure_url(app: &mut App, then: impl FnOnce(&mut App, Result<String, String>) + Send + 'static, fallback: &'static str) {
-    let s = &app.overlays.share;
-    let Some(id) = s.track_id.clone() else { return };
+/// The selection and its limits, as the trim gestures take them.
+fn bounds(s: &State) -> SnippetState {
     let w = window(s);
-    let key = format!("{id}:{}:{}", s.start, w.effective_duration);
-    if let (Some(url), Some(k)) = (&s.share_url, &s.minted_for)
-        && *k == key
-    {
-        let url = url.clone();
-        then(app, Ok(url));
-        return;
+    SnippetState {
+        start_sec: s.start,
+        end_sec: w.end_sec,
+        duration_sec: track_secs(s),
+        min_duration_sec: w.min_duration_sec,
+        max_duration_sec: w.max_duration_sec,
+        max_start_sec: w.max_start_sec,
     }
-    let Some(client) = app.client.clone() else { return };
-    let gen_ = s.gen_.clone();
-    let at = gen_.load(Ordering::Relaxed);
-    let (start, dur) = (s.start, w.effective_duration);
-    app.net.run(
-        move || crate::api::share::create_track_share_link(&client, &id, start, dur),
-        move |app, result| {
-            if gen_.load(Ordering::Relaxed) != at {
-                return;
-            }
-            match result {
-                Ok(link) => {
-                    let s = &mut app.overlays.share;
-                    s.share_url = Some(link.url.clone());
-                    s.minted_for = Some(key);
-                    then(app, Ok(link.url));
-                }
-                Err(e) => then(app, Err(super::error_message(&e, fallback))),
-            }
-        },
-    );
 }
 
-fn copy(app: &mut App) {
+/// `ensureUrl`: the link for this window, minted once; `action` runs with
+/// it (or with why there is none).
+fn ensure_url(app: &mut App, action: Action) {
+    let Some(client) = app.client.clone() else { return };
     let s = &mut app.overlays.share;
-    if s.track_id.is_none() || !s.picked || s.busy {
-        return;
+    let Some(id) = s.track_id.clone() else { return };
+    let (start, dur) = (s.start, window(s).effective_duration_sec);
+    let gen_ = s.gen_.clone();
+    match s.link.ensure(&id, start as u64, dur as u32, action) {
+        Ensure::Ready(url, action) => run(app, action, Ok(url)),
+        Ensure::Waiting => {}
+        Ensure::Mint(ticket) => {
+            let at = gen_.load(Ordering::Relaxed);
+            app.net.run(
+                move || create_track_share_link(&client, &id, start, dur).map(|l| l.url),
+                move |app, result| {
+                    // The dialog closed: its session went with it.
+                    if gen_.load(Ordering::Relaxed) != at {
+                        return;
+                    }
+                    let done = app.overlays.share.link.finish(ticket, result);
+                    for action in done.actions {
+                        run(app, action, done.url.clone());
+                    }
+                },
+            );
+        }
     }
-    s.download_error = None;
-    s.copy_error = None;
-    s.busy = true;
-    ensure_url(
-        app,
-        |app, result| {
-            app.overlays.share.busy = false;
-            match result {
+}
+
+/// An action that waited for the window's link.
+fn run(app: &mut App, action: Action, url: Result<String, ApiError>) {
+    match action {
+        Action::Copy => {
+            let s = &mut app.overlays.share;
+            s.busy = false;
+            match url {
                 Ok(url) => super::later(app, move |app, tx| {
                     tx.copy(url);
                     flash_copied(app);
                 }),
-                Err(e) => app.overlays.share.copy_error = Some(e),
+                Err(e) => {
+                    s.copy_error = Some(super::error_message(&e, "Couldn't copy link — try again or copy the URL manually."))
+                }
             }
-        },
-        "Couldn't copy link — try again or copy the URL manually.",
-    );
-}
-
-/// `useCopiedFlag(1800)`.
-fn flash_copied(app: &mut App) {
-    let s = &mut app.overlays.share;
-    s.copied = true;
-    s.copy_gen += 1;
-    let id = s.copy_gen;
-    let wait = !app.net.is_sync();
-    app.net.run(
-        move || {
-            if wait {
-                std::thread::sleep(std::time::Duration::from_millis(1800));
-            }
-        },
-        move |app, ()| {
-            if app.overlays.share.copy_gen == id {
-                app.overlays.share.copied = false;
-            }
-        },
-    );
-}
-
-/// Save the window's preview video (the MP4 that unfurls in chat).
-fn download_video(app: &mut App) {
-    let s = &mut app.overlays.share;
-    let Some(track) = s.track.clone() else { return };
-    if !s.picked || s.busy || s.downloading {
-        return;
-    }
-    s.downloading = true;
-    s.download_error = None;
-    s.copy_error = None;
-    let artist = primary_artist(&track, "");
-    let file_name = format!("{}.mp4", snippet::clip_name(&artist, &track.title));
-    ensure_url(
-        app,
-        move |app, result| {
-            let reference = result.and_then(|u| snippet::parse_share_url(&u).ok_or_else(|| "Couldn't read the generated share link.".to_string()));
+        }
+        Action::Download(file_name) => {
+            let reference = url.map_err(|e| super::error_message(&e, "Couldn't download the video — try again.")).and_then(|u| {
+                parse_track_share_url(&u).ok_or_else(|| "Couldn't read the generated share link.".to_string())
+            });
             match reference {
                 Err(e) => {
                     let s = &mut app.overlays.share;
@@ -234,19 +202,50 @@ fn download_video(app: &mut App) {
                     let options = rune::FileDialogOptions { title: "Save video".into(), file_name: Some(file_name), ..Default::default() }
                         .filter("Video", &["mp4"]);
                     tx.save_file(options, move |app: &mut App, picked, _| match picked {
-                        Ok(Some(path)) => save_video(app, &r, path),
+                        Ok(Some(path)) => save_video(app, track_share_preview_video_path(&r), path),
                         _ => app.overlays.share.downloading = false,
                     });
                 }),
             }
-        },
-        "Couldn't download the video — try again.",
-    );
+        }
+    }
 }
 
-fn save_video(app: &mut App, r: &snippet::ShareRef, path: std::path::PathBuf) {
-    let Some(client) = app.client.clone() else { return };
-    let url = snippet::preview_video_path(r);
+fn copy(app: &mut App) {
+    let s = &mut app.overlays.share;
+    if s.track_id.is_none() || !s.picked || s.busy || app.client.is_none() {
+        return;
+    }
+    s.download_error = None;
+    s.copy_error = None;
+    s.busy = true;
+    ensure_url(app, Action::Copy);
+}
+
+/// `useCopiedFlag(1800)`.
+fn flash_copied(app: &mut App) {
+    crate::ui::flash::flash(app, |app| &mut app.overlays.share.copied, 1800);
+}
+
+/// Save the window's preview video (the MP4 that unfurls in chat).
+fn download_video(app: &mut App) {
+    let s = &mut app.overlays.share;
+    let Some(track) = &s.track else { return };
+    if !s.picked || s.busy || s.downloading || app.client.is_none() {
+        return;
+    }
+    let file_name = format!("{}.mp4", share_clip_name(Some(&track.title), None, &track.artists));
+    s.downloading = true;
+    s.download_error = None;
+    s.copy_error = None;
+    ensure_url(app, Action::Download(file_name));
+}
+
+fn save_video(app: &mut App, url: String, path: std::path::PathBuf) {
+    let Some(client) = app.client.clone() else {
+        app.overlays.share.downloading = false;
+        return;
+    };
     app.net.run(
         move || {
             let (bytes, _) = client.bytes(&url).map_err(|e| super::error_message(&e, "Couldn't download the video — try again."))?;
@@ -300,7 +299,7 @@ fn toggle_play(app: &mut App) {
 /// (`timeupdate`), and back to the window's start at its end.
 pub fn poll(app: &mut App, tx: &mut rune::Tx) -> bool {
     let s = &mut app.overlays.share;
-    let end = snippet::window(track_secs(s), s.selected, s.start).end;
+    let end = window(s).end_sec;
     let Some(audio) = s.audio.as_mut() else { return false };
     let mut ended = false;
     while let Some(ev) = audio.next_event() {
@@ -325,18 +324,9 @@ pub fn poll(app: &mut App, tx: &mut rune::Tx) -> bool {
     true
 }
 
-/// `primaryArtistName`.
-pub fn primary_artist(t: &TrackDetail, fallback: &str) -> String {
-    t.artists
-        .iter()
-        .find(|a| a.role == "primary")
-        .or(t.artists.first())
-        .map_or(fallback.to_string(), |a| a.name.clone())
-}
-
 fn header(app: &App, t: &Theme, track: &TrackDetail) -> El {
     let cover = track.has_cover.then(|| crate::api::media::track_cover(&track.id, track.album_id.as_deref(), track.cover_url.as_deref(), None));
-    let mut sub = primary_artist(track, "Unknown artist");
+    let mut sub = primary_artist_name(&track.artists, "Unknown artist");
     if let Some(a) = track.album_title.as_deref().filter(|a| !a.is_empty()) {
         sub.push_str(&format!(" · {a}"));
     }
@@ -359,7 +349,7 @@ fn header(app: &App, t: &Theme, track: &TrackDetail) -> El {
 const COPY_LABELS: [&str; 3] = ["Copy share link", "Generating share link…", "Link copied"];
 
 fn copy_button(t: &Theme, s: &State, disabled: bool) -> El {
-    let shown = if s.busy { 1 } else if s.copied { 2 } else { 0 };
+    let shown = if s.busy { 1 } else if s.copied.on() { 2 } else { 0 };
     let ink = t.c.primary_foreground;
     let glyph = match shown {
         1 => spinner(ink),
@@ -442,7 +432,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                         .items_center()
                         .justify_between()
                         .child(text("Clip window").font(font(14.0, 400.0)).color(t.c.muted_foreground).h(20.3))
-                        .child(text(fmt_duration_sec(w.display_duration)).font(tnum(font(14.0, 400.0))).color(t.c.popover_foreground).h(20.3)),
+                        .child(text(fmt_duration_sec(w.display_duration_sec)).font(tnum(font(14.0, 400.0))).color(t.c.popover_foreground).h(20.3)),
                 )
                 .child(strip::view(t, s, dur, w, strip_w))
                 .child(
@@ -462,7 +452,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                             text(format!(
                                 "{} – {}{}",
                                 fmt_duration_sec(s.start),
-                                fmt_duration_sec(w.end),
+                                fmt_duration_sec(w.end_sec),
                                 if dur > 0.0 { format!(" · of {}", fmt_duration_sec(dur)) } else { String::new() }
                             ))
                             .font(tnum(font(12.0, 400.0)))
@@ -490,7 +480,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                         .shrink(),
                 ),
         );
-        if let Some(url) = &s.share_url {
+        if let Some(url) = s.link.share_url() {
             b = b.child(
                 css_border(col(), 1.0, t.c.border, t.radius_lg())
                     .w_full()
@@ -499,7 +489,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                     .radius(t.radius_lg())
                     .fill(t.c.muted)
                     .child(eyebrow(t, "Share link"))
-                    .child(text(url.clone()).font(with_lh(mono(12.0, 400.0), 17.4)).color(t.c.foreground).wrap_anywhere()),
+                    .child(text(url.to_string()).font(with_lh(mono(12.0, 400.0), 17.4)).color(t.c.foreground).wrap_anywhere()),
             );
         }
         if let Some(e) = s.copy_error.as_ref().or(s.download_error.as_ref()) {
@@ -534,11 +524,13 @@ pub(super) fn on_drag(app: &mut App, d: &rune::Drag) {
         return;
     }
     let at = (d.x / d.w).clamp(0.0, 1.0) as f64 * dur;
-    let w = window(s);
+    let b = bounds(s);
     match d.phase {
         rune::Phase::Down => {
-            let (kind, offset) = snippet::drag_target(at, s.start, w.end, dur, d.w as f64);
-            s.drag = Some((kind, offset));
+            // A press outside the window (`recenter`) moves it there at once,
+            // as every press runs the gesture below.
+            let target = snippet_drag_target(at, b.start_sec, b.end_sec, dur, d.w as f64);
+            s.drag = Some((target.kind, target.grab_offset_sec));
         }
         rune::Phase::Up => {
             s.drag = None;
@@ -547,39 +539,32 @@ pub(super) fn on_drag(app: &mut App, d: &rune::Drag) {
         rune::Phase::Move => {}
     }
     let Some((kind, offset)) = s.drag else { return };
-    let (start, duration) =
-        snippet::adjust(kind, at - offset, s.start, w.end, dur, w.min_duration, w.max_duration, w.max_start);
-    set_window(app, start, duration);
+    set_window(app, adjust_snippet_window(kind, at - offset, &b));
 }
 
 /// Arrow keys on the window (move it) and on its edges (trim).
 pub(super) fn on_step(app: &mut App, kind: Grab, delta: i32, shift: bool) {
-    let s = &app.overlays.share;
-    let dur = track_secs(s);
-    let w = window(s);
+    let b = bounds(&app.overlays.share);
     let step = if shift { 5.0 } else { 1.0 } * delta.signum() as f64 * if delta.abs() >= 10 { 10.0 } else { 1.0 };
-    let (start, duration) = match kind {
-        Grab::Window => (s.start + step, w.end - s.start),
-        Grab::Start => snippet::adjust(Grab::Start, s.start + step, s.start, w.end, dur, w.min_duration, w.max_duration, w.max_start),
-        Grab::End => snippet::adjust(Grab::End, w.end + step, s.start, w.end, dur, w.min_duration, w.max_duration, w.max_start),
+    let sel = match kind {
+        Grab::Window => SnippetSelection { start_sec: b.start_sec + step, duration_sec: b.end_sec - b.start_sec },
+        Grab::Start => adjust_snippet_window(kind, b.start_sec + step, &b),
+        Grab::End => adjust_snippet_window(kind, b.end_sec + step, &b),
     };
-    set_window(app, start, duration);
+    set_window(app, sel);
 }
 
 /// Home and End on the window and its edges.
 pub(super) fn on_step_limit(app: &mut App, kind: Grab, to_end: bool) {
-    let s = &app.overlays.share;
-    let dur = track_secs(s);
-    let w = window(s);
-    let b = snippet::handle_bounds(dur, s.start, w.end, w.min_duration, w.max_duration);
-    let (start, duration) = match kind {
-        Grab::Window => (if to_end { w.max_start } else { 0.0 }, w.end - s.start),
-        Grab::Start => {
-            snippet::adjust(Grab::Start, if to_end { b.max_start } else { b.min_start }, s.start, w.end, dur, w.min_duration, w.max_duration, w.max_start)
-        }
-        Grab::End => {
-            snippet::adjust(Grab::End, if to_end { b.max_end } else { b.min_end }, s.start, w.end, dur, w.min_duration, w.max_duration, w.max_start)
-        }
+    let b = bounds(&app.overlays.share);
+    let h = snippet_handle_bounds(b.duration_sec, b.start_sec, b.end_sec, b.min_duration_sec, b.max_duration_sec);
+    let sel = match kind {
+        Grab::Window => SnippetSelection {
+            start_sec: if to_end { b.max_start_sec } else { 0.0 },
+            duration_sec: b.end_sec - b.start_sec,
+        },
+        Grab::Start => adjust_snippet_window(kind, if to_end { h.max_start_sec } else { h.min_start_sec }, &b),
+        Grab::End => adjust_snippet_window(kind, if to_end { h.max_end_sec } else { h.min_end_sec }, &b),
     };
-    set_window(app, start, duration);
+    set_window(app, sel);
 }

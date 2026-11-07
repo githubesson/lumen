@@ -35,6 +35,34 @@ pub fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
+/// `s.slice(0, max)`: the first `max` UTF-16 code units, never splitting a
+/// surrogate pair (a character the cut would split is left out whole).
+pub fn slice_utf16(s: &str, max: usize) -> &str {
+    let mut units = 0;
+    for (i, c) in s.char_indices() {
+        units += c.len_utf16();
+        if units > max {
+            return &s[..i];
+        }
+    }
+    s
+}
+
+/// JavaScript's `\s`: what `String.prototype.trim` removes.
+pub fn is_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
+            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+    )
+}
+
+/// `s.trim()`, which (unlike Rust's) also takes the byte order mark U+FEFF
+/// and leaves U+0085 alone.
+pub fn trim(s: &str) -> &str {
+    s.trim_matches(is_space)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

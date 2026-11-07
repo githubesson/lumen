@@ -10,8 +10,6 @@ use crate::api::{PlaylistTrackEntry, TrackArtist, TrackDetail, TrackListItem, Tr
 
 /// A track-like row: list items, details and playlist entries.
 pub trait TrackRef {
-    fn track_id(&self) -> &str;
-    fn track_title(&self) -> &str;
     fn track_source(&self) -> Option<TrackSource>;
     fn track_album_id(&self) -> Option<&str>;
     fn track_album_title(&self) -> Option<&str>;
@@ -25,12 +23,6 @@ pub trait TrackRef {
 }
 
 impl TrackRef for TrackListItem {
-    fn track_id(&self) -> &str {
-        &self.id
-    }
-    fn track_title(&self) -> &str {
-        &self.title
-    }
     fn track_source(&self) -> Option<TrackSource> {
         self.source
     }
@@ -52,12 +44,6 @@ impl TrackRef for TrackListItem {
 }
 
 impl TrackRef for TrackDetail {
-    fn track_id(&self) -> &str {
-        &self.id
-    }
-    fn track_title(&self) -> &str {
-        &self.title
-    }
     fn track_source(&self) -> Option<TrackSource> {
         Some(self.source)
     }
@@ -79,12 +65,6 @@ impl TrackRef for TrackDetail {
 }
 
 impl TrackRef for PlaylistTrackEntry {
-    fn track_id(&self) -> &str {
-        &self.track_id
-    }
-    fn track_title(&self) -> &str {
-        &self.title
-    }
     fn track_source(&self) -> Option<TrackSource> {
         self.source
     }
@@ -134,26 +114,6 @@ pub fn album_download_state(tracks: &[TrackListItem], queued_count: u32) -> Albu
     let any_saved = tracks.iter().any(|t| !is_tidal_track(t));
     let label = if any_saved { format!("Download {remaining} remaining") } else { "Download album".into() };
     AlbumDownloadState::Available { remaining, any_saved, label }
-}
-
-/// `playlistEntryToTrack` (`toQueueItem`): a playlist row as the list-item
-/// shape players consume, without its position.
-pub fn playlist_entry_to_track(entry: &PlaylistTrackEntry) -> TrackListItem {
-    TrackListItem {
-        id: entry.track_id.clone(),
-        title: entry.title.clone(),
-        album_id: entry.album_id.clone(),
-        album_title: entry.album_title.clone(),
-        track_no: entry.track_no,
-        duration_ms: entry.duration_ms,
-        artist: entry.artist.clone(),
-        has_cover: entry.has_cover,
-        cover_url: entry.cover_url.clone(),
-        source: entry.source,
-        source_id: entry.source_id.clone(),
-        source_album_id: entry.source_album_id.clone(),
-        ..Default::default()
-    }
 }
 
 /// A track stored in this library (no source, or local). Only these can be
@@ -210,11 +170,6 @@ pub fn track_actions(track: &impl TrackRef, is_admin: bool) -> TrackActions {
         delete_own_upload: owned,
         admin_remove: is_admin && local && !owned,
     }
-}
-
-/// Confirmation for deleting a personal upload; the delete can't be undone.
-pub fn delete_own_upload_message(title: &str) -> String {
-    format!("Delete \"{title}\" from your library? This permanently removes the file you uploaded.")
 }
 
 /// `displayArtists`: the credited artists, composers left out.
@@ -332,14 +287,6 @@ mod tests {
     }
 
     #[test]
-    fn delete_message() {
-        assert_eq!(
-            delete_own_upload_message("Song"),
-            "Delete \"Song\" from your library? This permanently removes the file you uploaded."
-        );
-    }
-
-    #[test]
     fn album_download_states() {
         assert_eq!(
             album_download_state(&[tidal("1", false)], 3),
@@ -384,7 +331,7 @@ mod tests {
             added_by: None,
             play_count: None,
         };
-        for t in [playlist_entry_to_track(&entry), entry.as_track()] {
+        for t in [entry.as_track()] {
             assert_eq!(t.id, "track");
             assert_eq!(t.album_id.as_deref(), Some("album"));
             assert_eq!(t.has_cover, Some(true));

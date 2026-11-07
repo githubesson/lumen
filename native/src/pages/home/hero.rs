@@ -5,21 +5,22 @@
 //! loads, or a welcome for an empty library. When its slot has room under
 //! the cover, the album's tracks fill it.
 
-use std::rc::Rc;
-
 use rune::{El, TextStyle, col, el, row, text};
 
 use crate::api::TrackListItem;
 use crate::app::App;
+use crate::core::entity_target::track_album_target;
 use crate::ui::tooltip::TipExt;
 use crate::theme::Theme;
-use crate::ui::{Btn, cover_art, font, icons as i, line, with_lh};
+use crate::ui::{Btn, cover_art, font, icons as i, line, skeleton_line_w, with_lh};
 
 use super::arrangement::HomePanel;
-use super::board::{self, TrackRow};
-use super::fill::{BOARD_ROW_HEIGHT, FillUsual, count_in};
-use super::logic::{self, album_href, display_text, track_album_target, track_cover_url};
-use super::panels::{Ctx, Out, tracks_label};
+use super::board::{self, Queue, TrackRow};
+use super::fill::{FillUsual, count_in};
+use super::logic::{self, pluralize};
+use super::panels::{Ctx, Out};
+use super::Source;
+use crate::format::{clean_text, display_text_nullish};
 
 /// `.hero-art`'s side on a wide window.
 const ART: f32 = 168.0;
@@ -34,8 +35,9 @@ fn title_style() -> TextStyle {
     with_lh(font(24.0, 600.0), 27.6).tracking(-0.6)
 }
 
-fn lines_height(s: &str, style: TextStyle, width: f32) -> f32 {
-    rune::text::measure_with(s, &[], style, Some(width), rune::text::RichLayoutOptions::new().wrap_anywhere()).1
+/// The title's CSS height: whole lines, wrapping anywhere.
+fn title_height(s: &str, width: f32) -> f32 {
+    crate::ui::css_text_h_with(s, title_style(), Some(width), rune::text::RichLayoutOptions::new().wrap_anywhere())
 }
 
 
@@ -60,7 +62,6 @@ struct HeadLayout {
     /// for the two side by side).
     stacked: bool,
     body_w: f32,
-    body_h: f32,
     head_h: f32,
 }
 
@@ -70,11 +71,11 @@ fn body_height(b: &Body, w: f32, narrow: bool) -> f32 {
         h += 17.4 + 6.0;
     }
     h += match &b.title {
-        Some(t) => (lines_height(t, title_style(), w) / 27.6).round().max(1.0) * 27.6,
+        Some(t) => title_height(t, w),
         None => 27.6,
     } + 6.0;
     if let Some(n) = &b.note {
-        h += (rune::text::measure(n, &[], font(14.0, 400.0), Some(w)).1 / 20.3).round().max(1.0) * 20.3;
+        h += crate::ui::css_text_h(n, font(14.0, 400.0), Some(w));
     }
     if !b.meta.is_empty() {
         // `.hero-meta` wraps on a narrow window.
@@ -96,21 +97,21 @@ fn meta_width(meta: &[String]) -> f32 {
 fn head_layout(b: &Body, content: f32, with_art: bool, narrow: bool) -> HeadLayout {
     if !with_art {
         let body_h = body_height(b, content, narrow);
-        return HeadLayout { art: None, stacked: false, body_w: content, body_h, head_h: body_h };
+        return HeadLayout { art: None, stacked: false, body_w: content, head_h: body_h };
     }
     if narrow {
         let art = content.min(220.0);
         let body_h = body_height(b, content, narrow);
-        return HeadLayout { art: Some(art), stacked: true, body_w: content, body_h, head_h: art + GAP + body_h };
+        return HeadLayout { art: Some(art), stacked: true, body_w: content, head_h: art + GAP + body_h };
     }
     // `flex: 1 1 220px` beside the cover, wrapping under it when there's no room.
     let beside = content - ART - GAP;
     if beside >= 220.0 {
         let body_h = body_height(b, beside, narrow);
-        HeadLayout { art: Some(ART), stacked: false, body_w: beside, body_h, head_h: body_h.max(ART) }
+        HeadLayout { art: Some(ART), stacked: false, body_w: beside, head_h: body_h.max(ART) }
     } else {
         let body_h = body_height(b, content, narrow);
-        HeadLayout { art: Some(ART), stacked: true, body_w: content, body_h, head_h: ART + GAP + body_h }
+        HeadLayout { art: Some(ART), stacked: true, body_w: content, head_h: ART + GAP + body_h }
     }
 }
 
@@ -126,20 +127,15 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
     c = c.child(match &b.title {
         Some(title) => {
             let w = if narrow { l.body_w } else { crate::ui::balanced_width(title, title_style(), l.body_w) };
-            let h = lines_height(title, title_style(), l.body_w);
-            let h = (h / 27.6).round().max(1.0) * 27.6;
+            let h = title_height(title, l.body_w);
             board::lh(text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w), h).mb(6.0)
         }
-        None => {
-            let ch = rune::text::advance("0", title_style());
-            let bar = 24.0 * 0.75;
-            let mid = board::baseline(24.0, 27.6) - 24.0 * 0.53 / 2.0;
-            el().w_full().h(27.6).mb(6.0).child(el().absolute(0.0, mid - bar / 2.0).w(12.0 * ch).h(bar).radius(t.radius_sm()).fill(t.c.muted))
-        }
+        // A `12ch` bar on the title's line.
+        None => skeleton_line_w(t, 24.0, 27.6, crate::ui::ch(12.0, title_style())).mb(6.0),
     });
     if let Some(n) = &b.note {
-        let h = rune::text::measure(n, &[], font(14.0, 400.0), Some(l.body_w)).1;
-        c = c.child(board::lh(text(n.clone()).font(font(14.0, 400.0)).color(t.c.card_foreground).wrap(), (h / 20.3).round().max(1.0) * 20.3));
+        let h = crate::ui::css_text_h(n, font(14.0, 400.0), Some(l.body_w));
+        c = c.child(board::lh(text(n.clone()).font(font(14.0, 400.0)).color(t.c.card_foreground).wrap(), h));
     }
     if !b.meta.is_empty() {
         let mut m = row().gap(8.0).items_center().mb(16.0);
@@ -195,10 +191,10 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
     let content = board::content_width(w);
     let narrow = ctx.narrow_window;
     let key = format!("panel-{}", p.id);
-    if let Some(track) = &ctx.hero {
+    if let Some(track) = &ctx.m.hero {
         return hero_album(app, t, ctx, p, track, w, h);
     }
-    if st.recent.loading || st.tracks.loading {
+    if Source::list(&st.recent).loading || Source::list(&st.tracks).loading {
         let body = Body {
             eyebrow: Some(p.title.clone().unwrap_or_else(|| "Jump back in".into())),
             title: None,
@@ -259,31 +255,31 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let target = track_album_target(track);
     // Only a library album has a page to describe it and tracks to play
     // through here; a TIDAL track links to its release.
-    let album_id = target.as_ref().filter(|t| t.kind != crate::core::entity_target::EntityKind::Tidal).map(|t| t.id.clone());
+    let album_id = crate::core::entity_target::library_album_target(track).map(|t| t.id);
     let album = album_id.as_ref().and_then(|id| st.hero_album.get(id)).and_then(|r| r.data.as_ref());
     let year = album.and_then(|a| a.release_year).filter(|y| *y != 0);
     let track_count = album.map(|a| a.track_count).filter(|n| *n > 0);
     let from_recent = st.recent.data.as_ref().is_some_and(|r| !r.is_empty());
-    let mut meta = vec![display_text(track.artist.as_deref(), "Unknown artist")];
+    let mut meta = vec![display_text_nullish(track.artist.as_deref(), "Unknown artist")];
     if let Some(y) = year {
         meta.push(y.to_string());
     }
     if let Some(n) = track_count {
-        meta.push(tracks_label(n));
+        meta.push(pluralize(n as u64, "track"));
     }
     let mut actions = vec![{
         let tr = track.clone();
         Btn::new(format!("{key}-play"), "Play").primary().disabled(st.hero_starting).icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
             .on_press(move |app: &mut App| super::play_hero(app, &tr))
     }];
-    if let Some(href) = target.as_ref().map(album_href) {
+    if let Some(href) = target.as_ref().map(logic::EntityTarget::album_href) {
         actions.push(
             Btn::new(format!("{key}-open"), "Open album").icon(&i::DISC_3).icon_size(16.0).build(t)
                 .role("link")
                 .on_press(move |app: &mut App| app.navigate_to(&href)),
         );
     }
-    let title_text = display_text(Some(track.album_title.as_deref().unwrap_or(&track.title)), "");
+    let title_text = clean_text(Some(track.album_title.as_deref().unwrap_or(&track.title)));
     let body = Body {
         eyebrow: Some(p.title.clone().unwrap_or_else(|| (if from_recent { "Jump back in" } else { "From your library" }).into())),
         title: Some(title_text),
@@ -299,11 +295,16 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let listed: &[TrackListItem] = tracks_res.and_then(|r| r.data.as_deref()).unwrap_or(&[]);
     let natural = fixed;
     let Some(h) = h else { return Out { natural, view: None, want: None } };
-    let rows = count_in(FillUsual::Count(0), h - fixed, 1, BOARD_ROW_HEIGHT, 0.0, 12.0, listed.len());
+    let rows = count_in(FillUsual::Count(0), h - fixed, 1, board::ROW_H, 0.0, 12.0, listed.len());
     let show_tracks = album_id.is_some() && rows > 0;
+    // Room for tracks: the view's effects load the album's list.
+    let want = show_tracks.then_some(rows);
+    if !ctx.views {
+        return Out { natural, view: None, want };
+    }
     let label = track.album_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| track.title.clone());
     let side = l.art.unwrap_or(ART);
-    let art = cover_art(t, &app.images, Some(&track_cover_url(track, None)), &label, side, side, t.radius_lg());
+    let art = cover_art(t, &app.images, Some(&track.cover_at(None)), &label, side, side, t.radius_lg());
     let art = if l.stacked && narrow { el().w_full().center().child(art) } else { art };
     let head = head_view(Some(art), body_view(t, body, &l, narrow), &l);
     let mut hero = shell(t, &key, w, h);
@@ -313,8 +314,6 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     } else {
         hero = hero.child(head);
     }
-    // Room for tracks: the view's effects load the album's list.
-    let want = show_tracks.then_some(rows);
     Out { natural, view: Some(hero), want }
 }
 
@@ -329,10 +328,11 @@ fn hero_tracks(
     album_id: &str,
     rows: usize,
     track_count: Option<u32>,
-    res: Option<&super::Res<Vec<TrackListItem>>>,
+    res: Option<&crate::resource::Res<Vec<TrackListItem>>>,
     content: f32,
 ) -> El {
-    let tracks: &[TrackListItem] = res.and_then(|r| r.data.as_deref()).unwrap_or(&[]);
+    let res = res.map(Source::list);
+    let tracks: &[TrackListItem] = res.map_or(&[], |r| r.rows());
     let list_key = format!("{key}-tracks");
     if tracks.is_empty() {
         let loading = res.is_none_or(|r| r.loading);
@@ -345,11 +345,11 @@ fn hero_tracks(
             return c;
         }
         let mut c = col().w_full().mt(12.0);
-        if let Some(e) = res.and_then(|r| r.error.clone()) {
+        if let Some(e) = res.and_then(|r| r.error) {
             let id = album_id.to_string();
             c = c.child(
                 row().w_full().gap(8.0).pt(8.0).items_center().role("status")
-                    .child(line(e.clone(), font(14.0, 400.0), t.c.muted_foreground).shrink().tip(&format!("{key}-tracks-error"), &e))
+                    .child(line(e, font(14.0, 400.0), t.c.muted_foreground).shrink().tip(&format!("{key}-tracks-error"), e))
                     .child(
                         Btn::new(format!("{key}-tracks-retry"), "Retry")
                             .small()
@@ -363,23 +363,21 @@ fn hero_tracks(
     }
     let at = tracks.iter().position(|x| x.id == track.id).unwrap_or(0);
     let start = at.min(tracks.len().saturating_sub(rows));
-    let queue = Rc::new(logic::playable_tracks(tracks));
-    let all = Rc::new(tracks.to_vec());
+    let id = album_id.to_string();
+    let queue = Queue::of(move |a| a.pages.home.hero_tracks.get(&id).map_or(&[], |r| Source::list(r).rows()));
     let items: Vec<El> = tracks
         .iter()
         .skip(start)
         .take(rows)
         .enumerate()
         .map(|(n, x)| {
-            let (q, tr) = (queue.clone(), x.clone());
             board::track_row(app, t, format!("{list_key}-{n}"), x, TrackRow {
                 ranked: true,
                 rank: start + n + 1,
                 bare: true,
                 current: x.id == track.id,
                 meta: crate::format::fmt_duration_ms(x.duration_ms),
-                on_play: Rc::new(move |app: &mut App| super::play_from(app, &tr, &q)),
-                queue: all.clone(),
+                queue: queue.clone(),
             })
         })
         .collect();

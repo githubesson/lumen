@@ -2,13 +2,18 @@
 //! voice, a voice fading out under a smooth-mix crossfade, and a prepared
 //! voice buffering for the next track. Decoder threads fill each voice's
 //! ring buffer ([`Feed`]); control arrives as [`MixerCmd`]s, drained at the
-//! start of each callback, so nothing here waits on another thread.
+//! start of each callback, so nothing here waits on another thread. What
+//! goes out (events, and the voices and feeds let go of, whose ring buffers
+//! are megabytes to free) leaves through the [`Outbox`].
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::Duration;
 
-use super::{DecoderCmd, EngineEvent, EventSink, Levels, OutFormat, VoiceState};
+use crate::net::LateWaker;
+
+use super::{DecoderCmd, EngineEvent, Levels, OutFormat, VoiceState};
 
 /// Decoded audio for a voice, at the output's rate and channel count.
 pub struct Feed {
@@ -79,6 +84,104 @@ impl MixVoice {
     }
 }
 
+/// What the mixer let go of, freed off the audio thread.
+pub enum Retired {
+    Voice(Box<MixVoice>),
+    Feed(Feed),
+}
+
+/// Events waiting for the UI, at most.
+const EVENT_SLOTS: usize = 256;
+/// Voices and feeds waiting to be freed, at most.
+const RETIRED_SLOTS: usize = 64;
+
+/// The mixer's way out of the audio thread, where nothing may take a lock or
+/// touch the allocator: rings made up front for its events (the adapter
+/// reads them) and for what it lets go of, and a porter thread, woken with
+/// an unpark, that frees the latter and wakes the UI for the former.
+pub struct Outbox {
+    events: rtrb::Producer<EngineEvent>,
+    retired: rtrb::Producer<Retired>,
+    /// Events are waiting: the porter wakes the UI.
+    pending: Arc<AtomicBool>,
+    porter: Option<std::thread::Thread>,
+}
+
+impl Outbox {
+    /// An outbox and its porter; the consumer is the events' end.
+    pub fn start(waker: LateWaker) -> (Outbox, rtrb::Consumer<EngineEvent>) {
+        let (events, events_rx) = rtrb::RingBuffer::new(EVENT_SLOTS);
+        let (retired, mut retired_rx) = rtrb::RingBuffer::<Retired>::new(RETIRED_SLOTS);
+        let pending = Arc::new(AtomicBool::new(false));
+        let flag = pending.clone();
+        let porter = std::thread::Builder::new()
+            .name("lumen-audio-porter".into())
+            .spawn(move || {
+                loop {
+                    // The timeout only notices the mixer going away.
+                    std::thread::park_timeout(Duration::from_secs(1));
+                    while let Ok(gone) = retired_rx.pop() {
+                        match gone {
+                            Retired::Voice(voice) => drop(voice),
+                            Retired::Feed(feed) => drop(feed),
+                        }
+                    }
+                    if flag.swap(false, Ordering::AcqRel) {
+                        waker.wake();
+                    }
+                    if retired_rx.is_abandoned() {
+                        return;
+                    }
+                }
+            })
+            .ok()
+            .map(|t| t.thread().clone());
+        (Outbox { events, retired, pending, porter }, events_rx)
+    }
+
+    /// An outbox nobody empties but the test: the events and what's retired.
+    #[cfg(test)]
+    pub fn for_tests() -> (Outbox, rtrb::Consumer<EngineEvent>, rtrb::Consumer<Retired>) {
+        let (events, events_rx) = rtrb::RingBuffer::new(EVENT_SLOTS);
+        let (retired, retired_rx) = rtrb::RingBuffer::new(RETIRED_SLOTS);
+        (Outbox { events, retired, pending: Arc::default(), porter: None }, events_rx, retired_rx)
+    }
+
+    fn event(&mut self, event: EngineEvent) {
+        // A full ring (a UI that stopped reading) drops the event.
+        if self.events.push(event).is_ok() {
+            self.pending.store(true, Ordering::Release);
+            self.wake_porter();
+        }
+    }
+
+    fn retire(&mut self, gone: Retired) {
+        match self.retired.push(gone) {
+            Ok(()) => self.wake_porter(),
+            // The porter is that far behind: freed here after all.
+            Err(rtrb::PushError::Full(gone)) => drop(gone),
+        }
+    }
+
+    fn retire_voice(&mut self, voice: Option<Box<MixVoice>>) {
+        if let Some(voice) = voice {
+            self.retire(Retired::Voice(voice));
+        }
+    }
+
+    fn retire_feed(&mut self, feed: Option<Feed>) {
+        if let Some(feed) = feed {
+            self.retire(Retired::Feed(feed));
+        }
+    }
+
+    fn wake_porter(&self) {
+        if let Some(porter) = &self.porter {
+            porter.unpark();
+        }
+    }
+}
+
 pub enum MixerCmd {
     /// The current voice (a `load`); None plays nothing.
     SetCurrent(Option<Box<MixVoice>>),
@@ -96,7 +199,7 @@ pub struct Mixer {
     format: OutFormat,
     cmds: Receiver<MixerCmd>,
     levels: Arc<Levels>,
-    events: EventSink,
+    outbox: Outbox,
     playing: bool,
     current: Option<Box<MixVoice>>,
     prepared: Option<Box<MixVoice>>,
@@ -108,8 +211,8 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    pub fn new(format: OutFormat, cmds: Receiver<MixerCmd>, levels: Arc<Levels>, events: EventSink) -> Mixer {
-        Mixer { format, cmds, levels, events, playing: false, current: None, prepared: None, outgoing: None, fade: None, gain: 0.0 }
+    pub fn new(format: OutFormat, cmds: Receiver<MixerCmd>, levels: Arc<Levels>, outbox: Outbox) -> Mixer {
+        Mixer { format, cmds, levels, outbox, playing: false, current: None, prepared: None, outgoing: None, fade: None, gain: 0.0 }
     }
 
     pub fn format(&self) -> OutFormat {
@@ -117,6 +220,7 @@ impl Mixer {
     }
 
     /// The output changed format: every voice decodes again from where it is.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn set_format(&mut self, format: OutFormat) {
         if format == self.format {
             return;
@@ -125,14 +229,14 @@ impl Mixer {
         self.finish_fade();
         for voice in [&mut self.current, &mut self.prepared].into_iter().flatten() {
             let at = voice.position().unwrap_or_else(|| voice.state.position());
-            voice.feed = None;
+            self.outbox.retire_feed(voice.feed.take());
             let _ = voice.ctl.send(DecoderCmd::Reformat { format, seconds: at });
         }
     }
 
     fn finish_fade(&mut self) {
         self.fade = None;
-        self.outgoing = None;
+        self.outbox.retire_voice(self.outgoing.take());
     }
 
     fn voice_mut(&mut self, id: u64) -> Option<&mut MixVoice> {
@@ -143,9 +247,13 @@ impl Mixer {
         match cmd {
             MixerCmd::SetCurrent(voice) => {
                 self.finish_fade();
-                self.current = voice;
+                let old = std::mem::replace(&mut self.current, voice);
+                self.outbox.retire_voice(old);
             }
-            MixerCmd::SetPrepared(voice) => self.prepared = voice,
+            MixerCmd::SetPrepared(voice) => {
+                let old = std::mem::replace(&mut self.prepared, voice);
+                self.outbox.retire_voice(old);
+            }
             MixerCmd::Activate { id, fade_frames } => {
                 if self.prepared.as_ref().is_none_or(|p| p.id() != id) {
                     return;
@@ -156,47 +264,56 @@ impl Mixer {
                     self.outgoing = self.current.take();
                     self.fade = Some((0, fade_frames));
                 }
-                self.current = next;
+                let old = std::mem::replace(&mut self.current, next);
+                self.outbox.retire_voice(old);
             }
             MixerCmd::Feed { id, feed } => {
                 let format = self.format;
-                let Some(voice) = self.voice_mut(id) else { return };
-                if feed.epoch < voice.awaiting {
-                    return;
-                }
-                if feed.format != format {
-                    // Decoded for an output that's gone: again, for this one.
-                    let _ = voice.ctl.send(DecoderCmd::Reformat { format, seconds: feed.start });
-                    return;
-                }
-                voice.awaiting = feed.epoch;
-                voice.feed = Some(feed);
-                voice.played = 0;
-                voice.ended = false;
+                // The feed this one replaces, or this one when it's refused.
+                let gone = match self.voice_mut(id) {
+                    None => Some(feed),
+                    Some(voice) if feed.epoch < voice.awaiting => Some(feed),
+                    Some(voice) if feed.format != format => {
+                        // Decoded for an output that's gone: again, for this one.
+                        let _ = voice.ctl.send(DecoderCmd::Reformat { format, seconds: feed.start });
+                        Some(feed)
+                    }
+                    Some(voice) => {
+                        voice.awaiting = feed.epoch;
+                        voice.played = 0;
+                        voice.ended = false;
+                        voice.feed.replace(feed)
+                    }
+                };
+                self.outbox.retire_feed(gone);
             }
             MixerCmd::Seeking { id, epoch } => {
                 // A seek ends a crossfade.
                 if self.outgoing.is_some() && self.current.as_ref().is_some_and(|c| c.id() == id) {
                     self.finish_fade();
                 }
-                if let Some(voice) = self.voice_mut(id)
-                    && epoch > voice.awaiting
-                {
-                    voice.awaiting = epoch;
-                    if voice.feed.as_ref().is_some_and(|f| f.epoch < epoch) {
-                        voice.feed = None;
-                        voice.ended = false;
+                let gone = match self.voice_mut(id) {
+                    Some(voice) if epoch > voice.awaiting => {
+                        voice.awaiting = epoch;
+                        if voice.feed.as_ref().is_some_and(|f| f.epoch < epoch) {
+                            voice.ended = false;
+                            voice.feed.take()
+                        } else {
+                            None
+                        }
                     }
-                }
+                    _ => None,
+                };
+                self.outbox.retire_feed(gone);
             }
             MixerCmd::Play { seq } => {
                 self.playing = true;
-                self.events.send(EngineEvent::Played { seq });
+                self.outbox.event(EngineEvent::Played { seq });
             }
             MixerCmd::Pause { seq } => {
                 self.playing = false;
                 self.finish_fade();
-                self.events.send(EngineEvent::Paused { seq });
+                self.outbox.event(EngineEvent::Paused { seq });
             }
         }
     }
@@ -274,13 +391,14 @@ impl Mixer {
         if self.prepared.as_ref().is_some_and(|p| p.has_audio()) {
             self.finish_fade();
             let next = self.prepared.take();
-            self.events.send(EngineEvent::Ended { id, next: next.as_ref().map(|n| n.id()) });
-            self.current = next;
+            self.outbox.event(EngineEvent::Ended { id, next: next.as_ref().map(|n| n.id()) });
+            let old = std::mem::replace(&mut self.current, next);
+            self.outbox.retire_voice(old);
             return true;
         }
         if !current.ended {
             current.ended = true;
-            self.events.send(EngineEvent::Ended { id, next: None });
+            self.outbox.event(EngineEvent::Ended { id, next: None });
         }
         false
     }
@@ -308,24 +426,25 @@ mod tests {
     use std::sync::mpsc::channel;
 
     use super::*;
-    use crate::player::engine::{EventSink, Levels};
+    use crate::player::engine::Levels;
 
     struct Rig {
         mixer: Mixer,
         cmds: Sender<MixerCmd>,
-        events: Receiver<EngineEvent>,
+        events: rtrb::Consumer<EngineEvent>,
+        retired: rtrb::Consumer<Retired>,
     }
 
     const FORMAT: OutFormat = OutFormat { rate: 100, channels: 2 };
 
     fn rig() -> Rig {
         let (cmds, rx) = channel();
-        let (sink, events) = EventSink::for_tests();
+        let (outbox, events, retired) = Outbox::for_tests();
         let levels = Arc::new(Levels::default());
         levels.set(1.0, false);
-        let mut mixer = Mixer::new(FORMAT, rx, levels, sink);
+        let mut mixer = Mixer::new(FORMAT, rx, levels, outbox);
         mixer.gain = 1.0;
-        Rig { mixer, cmds, events }
+        Rig { mixer, cmds, events, retired }
     }
 
     /// A voice whose feed holds `frames` frames of `value`, finished or not.
@@ -350,8 +469,14 @@ mod tests {
         fn send(&self, cmd: MixerCmd) {
             self.cmds.send(cmd).unwrap();
         }
-        fn events(&self) -> Vec<String> {
-            self.events.try_iter().map(|e| format!("{e:?}")).collect()
+        fn events(&mut self) -> Vec<String> {
+            std::iter::from_fn(|| self.events.pop().ok()).map(|e| format!("{e:?}")).collect()
+        }
+        /// What the mixer let go of since the last call: (voices, feeds).
+        fn retired(&mut self) -> (usize, usize) {
+            let gone: Vec<Retired> = std::iter::from_fn(|| self.retired.pop().ok()).collect();
+            let voices = gone.iter().filter(|g| matches!(g, Retired::Voice(_))).count();
+            (voices, gone.len() - voices)
         }
     }
 
@@ -460,6 +585,28 @@ mod tests {
         r.send(MixerCmd::Feed { id: 1, feed: answer });
         r.send(MixerCmd::Seeking { id: 1, epoch: 1 });
         assert_eq!(r.render(10), vec![0.9; 10]);
+    }
+
+    #[test]
+    fn what_the_mix_lets_go_of_is_freed_off_the_audio_thread() {
+        let mut r = rig();
+        let (a, fa) = voice(1, 0.5, 100, false);
+        r.send(MixerCmd::SetCurrent(Some(a)));
+        r.send(MixerCmd::Feed { id: 1, feed: fa });
+        r.send(MixerCmd::Play { seq: 1 });
+        r.render(10);
+        assert_eq!(r.retired(), (0, 0));
+        // A seek lets the buffered feed go.
+        r.send(MixerCmd::Seeking { id: 1, epoch: 1 });
+        r.render(1);
+        assert_eq!(r.retired(), (0, 1));
+        // So does a load the voice, and a refused feed itself.
+        let (b, _) = voice(2, 0.5, 10, false);
+        let (_, stale) = voice(9, 0.1, 10, false);
+        r.send(MixerCmd::SetCurrent(Some(b)));
+        r.send(MixerCmd::Feed { id: 1, feed: stale });
+        r.render(1);
+        assert_eq!(r.retired(), (1, 1));
     }
 
     #[test]

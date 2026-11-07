@@ -7,11 +7,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rune::{Color, Cursor, El, Live, ScrollPos, Shadow, el, row};
+use rune::{Cursor, El, Live, ScrollPos, el, row};
 
 use crate::app::App;
 use crate::theme::Theme;
 use crate::ui::{ico, icons as i, motion};
+use crate::ui::ShadowMd;
 
 /// `--shelf-col`: a card's width in a shelf.
 pub const SHELF_COL: f32 = 168.0;
@@ -77,15 +78,13 @@ pub fn shelf_pb(app: &App, t: &Theme, key: &str, label: &str, cards: Vec<El>, co
         let pos = edges.pos.clone();
         let vk = viewport_key.clone();
         let glyph = if dir < 0.0 { &i::CHEVRON_LEFT } else { &i::CHEVRON_RIGHT };
-        let a = t.c.shadow_md_alpha;
         let b = crate::ui::css_border(el(), 1.0, t.c.border, 999.0)
             .key(format!("{key}-arrow-{}", if dir < 0.0 { "back" } else { "forward" }))
             .size(32.0, 32.0)
             .radius(999.0)
             .fill(t.c.popover)
             .center()
-            .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-            .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+            .shadow_md(t)
             .hover(crate::ui::hover_overlay(t.c.popover, t.c.accent))
             .hover_motion(motion::ease(120.0), motion::ease(120.0))
             .cursor(Cursor::Pointer)

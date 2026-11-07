@@ -4,7 +4,6 @@
 
 use crate::api::{TrackListItem, TrackSource};
 
-pub use crate::api::search::search_entity_id;
 pub use crate::core::artist_releases::{
     ARTIST_POPULAR_PREVIEW_COUNT, ArtistRelease, RELEASE_FILTER_OPTIONS, ReleaseFilter, filter_releases, fold_release_versions,
     has_release_filters, library_artist_releases, release_subtitle, release_target, release_version_labels, release_versions_of,
@@ -41,14 +40,5 @@ pub fn track_search_key(t: &TrackListItem) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
-}
-
-/// `artistImageUrl`: the artist's own picture, else its first track's cover.
-pub fn artist_image_url(cover_url: Option<&str>, tracks: &[TrackListItem], size: Option<u32>) -> Option<String> {
-    if let Some(u) = cover_url.filter(|u| !u.is_empty()) {
-        return Some(crate::api::media::resolve_cover(u, size));
-    }
-    let t = tracks.iter().find(|t| t.has_cover != Some(false))?;
-    Some(crate::api::media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), size))
 }
 

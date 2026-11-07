@@ -5,11 +5,16 @@
 //! their width, auto columns split what's left in proportion to their
 //! max-content width, or grow from their minimum when there isn't enough).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
 use rune::{Color, El, TextStyle, col, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
 use super::parts::{css_lh, line_box, lines_of};
+use crate::ui::tooltip::TipExt;
 use crate::ui::{css_border_bottom, font, mono, tnum};
 
 /// How a column is sized.
@@ -52,7 +57,7 @@ impl Col {
 }
 
 /// How a line of text breaks.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Wrap {
     /// At spaces and other break opportunities.
     Normal,
@@ -86,6 +91,11 @@ impl Line {
 
     /// (min-content, max-content) widths.
     pub fn widths(&self) -> (f32, f32) {
+        let key = (self.text.clone(), StyleKey(self.style), self.wrap);
+        MEASURED.with(|m| memo(&mut m.borrow_mut().widths, key, || self.measure()))
+    }
+
+    fn measure(&self) -> (f32, f32) {
         let max = advance(&self.text, self.style);
         let min = match self.wrap {
             Wrap::NoWrap => max,
@@ -109,7 +119,7 @@ impl Line {
             }
             Wrap::BreakAll => {
                 let mut c = col();
-                for l in break_all(&self.text, self.style, width) {
+                for l in breaks(&self.text, self.style, width) {
                     c = c.child(line_box(text(l).font(self.style).color(self.color), self.style));
                 }
                 c
@@ -123,11 +133,59 @@ pub fn advance(s: &str, style: TextStyle) -> f32 {
     if s.is_empty() { 0.0 } else { rune::text::advance(s, style) }
 }
 
+/// A text style as a map key (`TextStyle` hashes as it compares, and no
+/// style here is NaN).
+#[derive(Clone, Copy, PartialEq)]
+struct StyleKey(TextStyle);
+
+impl Eq for StyleKey {}
+
+impl Hash for StyleKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+/// What the tables measured, by text and style (and wrap, or width): they
+/// rebuild every frame, and breaking a path anywhere measures it a prefix
+/// at a time.
+#[derive(Default)]
+struct Measured {
+    widths: HashMap<(String, StyleKey, Wrap), (f32, f32)>,
+    breaks: HashMap<(String, StyleKey, u32), Vec<String>>,
+}
+
+thread_local! {
+    static MEASURED: RefCell<Measured> = RefCell::default();
+}
+
+/// Entries a cache holds before it starts over (resizing the window leaves
+/// a trail of widths).
+const MEASURED_CAP: usize = 4096;
+
+fn memo<K: Hash + Eq, V: Clone>(map: &mut HashMap<K, V>, key: K, measure: impl FnOnce() -> V) -> V {
+    if let Some(v) = map.get(&key) {
+        return v.clone();
+    }
+    if map.len() >= MEASURED_CAP {
+        map.clear();
+    }
+    let v = measure();
+    map.insert(key, v.clone());
+    v
+}
+
+/// [`break_all`], once per text, style and width.
+fn breaks(s: &str, style: TextStyle, width: f32) -> Vec<String> {
+    let key = (s.to_string(), StyleKey(style), width.to_bits());
+    MEASURED.with(|m| memo(&mut m.borrow_mut().breaks, key, || break_all(s, style, width)))
+}
+
 /// `word-break: break-all`: fill each line to `width`, breaking between any
 /// two characters the line-breaking rules still allow (never before closing
 /// punctuation, `/` or a hyphen, nor after an opening bracket, UAX #14
 /// LB13/LB14/LB21); spaces at a break are dropped.
-pub fn break_all(s: &str, style: TextStyle, width: f32) -> Vec<String> {
+fn break_all(s: &str, style: TextStyle, width: f32) -> Vec<String> {
     let chars: Vec<char> = s.chars().collect();
     let allowed = |i: usize| -> bool {
         // A break before chars[i].
@@ -464,14 +522,13 @@ impl Action {
         let ink = if self.active { t.c.foreground } else { t.c.muted_foreground };
         let hot = if self.danger { t.c.destructive } else { t.c.foreground };
         let mut b = el()
-            .key(self.key)
             .size(32.0, 32.0)
             .radius(t.radius_lg())
             .center()
             .role("button")
             .label(self.label)
-            .help(self.help)
-            .checked(self.active);
+            .checked(self.active)
+            .tip(&self.key, &self.help);
         if self.active {
             b = b.fill(t.c.muted);
         }
@@ -503,6 +560,19 @@ pub fn actions(buttons: Vec<El>) -> Cell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn breaks_are_measured_once() {
+        MEASURED.with(|m| *m.borrow_mut() = Measured::default());
+        let style = mono(12.0, 400.0);
+        let path = "/mnt/external/flac/Velvet Meridian/Demo 1.flac";
+        let w = advance("/mnt/external/flac/", style) + 1.0;
+        assert_eq!(breaks(path, style, w), break_all(path, style, w));
+        assert_eq!(breaks(path, style, w), break_all(path, style, w));
+        let line = Line::new(path, style, Color::BLACK).break_all();
+        assert_eq!(line.widths(), line.measure());
+        assert!(MEASURED.with(|m| m.borrow().breaks.len() == 1 && m.borrow().widths.len() == 1));
+    }
 
     #[test]
     fn auto_columns_share_the_rest() {

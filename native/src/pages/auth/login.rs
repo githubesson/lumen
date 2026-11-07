@@ -60,10 +60,7 @@ fn server_host(app: &App) -> Option<String> {
         .backend_url
         .clone()
         .or_else(|| app.client.as_ref().map(|c| c.base().to_string()))?;
-    let host = super::server::parse_address(&url)
-        .map(|a| a.host)
-        .unwrap_or(url);
-    Some(host)
+    Some(super::server::host_of(&url))
 }
 
 /// "Change server" (and the Welcome's "Use …"): underlined text in `rest`,

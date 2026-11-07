@@ -77,7 +77,6 @@ fn shows_the_local_player() {
     p.toggle_shuffle();
     assert!(p.shuffle);
     assert_eq!(p.queue_progress(), QueueProgress { offset: 0, position: 1, total: 2, upcoming: 1 });
-    assert!(p.list_state(&list(&["b"])).playing_here);
 }
 
 #[test]
@@ -112,11 +111,9 @@ fn shows_and_routes_to_the_controlled_device() {
     assert_eq!((p.volume, p.shuffle, p.repeat), (0.3, true, Repeat::One));
     assert_eq!(p.queue_progress(), QueueProgress { offset: 10, position: 12, total: 40, upcoming: 28 });
     assert!(p.error.is_none());
-    // Play Next is local only.
-    assert!(!p.play_next(&list(&["x"])));
     // No socket here: the command fails at once, and says why.
     p.toggle_play();
-    let failed = p.last_command_result().unwrap();
+    let failed = p.remote.last_result.as_ref().unwrap();
     assert_eq!(failed.status, "disconnected");
     assert_eq!(p.command_error().as_deref(), Some("could not send playback command"));
     assert!(!p.local.is_playing(), "the local player stays paused");
@@ -165,9 +162,19 @@ fn the_error_lines_name_the_track() {
     p.local.handle(adapter::AdapterEvent::Error);
     p.refresh();
     assert_eq!(p.error.as_ref().map(|e| e.summary.as_str()), Some("Couldn't play this track."));
-    let lines = p.error_lines();
+    let lines = p.error.as_ref().unwrap().lines(p.current());
     assert_eq!(lines[1].value, "Track a");
     assert!(p.error_text().unwrap().contains("Server: Asking…"));
+}
+
+/// A device plugged in or gone (or a failure to open one) redraws, so the
+/// Settings row lists the devices as they are.
+#[test]
+fn output_device_changes_redraw() {
+    let mut p = Player::with_engine(LateWaker::default(), None, Store::default());
+    p.step();
+    p.output.as_ref().unwrap().shared.changes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    assert!(p.step().0);
 }
 
 /// The whole player on the real engine (a silent output on a clock, here),

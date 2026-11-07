@@ -7,7 +7,6 @@
 //! does, then `commit` runs the hook's effects, in their order, for whatever
 //! changed. Requests go to an outbox ([`Effect`]) the [`super::Player`] runs.
 
-use std::collections::HashSet;
 use std::time::Instant;
 
 use crate::api::TrackListItem;
@@ -38,7 +37,7 @@ impl Clock for SystemClock {
         self.0.elapsed().as_secs_f64()
     }
     fn unix_ms(&self) -> u64 {
-        super::error::now_ms()
+        crate::core::dates::now_ms().max(0) as u64
     }
 }
 
@@ -119,7 +118,6 @@ pub struct LocalPlayer {
     playback_attempt: u64,
     refused_attempt: Option<u64>,
     handoff: Option<((String, u64), u64)>,
-    play_next_run: Option<(String, HashSet<String>)>,
     committed: Committed,
     effects: Vec<Effect>,
     /// A seek or new metadata landed: the activity publisher sends at once.
@@ -163,7 +161,6 @@ impl LocalPlayer {
             playback_attempt: 0,
             refused_attempt: None,
             handoff: None,
-            play_next_run: None,
             committed: Committed { volume: f64::NAN, ..Default::default() },
             effects: Vec::new(),
             publish_hint: false,
@@ -209,6 +206,10 @@ impl LocalPlayer {
     }
     pub fn error(&self) -> Option<&PlaybackError> {
         self.error.as_ref()
+    }
+    /// Moves when the current track becomes another queue entry (or none).
+    pub fn current_rev(&self) -> u64 {
+        self.current_rev
     }
     /// Headless scenes: a failure set as is (`Player::scene_set_error`).
     pub(super) fn scene_set_error(&mut self, error: PlaybackError) {
@@ -295,16 +296,18 @@ impl LocalPlayer {
         self.listening_tick = Some(self.clock.mono());
     }
 
-    /// `retryFailedTrack`: a failed source is loaded again and started.
-    fn retry_failed_track(&mut self, track: &TrackListItem) {
+    /// `retryFailedTrack`: the current track's failed source is loaded again
+    /// and started.
+    fn retry_current(&mut self) {
+        let Some(id) = self.current.as_ref().map(|t| t.id.clone()) else { return };
         self.clear_playback_error();
         self.clear_prepared_next();
         self.playback_reported = None;
         self.reset_listening();
         self.current_time = 0.0;
         self.duration = 0.0;
-        let uri = self.stream_url(&track.id);
-        self.loaded_track_id = Some(track.id.clone());
+        let uri = self.stream_url(&id);
+        self.loaded_track_id = Some(id);
         self.loaded_uri = Some(uri.clone());
         self.adapter.load(&uri);
         self.start_playback();
@@ -312,22 +315,33 @@ impl LocalPlayer {
         self.is_playing = true;
     }
 
-    /// `startTrack`: the failed track is retried; any other drops the failure.
-    fn start_track(&mut self, track: &TrackListItem) {
-        if self.failure.as_ref().is_some_and(|f| f.track_id == track.id) {
-            self.retry_failed_track(track);
+    /// `startTrack` for the current track: a failed one is retried; any
+    /// other drops the failure.
+    fn start_current(&mut self) {
+        if self.failed_current() {
+            self.retry_current();
             return;
         }
         self.clear_playback_error();
         self.is_playing = true;
     }
 
+    /// Make `track`, the queue's entry `index`, current and start it (`play`,
+    /// `prev`, `jumpTo`). `same` says it's the entry already current.
+    fn select(&mut self, index: usize, track: TrackListItem, same: bool) {
+        self.reset_clock_for_track_change(&track.id);
+        self.index = index;
+        self.set_current(track, same);
+        self.start_current();
+        self.playback_reported = None;
+    }
+
     fn failed_current(&self) -> bool {
         matches!((&self.failure, &self.current), (Some(f), Some(c)) if f.track_id == c.id)
     }
 
-    /// `nextTrackToPrepare`.
-    pub fn next_track_to_prepare(&self) -> Option<&TrackListItem> {
+    /// `nextTrackToPrepare`, as its place in the queue.
+    fn next_to_prepare(&self) -> Option<usize> {
         if self.current.is_none() || self.repeat == Repeat::One || self.queue.is_empty() {
             return None;
         }
@@ -335,14 +349,26 @@ impl LocalPlayer {
         if self.index + 1 < len
             && let Some(i) = first_playable_index(&self.queue, self.index + 1, len - 1)
         {
-            return self.queue.get(i);
+            return Some(i);
         }
         // A repeat-all shuffle reshuffles at the boundary: its next track is
         // unknown until then.
-        if self.repeat == Repeat::All && !self.shuffle {
-            return self.queue.first().filter(|t| can_start_track(t));
+        if self.repeat == Repeat::All && !self.shuffle && can_start_track(&self.queue[0]) {
+            return Some(0);
         }
         None
+    }
+
+    /// Whether the effects last ran with the state as it is (checked without
+    /// copying anything, as this runs on every tick).
+    fn committed_is_current(&self) -> bool {
+        let c = &self.committed;
+        c.volume == self.volume
+            && c.muted == self.muted
+            && c.is_playing == self.is_playing
+            && c.next_prepare_id.as_deref() == self.next_to_prepare().map(|i| self.queue[i].id.as_str())
+            && c.current_key.as_ref().map(|(id, rev)| (id.as_str(), *rev))
+                == self.current.as_ref().map(|t| (t.id.as_str(), self.current_rev))
     }
 
     // ---- effects ----
@@ -356,16 +382,16 @@ impl LocalPlayer {
             {
                 self.is_playing = false;
             }
+            if self.committed_is_current() {
+                break;
+            }
             let now = Committed {
                 volume: self.volume,
                 muted: self.muted,
-                next_prepare_id: self.next_track_to_prepare().map(|t| t.id.clone()),
+                next_prepare_id: self.next_to_prepare().map(|i| self.queue[i].id.clone()),
                 current_key: self.current_key(),
                 is_playing: self.is_playing,
             };
-            if now == self.committed {
-                break;
-            }
             let before = std::mem::replace(&mut self.committed, now.clone());
             // Volume and mute go to the adapter at once; saving is debounced.
             if now.volume != before.volume || now.muted != before.muted {
@@ -384,7 +410,10 @@ impl LocalPlayer {
             }
             let current_changed = now.current_key != before.current_key;
             let id_changed = now.current_key.as_ref().map(|k| &k.0) != before.current_key.as_ref().map(|k| &k.0);
-            // Load the current track when it isn't loaded yet.
+            // Load the current track when it isn't loaded yet. `load` drops
+            // the adapter's prepared source, so its marker goes too, or the
+            // next track would never be prepared again (no gapless hand-off
+            // or smooth mix into it).
             if current_changed
                 && let Some(track) = &self.current
                 && self.loaded_track_id.as_deref() != Some(track.id.as_str())
@@ -392,6 +421,7 @@ impl LocalPlayer {
                 let uri = self.stream_url(&track.id);
                 self.loaded_track_id = Some(track.id.clone());
                 self.loaded_uri = Some(uri.clone());
+                self.prepared_next = None;
                 self.adapter.load(&uri);
             }
             if id_changed && self.current.is_some() {
@@ -427,7 +457,6 @@ impl LocalPlayer {
         if !can_start_track(track) {
             return false;
         }
-        self.play_next_run = None;
         let base: Vec<TrackListItem> = if queue.is_empty() { vec![track.clone()] } else { queue.to_vec() };
         let shuffled = options.shuffle.unwrap_or(self.shuffle);
         self.shuffle = shuffled;
@@ -436,74 +465,18 @@ impl LocalPlayer {
         let next_index = if shuffled { 0 } else { base.iter().position(|t| t.id == track.id).unwrap_or(0) };
         self.source_queue = base;
         self.set_queue(next_queue);
-        self.index = next_index;
-        self.set_current(track.clone(), false);
-        self.start_track(track);
-        self.reset_clock_for_track_change(&track.id);
-        self.playback_reported = None;
-        self.commit();
-        true
-    }
-
-    /// `playNext`: put `tracks` right after the current one, in the play
-    /// order and the list order. Consecutive calls queue up in order until the
-    /// track changes. With nothing loaded it plays them.
-    pub fn play_next(&mut self, tracks: &[TrackListItem]) -> bool {
-        let playing = self.current.clone();
-        let mut seen = HashSet::new();
-        let picked: Vec<TrackListItem> = tracks
-            .iter()
-            .filter(|t| {
-                if playing.as_ref().is_some_and(|p| p.id == t.id) || !seen.insert(t.id.clone()) {
-                    return false;
-                }
-                can_start_track(t)
-            })
-            .cloned()
-            .collect();
-        if picked.is_empty() {
-            return false;
-        }
-        let Some(playing) = playing.filter(|_| !self.queue.is_empty()) else {
-            if !self.play(&picked[0], &picked, PlayOptions::default()) {
-                return false;
-            }
-            // Picks play in the order they were made, shuffle or not.
-            if self.shuffle {
-                self.set_queue(picked.clone());
-                self.index = 0;
-            }
-            self.play_next_run = Some((picked[0].id.clone(), picked[1..].iter().map(|t| t.id.clone()).collect()));
-            self.commit();
-            return true;
-        };
-        let run = match &self.play_next_run {
-            Some((id, ids)) if *id == playing.id => ids.clone(),
-            _ => HashSet::new(),
-        };
-        let (ordered, at) = with_play_next(&self.queue, Some(self.index), &picked, &run);
-        // With shuffle off the play order is the list order: keep them one list.
-        let source = if self.shuffle {
-            let at = self.source_queue.iter().position(|t| t.id == playing.id);
-            with_play_next(&self.source_queue, at, &picked, &run).0
-        } else {
-            ordered.clone()
-        };
-        self.set_queue(ordered);
-        self.source_queue = source;
-        self.index = at.unwrap_or(0);
-        let mut ids = run;
-        ids.extend(picked.iter().map(|t| t.id.clone()));
-        self.play_next_run = Some((playing.id.clone(), ids));
+        self.select(next_index, track.clone(), false);
         self.commit();
         true
     }
 
     /// `toggle`: play or pause; a failed track is retried.
     pub fn toggle(&mut self) {
-        let Some(current) = self.current.clone() else { return };
+        if self.current.is_none() {
+            return;
+        }
         if self.failed_current() {
-            self.retry_failed_track(&current);
+            self.retry_current();
         } else {
             self.is_playing = !self.is_playing;
         }
@@ -511,8 +484,8 @@ impl LocalPlayer {
     }
 
     pub fn resume(&mut self) {
-        if let Some(current) = self.current.clone() {
-            self.start_track(&current);
+        if self.current.is_some() {
+            self.start_current();
             self.commit();
         }
     }
@@ -598,7 +571,6 @@ impl LocalPlayer {
         self.index = next_index;
         self.set_current(next_track, same_entry);
         self.handoff = self.current_key().map(|k| (k, self.playback_attempt));
-        self.play_next_run = None;
         self.is_playing = true;
         self.current_time = 0.0;
         self.duration = if activated || same_track { self.adapter.duration() } else { 0.0 };
@@ -629,22 +601,16 @@ impl LocalPlayer {
         match behind.filter(|_| !restart) {
             None => {
                 // A failed source can't restart in place; it is loaded again.
-                if let Some(current) = self.current.clone().filter(|_| self.failed_current()) {
-                    self.retry_failed_track(&current);
+                if self.failed_current() {
+                    self.retry_current();
                 } else {
                     self.adapter.seek(0.0);
                     self.current_time = 0.0;
                 }
             }
             Some(ni) => {
-                self.play_next_run = None;
                 self.clear_prepared_next();
-                self.index = ni;
-                let track = self.queue[ni].clone();
-                self.set_current(track.clone(), false);
-                self.start_track(&track);
-                self.reset_clock_for_track_change(&track.id);
-                self.playback_reported = None;
+                self.select(ni, self.queue[ni].clone(), false);
             }
         }
         self.commit();
@@ -656,14 +622,8 @@ impl LocalPlayer {
         if !can_start_track(&track) {
             return;
         }
-        self.play_next_run = None;
         self.clear_prepared_next();
-        let same = i == self.index;
-        self.index = i;
-        self.set_current(track.clone(), same);
-        self.start_track(&track);
-        self.reset_clock_for_track_change(&track.id);
-        self.playback_reported = None;
+        self.select(i, track, i == self.index);
         self.commit();
     }
 
@@ -689,17 +649,12 @@ impl LocalPlayer {
         self.commit();
     }
 
-    pub fn toggle_mute(&mut self) {
-        self.set_muted(!self.muted);
-    }
-
     /// `setShuffle`: on reshuffles with the playing track first; off goes
     /// back to the list order at the playing track's place.
     pub fn set_shuffle(&mut self, value: bool) {
         if value == self.shuffle {
             return;
         }
-        self.play_next_run = None;
         self.shuffle = value;
         if !self.queue.is_empty() {
             let source = if self.source_queue.is_empty() { self.queue.clone() } else { self.source_queue.clone() };
@@ -715,17 +670,9 @@ impl LocalPlayer {
         self.commit();
     }
 
-    pub fn toggle_shuffle(&mut self) {
-        self.set_shuffle(!self.shuffle);
-    }
-
     pub fn set_repeat(&mut self, repeat: Repeat) {
         self.repeat = repeat;
         self.commit();
-    }
-
-    pub fn cycle_repeat(&mut self) {
-        self.set_repeat(self.repeat.next());
     }
 
     /// Forget everything but the volume (sign-out).
@@ -747,7 +694,6 @@ impl LocalPlayer {
         self.loaded_track_id = None;
         self.loaded_uri = None;
         self.handoff = None;
-        self.play_next_run = None;
         self.playback_reported = None;
         self.adapter.load("");
         self.commit();

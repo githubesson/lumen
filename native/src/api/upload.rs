@@ -7,7 +7,6 @@
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use super::client::{ApiError, ApiResult, Behavior, Body, Client, Progress, seg};
 use super::types::{Album, Playlist, UploadResult};
@@ -21,6 +20,7 @@ pub enum Part {
 /// Where a file part's bytes come from.
 pub enum FileSource {
     Path(PathBuf),
+    #[cfg(test)]
     Bytes(Vec<u8>),
 }
 
@@ -41,6 +41,7 @@ impl Part {
     }
 
     /// Bytes in memory under a file name.
+    #[cfg(test)]
     pub fn bytes(name: &str, filename: &str, bytes: Vec<u8>) -> Part {
         Part::File {
             name: name.to_string(),
@@ -115,6 +116,7 @@ impl Multipart {
                         .into_bytes(),
                     ));
                     match source {
+                        #[cfg(test)]
                         FileSource::Bytes(bytes) => segs.push(Segment::Bytes(bytes)),
                         FileSource::Path(path) => {
                             let len = std::fs::metadata(&path)?.len();
@@ -129,7 +131,8 @@ impl Multipart {
         Ok((self.boundary, segs))
     }
 
-    /// The whole body in memory (small forms, tests).
+    /// The whole body in memory (tests).
+    #[cfg(test)]
     pub fn to_bytes(self) -> io::Result<(String, Vec<u8>)> {
         let (boundary, segs) = self.segments()?;
         let mut out = Vec::new();
@@ -233,8 +236,9 @@ pub fn set_playlist_cover(c: &Client, id: &str, image: &Path) -> ApiResult<Playl
 }
 
 /// A progress callback from a closure.
+#[cfg(test)]
 pub fn progress(f: impl Fn(u64, u64) + Send + Sync + 'static) -> Progress {
-    Arc::new(f)
+    std::sync::Arc::new(f)
 }
 
 #[cfg(test)]
@@ -242,7 +246,7 @@ mod tests {
     use super::*;
     use crate::api::client::error_message;
     use crate::api::testing::{MockServer, Res};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
         let dir = crate::api::testing::temp_path("upload");

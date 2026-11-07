@@ -3,17 +3,20 @@
 //! full-library rescan and its progress, the files that failed to import,
 //! then the TIDAL section and the three pinned sources.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rune::{El, TextEdit, col, row, text};
 
-use super::requests::{self as rq, IngestErrors, MusicRoot, MusicRootUsage, RescanStatus};
 use super::table::{self, Action, Cell, Col, Empty, Line, Part};
-use super::{Res, Section, call, format, load, parts, pins, remove_folder, still_mounted, tidal};
+use super::{Section, call, call_long, format, parts, pins, remove_folder, still_mounted, tidal};
+use crate::api::Cancel;
+use crate::api::admin::{self as api, IngestErrors, MusicRoot, MusicRootUsage, RescanStatus};
 use crate::app::App;
+use crate::core::admin::music_roots::{self as roots, MAX_RESCAN_POLL_FAILURES};
+use crate::format::{fmt_bytes, group_thousands};
+use crate::resource::{self, Res, load};
 use crate::theme::Theme;
+use crate::ui::tooltip::TipExt;
 use crate::ui::{Btn, font, icons as i, tnum};
 
 pub struct State {
@@ -28,7 +31,8 @@ pub struct State {
     pub rescan: Option<RescanStatus>,
     /// A running scan is being followed.
     pub watching: bool,
-    watch: Option<Arc<AtomicBool>>,
+    /// The watch under way: its ticket, and what stops it.
+    watch: Option<(u64, Cancel)>,
     pub path: TextEdit,
     pub label: TextEdit,
     pub adding: bool,
@@ -59,14 +63,14 @@ fn st(app: &mut App) -> &mut State {
     &mut app.pages.admin.library
 }
 
-fn roots_res(app: &mut App) -> &mut Res<Vec<MusicRoot>> {
-    &mut app.pages.admin.library.roots
+fn roots_res(app: &mut App) -> Option<&mut Res<Vec<MusicRoot>>> {
+    Some(&mut app.pages.admin.library.roots)
 }
-fn usage_res(app: &mut App) -> &mut Res<MusicRootUsage> {
-    &mut app.pages.admin.library.usage
+fn usage_res(app: &mut App) -> Option<&mut Res<MusicRootUsage>> {
+    Some(&mut app.pages.admin.library.usage)
 }
-fn ingest_res(app: &mut App) -> &mut Res<IngestErrors> {
-    &mut app.pages.admin.library.ingest
+fn ingest_res(app: &mut App) -> Option<&mut Res<IngestErrors>> {
+    Some(&mut app.pages.admin.library.ingest)
 }
 fn path_edit(app: &mut App) -> &mut TextEdit {
     &mut app.pages.admin.library.path
@@ -92,7 +96,7 @@ pub fn mount(app: &mut App) {
     // An idle status still carries the last scan's counts; only a scan
     // running now (another admin's, say) is followed.
     let mount = app.pages.admin.mount_id;
-    call(app, rq::rescan_status, move |app, r| {
+    call(app, api::rescan_status, move |app, r| {
         if let Ok(status) = r {
             if !still_mounted(app, Section::Library, mount) || st(app).watch.is_some() {
                 return;
@@ -110,16 +114,16 @@ pub fn mount(app: &mut App) {
 }
 
 pub fn reload_roots(app: &mut App, then: impl FnOnce(&mut App) + Send + 'static) {
-    load(app, roots_res, rq::list_music_roots, "Failed to load roots.", then);
+    load(app, roots_res, api::list_music_roots, "Failed to load roots.", then);
 }
 
 fn reload_usage(app: &mut App) {
     let refresh = std::mem::take(&mut st(app).refresh_usage);
-    load(app, usage_res, move |c| rq::music_root_usage(c, refresh), "Couldn't measure the folders.", |_| {});
+    load(app, usage_res, move |c| api::music_root_usage(c, refresh), "Couldn't measure the folders.", |_| {});
 }
 
 fn reload_errors(app: &mut App) {
-    load(app, ingest_res, rq::list_ingest_errors, "the request failed", |_| {});
+    load(app, ingest_res, api::list_ingest_errors, "the request failed", |_| {});
 }
 
 /// `onError`: the banner the folders and the pinned sources share ("" clears).
@@ -128,83 +132,60 @@ pub fn on_error(app: &mut App, message: &str) {
 }
 
 fn stop_watch(s: &mut State) {
-    if let Some(alive) = s.watch.take() {
-        alive.store(false, Ordering::Relaxed);
+    if let Some((_, cancel)) = s.watch.take() {
+        cancel.cancel();
     }
     s.watching = false;
 }
 
-enum Watched {
-    Finished(RescanStatus),
-    Lost,
-    Stopped,
-}
-
-/// Follow a scan known to be running until it finishes, reading every
-/// second; then the folder sizes and the import errors catch up.
+/// Follow a scan known to be running until it finishes (`watchRescan`,
+/// reading every second); then the folder sizes and the import errors catch
+/// up. The reads run on a thread of their own for as long as the scan does.
 fn watch(app: &mut App) {
     let mount = app.pages.admin.mount_id;
     let s = st(app);
     stop_watch(s);
-    let alive = Arc::new(AtomicBool::new(true));
-    s.watch = Some(alive.clone());
+    let (ticket, cancel) = (resource::ticket(), Cancel::new());
+    s.watch = Some((ticket, cancel.clone()));
     s.watching = true;
     let sender = app.net.sender();
-    let flag = alive.clone();
-    call(
+    let stopped = cancel.clone();
+    call_long(
         app,
+        "lumen-rescan-watch",
         move |c| {
-            let mut failures = 0;
-            loop {
-                if !flag.load(Ordering::Relaxed) {
-                    return Watched::Stopped;
+            let progress = |status: &RescanStatus| {
+                // The finished status comes with the result.
+                if !status.running {
+                    return;
                 }
-                match rq::rescan_status(c) {
-                    Ok(status) => {
-                        failures = 0;
-                        if !status.running {
-                            return Watched::Finished(status);
-                        }
-                        let (flag, status) = (flag.clone(), status.clone());
-                        sender.send(move |app| {
-                            if !flag.load(Ordering::Relaxed) {
-                                return;
-                            }
-                            if still_mounted(app, Section::Library, mount) {
-                                st(app).rescan = Some(status);
-                            } else {
-                                flag.store(false, Ordering::Relaxed);
-                            }
-                        });
+                let (cancel, status) = (cancel.clone(), status.clone());
+                sender.send(move |app| {
+                    if cancel.is_cancelled() {
+                        return;
                     }
-                    Err(_) => {
-                        failures += 1;
-                        if failures >= 5 {
-                            return Watched::Lost;
-                        }
+                    if still_mounted(app, Section::Library, mount) {
+                        st(app).rescan = Some(status);
+                    } else {
+                        cancel.cancel();
                     }
-                }
-                for _ in 0..10 {
-                    std::thread::sleep(Duration::from_millis(100));
-                    if !flag.load(Ordering::Relaxed) {
-                        return Watched::Stopped;
-                    }
-                }
-            }
+                });
+            };
+            roots::watch_rescan(|| api::rescan_status(c), progress, Duration::from_secs(1), MAX_RESCAN_POLL_FAILURES, || false, &cancel)
         },
-        move |app, result| {
+        move |app, finished| {
             let s = st(app);
-            if !s.watch.as_ref().is_some_and(|w| Arc::ptr_eq(w, &alive)) {
+            if !s.watch.as_ref().is_some_and(|(t, _)| *t == ticket) {
                 return;
             }
             s.watch = None;
             s.watching = false;
-            match result {
-                Watched::Stopped => {}
-                Watched::Lost => on_error(app, "Lost track of the rescan: the server stopped answering. It may still be running."),
-                Watched::Finished(status) => {
-                    // `rescanChangedLibrary`: files went through, or some were pruned.
-                    let changed = !status.running && (status.processed.unwrap_or(0) > 0 || status.pruned.unwrap_or(0) > 0);
+            match finished {
+                // The section went away.
+                None if stopped.is_cancelled() => {}
+                None => on_error(app, "Lost track of the rescan: the server stopped answering. It may still be running."),
+                Some(status) => {
+                    let changed = roots::rescan_changed_library(Some(&status));
                     st(app).rescan = Some(status);
                     if changed {
                         crate::pages::library_changed(app);
@@ -220,7 +201,7 @@ fn watch(app: &mut App) {
 
 fn start_rescan(app: &mut App) {
     on_error(app, "");
-    call(app, rq::start_rescan, |app, r| match r {
+    call(app, api::start_rescan, |app, r| match r {
         Err(e) => on_error(app, &super::error_message(&e, "Failed to start rescan.")),
         Ok(()) => {
             // Running until a status read says otherwise.
@@ -232,12 +213,7 @@ fn start_rescan(app: &mut App) {
 
 /// `addMusicRootInput`: the trimmed path and label, or None without a path.
 fn add_input(s: &State) -> Option<(String, Option<String>)> {
-    let path = s.path.text.trim();
-    if path.is_empty() {
-        return None;
-    }
-    let label = s.label.text.trim();
-    Some((path.to_string(), (!label.is_empty()).then(|| label.to_string())))
+    roots::add_music_root_input(&s.path.text, &s.label.text)
 }
 
 fn add(app: &mut App) {
@@ -250,9 +226,9 @@ fn add(app: &mut App) {
     on_error(app, "");
     call(
         app,
-        move |c| rq::add_music_root(c, &path, label.as_deref()),
+        move |c| api::add_music_root(c, &path, label.as_deref()),
         |app, r| match r {
-            Ok(()) => {
+            Ok(_) => {
                 let s = st(app);
                 s.path = TextEdit::new("");
                 s.label = TextEdit::new("");
@@ -274,9 +250,9 @@ fn toggle(app: &mut App, root: &MusicRoot) {
     let (id, enabled) = (root.id.clone(), !root.enabled);
     call(
         app,
-        move |c| rq::set_music_root_enabled(c, &id, enabled),
+        move |c| api::set_music_root_enabled(c, &id, enabled),
         |app, r| match r {
-            Ok(()) => {
+            Ok(_) => {
                 reload_roots(app, |_| {});
                 reload_errors(app);
             }
@@ -291,27 +267,6 @@ pub fn removed(app: &mut App) {
     reload_roots(app, |_| {});
     reload_usage(app);
     reload_errors(app);
-}
-
-/// `musicRootName`: "Primary", the label, or the folder's last segment.
-pub fn root_name(r: &MusicRoot) -> String {
-    if r.primary {
-        return "Primary".into();
-    }
-    if !r.label.is_empty() {
-        return r.label.clone();
-    }
-    let trimmed = r.path.trim_end_matches(['/', '\\']);
-    trimmed.rsplit(['/', '\\']).next().filter(|s| !s.is_empty()).unwrap_or(&r.path).to_string()
-}
-
-/// `canManageMusicRoot`: the primary root (MUSIC_PATH) has no row to change.
-fn can_manage(r: &MusicRoot) -> bool {
-    !r.primary && !r.id.is_empty()
-}
-
-fn root_key(r: &MusicRoot) -> String {
-    if r.id.is_empty() { format!("path:{}", r.path) } else { r.id.clone() }
 }
 
 pub fn view(app: &App, t: &Theme, width: f32) -> El {
@@ -333,7 +288,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
         c = c.child(last_scan(app, t, r));
     }
     c = c.child(tidal::view(app, t, width));
-    for kind in rq::PinKind::ALL {
+    for kind in pins::PinKind::ALL {
         c = c.child(pins::view(app, t, kind, width));
     }
     c
@@ -342,13 +297,12 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
 fn add_form(app: &App, t: &Theme) -> El {
     let s = &app.pages.admin.library;
     let can_add = add_input(s).is_some();
-    let submit = Some(add as fn(&mut App));
     let path = parts::field(
         t,
         "Path",
-        parts::text_field(t, "admin-root-path", &s.path, "Absolute path on the server, e.g. /mnt/external/flac", path_edit, submit),
+        parts::text_field(t, "admin-root-path", &s.path, "Absolute path on the server, e.g. /mnt/external/flac", path_edit, add),
     );
-    let label = parts::field(t, "Label", parts::text_field(t, "admin-root-label", &s.label, "Optional", label_edit, submit));
+    let label = parts::field(t, "Label", parts::text_field(t, "admin-root-label", &s.label, "Optional", label_edit, add));
     let mut btn = Btn::new("admin-root-add", if s.adding { "Adding…" } else { "Add" })
         .primary()
         .icon(&i::FOLDER_PLUS)
@@ -374,7 +328,7 @@ fn add_form(app: &App, t: &Theme) -> El {
 /// usage and import-error notes and the failed files.
 fn folders(app: &App, t: &Theme, width: f32) -> El {
     let s = &app.pages.admin.library;
-    let progress = if s.watching { s.rescan.as_ref().and_then(progress) } else { None };
+    let progress = if s.watching { roots::rescan_progress(s.rescan.as_ref()).map(|p| p.count) } else { None };
     let label = match &progress {
         Some(count) => format!("Scanning {count}"),
         None => "Rescan all folders".into(),
@@ -392,7 +346,7 @@ fn folders(app: &App, t: &Theme, width: f32) -> El {
         let measuring = u.is_none() && s.usage.error.is_none() && r.exists;
         let mut lead = vec![{
             let style = table::title_style();
-            let name = root_name(r);
+            let name = roots::music_root_name(r);
             let (min, max) = Line::new(name.clone(), style, t.c.foreground).widths();
             (text(name).font(style).color(t.c.foreground).wrap().shrink(), min, max)
         }];
@@ -406,7 +360,7 @@ fn folders(app: &App, t: &Theme, width: f32) -> El {
             let warn = row()
                 .gap(4.0)
                 .items_center()
-                .help("This directory does not exist on the server")
+                .tip(&format!("admin-root-missing-{}", roots::music_root_key(r)), "This directory does not exist on the server")
                 .child(crate::ui::ico(&i::TRIANGLE_ALERT, 12.0, t.c.warning))
                 .child(text("missing").font(style).color(t.c.warning));
             lead.push((warn, w, w));
@@ -422,9 +376,9 @@ fn folders(app: &App, t: &Theme, width: f32) -> El {
                 Cell::text(Line::new(v.unwrap_or_else(|| "—".into()), tnum(font(14.0, 400.0)), t.c.foreground))
             }
         };
-        let files = num(u.filter(|_| r.exists).map(|u| format::int(u.files)));
-        let size = num(u.filter(|_| r.exists).map(|u| format::bytes(u.bytes)));
-        let acts = if can_manage(r) {
+        let files = num(u.filter(|_| r.exists).map(|u| group_thousands(u.files)));
+        let size = num(u.filter(|_| r.exists).map(|u| fmt_bytes(u.bytes as f64)));
+        let acts = if roots::can_manage_music_root(r) {
             let (a, b) = (r.clone(), r.clone());
             table::actions(vec![
                 Action::new(
@@ -441,7 +395,7 @@ fn folders(app: &App, t: &Theme, width: f32) -> El {
         } else {
             Cell::empty()
         };
-        rows.push(table::Row { key: format!("admin-root-{}", root_key(r)), cells: vec![name_cell, files, size, acts] });
+        rows.push(table::Row { key: format!("admin-root-{}", roots::music_root_key(r)), cells: vec![name_cell, files, size, acts] });
     }
     let empty = match &s.roots.data {
         None => Some(Empty { label: "Loading…".into(), mono: true }),
@@ -462,15 +416,6 @@ fn folders(app: &App, t: &Theme, width: f32) -> El {
         sec = sec.child(ingest_errors(t, data, s.show_errors, width).mt(12.0));
     }
     sec
-}
-
-/// `rescanProgress().count`: "12 / 40" ("12 / ?" until counted).
-fn progress(status: &RescanStatus) -> Option<String> {
-    if !status.running {
-        return None;
-    }
-    let total = status.total.map_or("?".to_string(), |t| t.to_string());
-    Some(format!("{} / {total}", status.processed.unwrap_or(0)))
 }
 
 fn toggle_errors(app: &mut App) {

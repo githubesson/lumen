@@ -2,235 +2,103 @@
 //! the hifi-api proxy's connection, the linked accounts and the device-code
 //! sign-in that links another, then the auto-download card.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-
 use rune::{Color, El, col, el, row, text};
 
-use super::requests::{self as rq, TidalAccount, TidalAuthPoll, TidalAuthStart, TidalStatus};
-use super::{Res, Section, call, format, load, parts, still_mounted};
-use crate::api::ApiError;
+use super::{Section, call, call_long, parts, still_mounted};
+use crate::api::tidal::{self as api, TidalAccount, TidalStatus};
 use crate::app::App;
+use crate::core::dates;
+use crate::core::tidal::device_login::{PollJob, PollOutcome, TidalDeviceLogin};
+use crate::core::tidal::status::{
+    TidalProxyState, can_link_tidal_account, tidal_account_label, tidal_account_source, tidal_management_unsupported,
+    tidal_proxy_state, tidal_status_details, tidal_status_errors,
+};
 use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
+use crate::resource::{Res, load};
 use crate::theme::Theme;
 use crate::ui::{Btn, css_border, font, ico, icons as i, mono, tnum, with_lh};
 
 #[derive(Default)]
 pub struct State {
     pub status: Res<TidalStatus>,
-    /// The sign-in under way.
-    pub flow: Option<TidalAuthStart>,
-    pub starting: bool,
-    pub unlinking: Option<String>,
-    pub error: Option<String>,
-    pub notice: Option<String>,
-    poll: Option<Arc<AtomicBool>>,
+    /// The device-code sign-in and unlinking (`useTidalDeviceLogin`).
+    pub login: TidalDeviceLogin,
 }
 
 fn st(app: &mut App) -> &mut State {
     &mut app.pages.admin.tidal
 }
 
-fn status_res(app: &mut App) -> &mut Res<TidalStatus> {
-    &mut app.pages.admin.tidal.status
-}
-
-fn stop_poll(s: &mut State) {
-    if let Some(alive) = s.poll.take() {
-        alive.store(false, Ordering::Relaxed);
-    }
+fn status_res(app: &mut App) -> Option<&mut Res<TidalStatus>> {
+    Some(&mut app.pages.admin.tidal.status)
 }
 
 pub fn mount(app: &mut App) {
-    let s = st(app);
-    stop_poll(s);
-    s.flow = None;
-    s.starting = false;
-    s.unlinking = None;
-    s.error = None;
-    s.notice = None;
+    st(app).login.reset();
     reload(app, |_| {});
 }
 
 fn reload(app: &mut App, then: impl FnOnce(&mut App) + Send + 'static) {
-    load(app, status_res, rq::tidal_status, "Failed to load TIDAL status.", then);
-}
-
-/// `tidalAccountLabel`.
-fn account_label(a: &TidalAccount) -> String {
-    format!("Account {}", if a.user_id.is_empty() { "unknown" } else { &a.user_id })
-}
-
-/// `tidalAccountSource`.
-fn account_source(a: &TidalAccount) -> &'static str {
-    if a.removable { "Managed by Lumen" } else { "Configured by environment" }
-}
-
-/// `normalizeTidalVerificationURL`: a link without a scheme gets https when
-/// it points at TIDAL.
-fn normalize_url(raw: &str) -> String {
-    let t = raw.trim();
-    let has_scheme = {
-        let mut chars = t.chars();
-        chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-            && t.find(':').is_some_and(|at| t[..at].chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)))
-    };
-    if t.is_empty() || has_scheme {
-        return t.to_string();
-    }
-    let candidate = format!("https://{}", t.trim_start_matches("//"));
-    let host = candidate["https://".len()..].split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase();
-    if host == "tidal.com" || host.ends_with(".tidal.com") { candidate } else { t.to_string() }
+    load(app, status_res, api::tidal_status, "Failed to load TIDAL status.", then);
 }
 
 /// The device login's page in the browser (`openExternal`), from the next
 /// frame (opening needs the window's `Tx`).
-fn open(app: &mut App, url: &str) {
-    let url = normalize_url(url);
+fn open(app: &mut App, url: String) {
     crate::overlays::later(app, move |app: &mut App, tx: &mut rune::Tx| {
         if crate::desktop::open_external(tx, &url).is_err() {
-            st(app).error = Some("Could not open the TIDAL sign-in page.".into());
+            st(app).login.open_failed(None);
         }
     });
 }
 
-/// `start`: begin a device login and open its page.
+/// `start`: begin a device login, open its page and wait for it.
 fn start(app: &mut App) {
-    let s = st(app);
-    if s.starting || s.flow.is_some() {
+    if !st(app).login.start() {
         return;
     }
-    s.starting = true;
-    s.error = None;
-    s.notice = None;
     let mount = app.pages.admin.mount_id;
-    call(app, rq::start_tidal_auth, move |app, r| {
-        st(app).starting = false;
-        match r {
-            Err(e) => st(app).error = Some(super::error_message(&e, "Could not start TIDAL sign-in.")),
-            Ok(started) => {
-                // Nothing would wait for a login started from a screen that has closed.
-                if !still_mounted(app, Section::Library, mount) {
-                    return;
-                }
-                let url = started.verification_url.clone();
-                st(app).flow = Some(started);
-                begin_poll(app);
-                open(app, &url);
-            }
+    call(app, api::start_tidal_auth, move |app, r| {
+        // Nothing would wait for a login started from a screen that has closed.
+        if r.is_ok() && !still_mounted(app, Section::Library, mount) {
+            st(app).login.starting = false;
+            return;
+        }
+        let Some(started) = st(app).login.started(r, dates::now_ms()) else { return };
+        wait(app, started.poll);
+        open(app, started.url);
+    });
+}
+
+/// `waitForTidalAuthorization`: read the login's state every 2.5 s until
+/// it's no longer pending, on a thread of its own (it can take minutes).
+fn wait(app: &mut App, job: PollJob) {
+    let ticket = job.ticket;
+    call_long(app, "lumen-tidal-signin", move |c| job.run(c), move |app, r| {
+        if st(app).login.poll_finished(ticket, r) == PollOutcome::Linked {
+            reload(app, |_| {});
         }
     });
 }
 
 /// `reopen`: the current login's page again.
 fn reopen(app: &mut App) {
-    let Some(url) = st(app).flow.as_ref().map(|f| f.verification_url.clone()) else { return };
-    st(app).error = None;
-    open(app, &url);
-}
-
-/// `tidalAuthorizationTimeoutMs`: a little past the code's expiry.
-fn timeout(expires_at: &str) -> Duration {
-    match format::parse_iso(expires_at) {
-        Some(at) => Duration::from_millis((at - format::now_ms() + 5000).max(2500) as u64),
-        None => Duration::from_secs(600),
+    if let Some(url) = st(app).login.reopen() {
+        open(app, url);
     }
-}
-
-/// `tidalSignInMessage`.
-fn sign_in_message(r: &TidalAuthPoll) -> String {
-    if r.state == "linked" {
-        return match r.account.as_ref().filter(|a| !a.user_id.is_empty()) {
-            Some(a) => format!("TIDAL account {} linked.", a.user_id),
-            None => "TIDAL account linked.".into(),
-        };
-    }
-    r.message.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| format!("TIDAL sign-in {}.", r.state))
-}
-
-/// `waitForTidalAuthorization`: read the login's state every 2.5 s until
-/// it's no longer pending.
-fn begin_poll(app: &mut App) {
-    let s = st(app);
-    stop_poll(s);
-    let Some(flow) = s.flow.clone() else { return };
-    let alive = Arc::new(AtomicBool::new(true));
-    s.poll = Some(alive.clone());
-    let flag = alive.clone();
-    let deadline = Instant::now() + timeout(&flow.expires_at);
-    call(
-        app,
-        move |c| -> Option<Result<TidalAuthPoll, ApiError>> {
-            loop {
-                if !flag.load(Ordering::Relaxed) {
-                    return None;
-                }
-                match rq::poll_tidal_auth(c, &flow.flow_id) {
-                    Err(e) => return Some(Err(e)),
-                    Ok(r) if r.state != "pending" => return Some(Ok(r)),
-                    Ok(_) => {}
-                }
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    return Some(Err(ApiError {
-                        status: 408,
-                        message: "Timed out waiting for TIDAL authorization. You can try again.".into(),
-                        kind: crate::api::client::ErrorKind::Local,
-                    }));
-                }
-                let wait = left.min(Duration::from_millis(2500));
-                let until = Instant::now() + wait;
-                while Instant::now() < until {
-                    std::thread::sleep(Duration::from_millis(100));
-                    if !flag.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                }
-            }
-        },
-        move |app, result| {
-            let s = st(app);
-            if !s.poll.as_ref().is_some_and(|p| Arc::ptr_eq(p, &alive)) {
-                return;
-            }
-            s.poll = None;
-            let Some(result) = result else { return };
-            s.flow = None;
-            match result {
-                Err(e) => s.error = Some(super::error_message(&e, "Could not complete TIDAL sign-in.")),
-                Ok(r) if r.state != "linked" => s.error = Some(sign_in_message(&r)),
-                Ok(r) => {
-                    s.error = None;
-                    s.notice = Some(sign_in_message(&r));
-                    reload(app, |_| {});
-                }
-            }
-        },
-    );
 }
 
 fn unlink(app: &mut App, account: TidalAccount) {
-    let s = st(app);
-    if s.unlinking.is_some() {
+    if !st(app).login.unlink(&account.id) {
         return;
     }
-    s.unlinking = Some(account.id.clone());
-    s.error = None;
-    s.notice = None;
     call(
         app,
-        move |c| rq::remove_tidal_account(c, &account.id),
-        |app, r| match r {
-            Ok(()) => {
-                st(app).notice = Some("TIDAL account unlinked.".into());
+        move |c| api::remove_tidal_account(c, &account.id),
+        |app, r| {
+            if st(app).login.unlinked(r) {
                 // The row stays busy until the refreshed list drops the account.
-                reload(app, |app| st(app).unlinking = None);
-            }
-            Err(e) => {
-                let s = st(app);
-                s.error = Some(super::error_message(&e, "Could not unlink the TIDAL account."));
-                s.unlinking = None;
+                reload(app, |app| st(app).login.unlink_settled());
             }
         },
     );
@@ -239,8 +107,8 @@ fn unlink(app: &mut App, account: TidalAccount) {
 fn ask_unlink(app: &mut App, account: TidalAccount) {
     let subject = Subject {
         art: Art::Icon(&i::LINK),
-        name: account_label(&account),
-        detail: Some(account_source(&account).into()),
+        name: tidal_account_label(&account),
+        detail: Some(tidal_account_source(&account).into()),
     };
     confirm::ask_then(
         app,
@@ -250,7 +118,7 @@ fn ask_unlink(app: &mut App, account: TidalAccount) {
 }
 
 fn refresh(app: &mut App) {
-    st(app).error = None;
+    st(app).login.clear_error();
     reload(app, |_| {});
 }
 
@@ -270,20 +138,11 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
     let card_w = ((width - 14.0) / 2.0).max(0.0);
     let status = s.status.data.as_ref();
     let mut sec = col().key("admin-tidal");
-    // `tidalStatusErrors`: the screen's own, then the proxy's, each once.
-    let mut errors: Vec<&str> = Vec::new();
-    for e in [s.error.as_deref().or(s.status.error.as_deref()), status.and_then(|x| x.error.as_deref()), status.and_then(|x| x.management_error.as_deref())]
-        .into_iter()
-        .flatten()
-    {
-        if !e.is_empty() && !errors.contains(&e) {
-            errors.push(e);
-        }
+    // The screen's own error, then the proxy's, each once.
+    for e in tidal_status_errors(s.login.error.as_deref().or(s.status.error.as_deref()), status) {
+        sec = sec.child(parts::banner(t, &e));
     }
-    for e in errors {
-        sec = sec.child(parts::banner(t, e));
-    }
-    if let Some(n) = &s.notice {
+    if let Some(n) = &s.login.notice {
         sec = sec.child(
             css_border(row(), 1.0, t.c.input, 8.0)
                 .mb(14.0)
@@ -306,22 +165,13 @@ fn connection(app: &App, t: &Theme) -> El {
     let s = &app.pages.admin.tidal;
     let status = s.status.data.as_ref();
     let connected = status.is_some_and(|x| x.connected);
-    let badge = if s.status.loading {
-        "checking"
-    } else if connected {
-        "proxy online"
-    } else {
-        "proxy offline"
+    let badge = match tidal_proxy_state(status, s.status.loading) {
+        TidalProxyState::Checking => "checking",
+        TidalProxyState::Online => "proxy online",
+        TidalProxyState::Offline => "proxy offline",
     };
-    let pick = |v: Option<&Option<String>>, fallback: &str| -> String {
-        v.and_then(|o| o.as_deref()).filter(|x| !x.is_empty()).unwrap_or(fallback).to_string()
-    };
-    let details = [
-        ("Proxy", pick(status.map(|x| &x.proxy_url), "not configured"), true),
-        ("Country", pick(status.map(|x| &x.country_code), "US"), false),
-        ("Quality", pick(status.map(|x| &x.quality), "LOSSLESS"), false),
-        ("Version", pick(status.map(|x| &x.version), "unknown"), false),
-    ];
+    let d = tidal_status_details(status);
+    let details = [("Proxy", d.proxy, true), ("Country", d.country, false), ("Quality", d.quality, false), ("Version", d.version, false)];
     let mut list = col();
     let n = details.len();
     for (k, (label, value, num)) in details.into_iter().enumerate() {
@@ -363,9 +213,10 @@ fn accounts(app: &App, t: &Theme, inner: f32) -> El {
     let s = &app.pages.admin.tidal;
     let status = s.status.data.as_ref();
     let accounts: &[TidalAccount] = status.map_or(&[], |x| &x.accounts);
-    let busy = s.starting || s.unlinking.is_some();
-    let can_link = status.is_some_and(|x| x.connected && x.management_supported) && !s.starting && s.unlinking.is_none() && s.flow.is_none();
-    let mut link = Btn::new("admin-tidal-link", if s.starting { "Starting..." } else { "Link account" })
+    let login = &s.login;
+    let busy = login.starting || login.unlinking_id.is_some();
+    let can_link = can_link_tidal_account(status, login.starting, login.unlinking_id.is_some(), login.flow.is_some());
+    let mut link = Btn::new("admin-tidal-link", if login.starting { "Starting..." } else { "Link account" })
         .small()
         .primary()
         .icon(&i::LINK)
@@ -394,7 +245,7 @@ fn accounts(app: &App, t: &Theme, inner: f32) -> El {
             t.c.muted_foreground,
             inner,
         ));
-    if status.is_some_and(|x| !x.management_supported) {
+    if tidal_management_unsupported(status) {
         card = card.child(parts::para(
             "Account controls require the Lumen hifi-api extension. Recreate the hifi-api container after updating the server.",
             Vec::new(),
@@ -422,25 +273,25 @@ fn accounts(app: &App, t: &Theme, inner: f32) -> El {
                     col()
                         .min_w(0.0)
                         .shrink()
-                        .child(parts::line_box(text(account_label(a)).font(font(14.0, 600.0)).color(t.c.card_foreground), font(14.0, 600.0)))
+                        .child(parts::line_box(text(tidal_account_label(a)).font(font(14.0, 600.0)).color(t.c.card_foreground), font(14.0, 600.0)))
                         .child(parts::line_box(
-                            text(account_source(a)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground),
+                            text(tidal_account_source(a)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground),
                             font(12.0, 400.0),
                         )),
                 );
             if a.removable {
-                let label = if s.unlinking.as_deref() == Some(a.id.as_str()) { "Unlinking..." } else { "Unlink" };
+                let label = if login.unlinking_id.as_deref() == Some(a.id.as_str()) { "Unlinking..." } else { "Unlink" };
                 let mut b = Btn::new(format!("admin-tidal-unlink-{}", a.id), label).small().danger().icon(&i::TRASH_2).disabled(busy).build(t);
                 if !busy {
                     let acct = a.clone();
-                    b = b.label(format!("Unlink {}", account_label(a))).on_press(move |app: &mut App| ask_unlink(app, acct.clone()));
+                    b = b.label(format!("Unlink {}", tidal_account_label(a))).on_press(move |app: &mut App| ask_unlink(app, acct.clone()));
                 }
                 r = r.child(b);
             }
             card = card.child(accent_box(t, t.c.border).px(13.0).py(11.0).child(r));
         }
     }
-    if let Some(flow) = &s.flow {
+    if let Some(flow) = &login.flow {
         let mut b = accent_box(t, t.c.input).padding(15.0).gap(10.0).child(
             col()
                 .child(parts::line_box(text("Finish signing in to TIDAL").font(font(14.0, 600.0)).color(t.c.card_foreground), font(14.0, 600.0)))
@@ -473,7 +324,7 @@ fn accounts(app: &App, t: &Theme, inner: f32) -> El {
 
 /// Scene: a sign-in under way, waiting on its code.
 pub fn scene_flow(app: &mut App) {
-    st(app).flow = Some(TidalAuthStart {
+    st(app).login.flow = Some(api::TidalAuthStart {
         flow_id: "flow-1".into(),
         verification_url: "https://link.tidal.com/KXQZP".into(),
         user_code: Some("KXQZP".into()),
@@ -485,17 +336,5 @@ pub fn scene_flow(app: &mut App) {
 pub fn scene_unlink(app: &mut App) {
     if let Some(a) = app.pages.admin.tidal.status.data.as_ref().and_then(|s| s.accounts.first()).cloned() {
         ask_unlink(app, a);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn verification_links_get_https() {
-        assert_eq!(normalize_url(" link.tidal.com/ABCDE "), "https://link.tidal.com/ABCDE");
-        assert_eq!(normalize_url("https://link.tidal.com/X"), "https://link.tidal.com/X");
-        assert_eq!(normalize_url("evil.example/x"), "evil.example/x");
     }
 }

@@ -87,7 +87,8 @@ struct State {
     app_origin: String,
     current: Option<(Activity, f64)>,
     cover: Option<Arc<CoverSlot>>,
-    streams: Vec<(u64, Sender<String>)>,
+    /// Open `/events` streams.
+    streams: Vec<Sender<String>>,
     conns: Vec<(u64, TcpStream)>,
     listener: Option<Listener>,
     next_id: u64,
@@ -110,8 +111,9 @@ impl Default for NowPlayingServer {
     }
 }
 
+/// `Date.now()`, as the JSON numbers here carry it.
 pub(crate) fn now_ms() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64() * 1000.0)
+    crate::core::dates::now_ms() as f64
 }
 
 impl NowPlayingServer {
@@ -215,7 +217,7 @@ impl NowPlayingServer {
             return;
         }
         let message = format!("data: {}\n\n", snapshot(&state, now_ms()));
-        state.streams.retain(|(_, tx)| tx.send(message.clone()).is_ok());
+        state.streams.retain(|tx| tx.send(message.clone()).is_ok());
     }
 
     /// `GET /now-playing`'s answer now.
@@ -331,10 +333,8 @@ impl NowPlayingServer {
             "/events" => {
                 let (tx, rx) = channel();
                 let mut state = self.lock();
-                state.next_id += 1;
-                let id = state.next_id;
                 let first = format!("data: {}\n\n", snapshot(&state, now_ms()));
-                state.streams.push((id, tx));
+                state.streams.push(tx);
                 Response::Events(rx, first)
             }
             _ => http::error(404, "Not found"),
@@ -408,21 +408,14 @@ fn listen_error(error: &std::io::Error, port: u16) -> String {
     }
 }
 
-/// `text`: trimmed, cut to `max` UTF-16 units, None when empty.
+/// `text`: trimmed (as JavaScript trims), cut to `max` UTF-16 units, None
+/// when empty.
 fn text(value: Option<&str>, max: usize) -> Option<String> {
-    let trimmed = value?.trim();
+    let trimmed = crate::core::js::trim(value?);
     if trimmed.is_empty() {
         return None;
     }
-    let mut units = 0;
-    let end = trimmed
-        .char_indices()
-        .find(|(_, c)| {
-            units += c.len_utf16();
-            units > max
-        })
-        .map_or(trimmed.len(), |(i, _)| i);
-    Some(trimmed[..end].to_string())
+    Some(crate::core::js::slice_utf16(trimmed, max).to_string())
 }
 
 fn seconds(value: Option<f64>) -> Option<f64> {
@@ -523,11 +516,9 @@ fn snapshot(state: &State, now: f64) -> String {
 /// server's cover paths redirect), 10 s, 10 MB, raster types only (an SVG
 /// opened straight from this origin could run script).
 pub fn fetch_cover(source: &str) -> Option<Cover> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
+    let agent: ureq::Agent = crate::net::agent_config()
         .max_redirects(0)
         .timeout_global(Some(COVER_TIMEOUT))
-        .user_agent(super::USER_AGENT)
         .build()
         .into();
     let mut response = agent.get(source).call().ok()?;

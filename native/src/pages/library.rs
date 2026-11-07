@@ -27,12 +27,12 @@ use std::collections::HashMap;
 
 use rune::{Cx, El, KeyEvent, TextEdit};
 
-use crate::api::{Album, Artist, TrackListItem};
+use crate::api::{Album, ApiResult, Artist, Client, TrackListItem, error_message};
 use crate::app::App;
 use crate::route::Location;
 use crate::theme::Theme;
 
-use logic::{EntityKind, EntityTarget, ReleaseFilter};
+use logic::{AlbumCredit, AlbumFact, ArtistRelease, CreditFields, EntityKind, EntityTarget, ReleaseFilter};
 use paging::Paged;
 use crate::api::search::{SearchResult as SearchItem, SearchType};
 use crate::api::tidal::{TidalAlbum, TidalArtist};
@@ -156,6 +156,15 @@ pub struct Detail {
     pub rows: Vec<TrackListItem>,
     pub tidal_album: Option<TidalAlbum>,
     pub tidal_artist: Option<TidalArtist>,
+    /// Worked out by [`landed`] when the data lands rather than each frame:
+    /// the artist's releases (grouped from the library's tracks, or TIDAL's
+    /// folded into their versions), and the album's credits and facts.
+    pub releases: Vec<ArtistRelease>,
+    pub credits: Vec<AlbumCredit>,
+    pub facts: Vec<AlbumFact>,
+    /// The TIDAL album's versions for its picker, and the artist whose
+    /// releases they came from (`album::sync_versions`).
+    pub versions: Option<(String, Option<Vec<ArtistRelease>>)>,
     pub not_found: bool,
     pub error: Option<String>,
     /// A download or cancel that failed (kept apart from the load error).
@@ -166,7 +175,8 @@ pub struct Detail {
     pub busy: bool,
     /// Bumped when the album is saved, so its cover reloads.
     pub cover_nonce: u64,
-    /// The TIDAL artist page's retry count and the last one that finished.
+    /// The retry count (the TIDAL artist page's Retry) and the one whose
+    /// read last finished.
     pub attempt: u32,
     pub completed: Option<u32>,
     pub popular_expanded: bool,
@@ -372,9 +382,7 @@ pub fn on_key(app: &mut App, ev: &KeyEvent) -> bool {
 
 /// How many lines `s` takes in `style` at `width` (wrapping anywhere).
 pub fn line_count(s: &str, style: rune::TextStyle, width: f32) -> usize {
-    let opts = rune::text::RichLayoutOptions::new().wrap_anywhere();
-    let (_, h) = rune::text::measure_with(s, &[], style, Some(width), opts);
-    ((h / style.line_height).round() as usize).max(1)
+    crate::ui::css_lines(s, &[], style, Some(width), rune::text::RichLayoutOptions::new().wrap_anywhere())
 }
 
 // ---------------------------------------------------------------- navigation
@@ -508,6 +516,68 @@ pub fn detail_rows(app: &App) -> &[TrackListItem] {
 pub fn detail_query(app: &App) -> Option<String> {
     let q = &app.pages.library.detail.search.text;
     (!q.trim().is_empty()).then(|| q.clone())
+}
+
+/// The page's data landed (or came from the cache): work out what the view
+/// lists from it, then [`refilter`] the rows.
+fn landed(app: &mut App) {
+    let d = &mut app.pages.library.detail;
+    d.releases = match (&d.tidal_artist, &d.artist, &d.tracks) {
+        (Some(a), _, _) => logic::fold_release_versions(&logic::tidal_artist_releases(&a.albums)),
+        (None, Some(_), Some(tracks)) => logic::library_artist_releases(tracks),
+        _ => Vec::new(),
+    };
+    (d.credits, d.facts) = match (&d.album, &d.tracks, &d.tidal_album) {
+        (Some(a), Some(tracks), _) => {
+            (logic::album_credits(CreditFields::from(a)), crate::core::entity_labels::library_album_facts(a, &logic::durations(tracks)))
+        }
+        (_, _, Some(a)) => {
+            (logic::album_credits(CreditFields::from(a)), crate::core::entity_labels::tidal_album_facts(a, &logic::durations(&a.tracks)))
+        }
+        _ => (Vec::new(), Vec::new()),
+    };
+    refilter(app);
+}
+
+/// A drill-down page's read (`useApiResource` on the album or artist): only
+/// the newest lands, and only on the page it was for. Data clears the last
+/// error and goes to `ok`. On failure a `quiet` refresh keeps the page as it
+/// was; a 404 goes to `gone` (true when the error shows as well); anything
+/// else shows the error, `fallback` when the server gives no message.
+fn load_detail<T: Send + 'static>(
+    app: &mut App,
+    quiet: bool,
+    fetch: impl FnOnce(&Client, &str) -> ApiResult<T> + Send + 'static,
+    fallback: &'static str,
+    ok: impl FnOnce(&mut App, T) + Send + 'static,
+    gone: impl FnOnce(&mut App) -> bool + Send + 'static,
+) {
+    let Some(client) = app.client.clone() else { return };
+    let d = &mut app.pages.library.detail;
+    d.seq += 1;
+    let (seq, key, id, attempt) = (d.seq, d.key.clone(), d.id.clone(), d.attempt);
+    app.net.run(
+        move || fetch(&client, &id),
+        move |app, result| {
+            let d = &mut app.pages.library.detail;
+            if d.seq != seq || d.key != key {
+                return;
+            }
+            d.completed = Some(attempt);
+            match result {
+                Ok(data) => {
+                    d.error = None;
+                    ok(app, data);
+                }
+                Err(_) if quiet => {}
+                Err(e) => {
+                    if e.status != 404 || gone(app) {
+                        app.pages.library.detail.error = Some(error_message(&e, fallback));
+                    }
+                }
+            }
+        },
+    );
 }
 
 /// Recompute [`Detail::rows`]: after the tracks load and on each edit of the search.

@@ -26,7 +26,9 @@ pub enum AdapterEvent {
 }
 
 pub trait AudioAdapter {
-    /// Replace the current source; does not start it.
+    /// Replace the current source; does not start it. Any prepared source
+    /// goes too: the core forgets its marker on every `load`, or the next
+    /// track would never be prepared again (and its hand-off would gap).
     fn load(&mut self, url: &str);
     /// Start loading the next source without disturbing the current one.
     fn prepare_next(&mut self, url: &str);

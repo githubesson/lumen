@@ -3,13 +3,13 @@
 //! `playlist-details.ts`, `format.ts`), ported in [`crate::core`] and
 //! [`crate::format`], under the names Home's panels use.
 
-use crate::api::stats::{ReplayAlbum, ReplayArtist, ReplayBucket, ReplayData, ReplayTrack};
-use crate::api::{Playlist, TrackListItem};
+use crate::api::stats::{ReplayAlbum, ReplayArtist, ReplayData, ReplayTrack};
+use crate::api::TrackListItem;
 use crate::core::dates::now_ms;
 use crate::core::replay::{figures, period};
 
 pub use crate::api::error_message;
-pub use crate::core::entity_target::{EntityKind, EntityTarget, replay_album_target};
+pub use crate::core::entity_target::{EntityTarget, replay_album_target};
 pub use crate::core::replay::figures::{ReplayCalendar, TopArtistAction, activity_series, genre_shares, plays_by_id};
 pub use crate::core::replay::period::{Period, ReplayRange};
 pub use crate::core::track::playable_tracks;
@@ -24,20 +24,6 @@ pub fn build_period_options(years: &[i32]) -> Vec<Period> {
 /// `periodRange`, now.
 pub fn period_range(p: Period) -> ReplayRange {
     period::period_range(p, now_ms())
-}
-
-/// `replayQueries(period).daily`: Home and Replay ask by day, whatever the
-/// chart shows, under one cache key.
-pub struct ReplayQuery {
-    pub range: ReplayRange,
-    pub from: Option<String>,
-    pub to: Option<String>,
-    pub bucket: ReplayBucket,
-}
-
-pub fn replay_query(p: Period) -> ReplayQuery {
-    let range = period_range(p);
-    ReplayQuery { from: range.from.clone(), to: range.to.clone(), bucket: ReplayBucket::Day, range }
 }
 
 /// `formatListeningTime(ms, "verbose")`.
@@ -65,36 +51,9 @@ pub fn replay_album_subtitle(album: &ReplayAlbum) -> String {
     figures::replay_album_subtitle(album.artist.as_deref(), album.plays)
 }
 
-/// `trackAlbumTarget`.
-pub fn track_album_target(t: &TrackListItem) -> Option<EntityTarget> {
-    crate::core::entity_target::track_album_target(t)
-}
-
-/// `albumHref`.
-pub fn album_href(target: &EntityTarget) -> String {
-    let param = if target.kind == EntityKind::Tidal { "tidalAlbum" } else { "album" };
-    format!("/library?view=albums&{param}={}", urlencoding::encode(&target.id))
-}
-
-/// `playlistSubtitle`: "Private", "Collaborative · editor".
-pub fn playlist_subtitle(p: &Playlist) -> String {
-    crate::core::playlist_details::playlist_subtitle(p.visibility, p.effective_role)
-}
-
 /// `artistImageUrl`: the first of their tracks with a cover.
 pub fn artist_image_url(tracks: &[TrackListItem], size: u32) -> Option<String> {
-    crate::pages::library::logic::artist_image_url(None, tracks, Some(size))
-}
-
-/// `trackCoverUrl`.
-pub fn track_cover_url(t: &TrackListItem, size: Option<u32>) -> String {
-    crate::api::media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), size)
-}
-
-/// `displayText(value, fallback)`: mojibake cleaned up, trimmed. An empty
-/// value stays empty; only a missing one takes the fallback (`??`).
-pub fn display_text(value: Option<&str>, fallback: &str) -> String {
-    crate::format::clean_text(Some(value.unwrap_or(fallback)))
+    crate::api::media::artist_image(None, tracks, Some(size))
 }
 
 /// `Intl.ListFormat(undefined, { type: "conjunction" })` in en-US.
@@ -136,6 +95,6 @@ mod tests {
         assert_eq!(locale_int(999), "999");
         assert_eq!(pluralize_locale(1, "play"), "1 play");
         assert_eq!(list_format(&["A".into(), "B".into(), "C".into()]), "A, B, and C");
-        assert_eq!(display_text(Some("  Rock Â· Pop "), ""), "Rock · Pop");
+        assert_eq!(crate::format::clean_text(Some("  Rock Â· Pop ")), "Rock · Pop");
     }
 }

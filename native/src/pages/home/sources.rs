@@ -7,12 +7,14 @@ use std::collections::HashMap;
 
 use crate::api::{ApiResult, Client, TrackListItem};
 use crate::app::App;
+use crate::core::dates::now_ms;
+use crate::core::replay::data::fetch_replay;
+use crate::core::replay::figures::replay_queries;
+use crate::resource::Res;
 
-use super::kinds::DEFAULT_PERIOD;
-use super::logic::{Period, error_message, replay_query};
+use super::State;
+use super::logic::Period;
 use super::panels::LIST_ROWS;
-use crate::api::stats::{ReplayBucket, ReplayData, ReplayParams};
-use super::{Res, State};
 
 /// Recently played is asked for in steps of this many, enough to fill its
 /// panel; so is Recently added, from the newest tracks.
@@ -22,33 +24,22 @@ pub const TRACKS_PER_SIX_ALBUMS: usize = 80;
 /// The most tracks the server sends in one page.
 pub const MAX_TRACKS: usize = 500;
 
-/// Starts a load into the resource `slot` names, dropping a reply that a
-/// later load superseded.
+/// Starts a load into the resource `slot` names; once its reply lands (a
+/// later load supersedes it), starts what the board needs next.
 fn load<T: Send + 'static>(
     app: &mut App,
-    slot: impl Fn(&mut State) -> &mut Res<T> + Send + Clone + 'static,
+    slot: impl Fn(&mut State) -> &mut Res<T> + Send + 'static,
     fetch: impl FnOnce(&Client) -> ApiResult<T> + Send + 'static,
     fallback: &'static str,
 ) {
     let Some(client) = app.client.clone() else { return };
-    let res = slot(&mut app.pages.home);
-    res.serial += 1;
-    res.loading = true;
-    res.error = None;
-    let serial = res.serial;
+    let ticket = slot(&mut app.pages.home).begin();
     app.net.run(
         move || fetch(&client),
         move |app, result| {
-            let res = slot(&mut app.pages.home);
-            if res.serial != serial {
-                return;
+            if slot(&mut app.pages.home).settle(ticket, result, fallback) {
+                super::after_load(app);
             }
-            res.loading = false;
-            match result {
-                Ok(data) => res.data = Some(data),
-                Err(e) => res.error = Some(error_message(&e, fallback)),
-            }
-            super::after_load(app);
         },
     );
 }
@@ -88,75 +79,38 @@ pub fn load_favorites(app: &mut App) {
     crate::pages::favorites::refresh(app);
 }
 
-/// `usePlaylists().reload`: the shell's list, with Home tracking its state.
+/// `usePlaylists().reload`: the shell's list, which Home's panels read.
 pub fn load_playlists(app: &mut App) {
-    let Some(client) = app.client.clone() else { return };
-    let home = &mut app.pages.home;
-    home.playlists_serial += 1;
-    home.playlists_loading = true;
-    home.playlists_error = None;
-    let serial = home.playlists_serial;
-    app.net.run(
-        move || crate::api::playlists::list_playlists(&client, None),
-        move |app, result| {
-            if app.pages.home.playlists_serial != serial {
-                return;
-            }
-            app.pages.home.playlists_loading = false;
-            match result {
-                Ok(list) => app.playlists = Some(list),
-                Err(e) => {
-                    app.pages.home.playlists_error = Some(error_message(&e, "Could not load playlists."));
-                    // Latched, so retrying the list doesn't empty the panels meanwhile.
-                    if app.playlists.is_none() {
-                        app.pages.home.list_failed = true;
-                    }
-                }
-            }
-            super::after_load(app);
-        },
-    );
+    app.load_playlists_then(|app| {
+        // Latched, so retrying the list doesn't empty the panels meanwhile.
+        if app.playlists.error.is_some() && app.playlists.data.is_none() {
+            app.pages.home.list_failed = true;
+        }
+        super::after_load(app);
+    });
 }
 
 /// `ReplaySource`: a period's numbers, by day, under the key Replay reads;
-/// all time again by month when the days came back cut short.
+/// all time again by month when the days came back cut short (Replay's own
+/// `fetchReplay`). The years with plays it lists are the settings' periods.
 pub fn load_replay(app: &mut App, period: Period) {
     let key = period.key();
-    let q = replay_query(period);
+    let queries = replay_queries(period, now_ms());
     let fallback = super::replay_error(period);
-    let k = key.clone();
     let Some(client) = app.client.clone() else { return };
-    let res = app.pages.home.replay.entry(key.clone()).or_default();
-    res.serial += 1;
-    res.loading = true;
-    res.error = None;
-    let serial = res.serial;
+    let ticket = app.pages.home.replay.entry(key.clone()).or_default().begin();
     app.net.run(
-        move || {
-            let daily = crate::api::stats::get_replay(&client, &ReplayParams { from: q.from.clone(), to: q.to.clone(), bucket: Some(ReplayBucket::Day) })?;
-            let counted: u64 = daily.activity.iter().map(|b| b.plays).sum();
-            if q.range.from.is_none() && counted < daily.summary.total_plays {
-                return crate::api::stats::get_replay(&client, &ReplayParams { bucket: Some(ReplayBucket::Month), ..Default::default() });
-            }
-            Ok(daily)
-        },
-        move |app, result: ApiResult<ReplayData>| {
+        move || fetch_replay(&client, &queries, false).map(|(_, data)| data),
+        move |app, result| {
             let home = &mut app.pages.home;
-            let Some(res) = home.replay.get_mut(&k) else { return };
-            if res.serial != serial {
+            let Some(res) = home.replay.get_mut(&key) else { return };
+            if !res.settle(ticket, result, &fallback) {
                 return;
             }
-            res.loading = false;
-            match result {
-                Ok(data) => {
-                    for y in &data.available_years {
-                        if !home.years.contains(y) {
-                            home.years.push(*y);
-                        }
-                    }
-                    res.data = Some(data);
+            for y in res.data.as_ref().map_or(&[][..], |d| &d.available_years) {
+                if !home.years.contains(y) {
+                    home.years.push(*y);
                 }
-                Err(e) => res.error = Some(error_message(&e, &fallback)),
             }
             super::after_load(app);
         },
@@ -166,7 +120,6 @@ pub fn load_replay(app: &mut App, period: Period) {
 /// `PlaylistSource`.
 pub fn load_playlist(app: &mut App, id: &str) {
     let (key, pid) = (id.to_string(), id.to_string());
-    app.pages.home.playlist_tracks.entry(key.clone()).or_default();
     load(
         app,
         move |s| s.playlist_tracks.entry(key.clone()).or_default(),
@@ -210,32 +163,27 @@ pub struct Needs {
 
 /// Starts whatever `needs` asks for that isn't loaded or loading yet, and a
 /// larger page of a paged list once a panel's room outgrows the last one
-/// (`useReloadWhenLarger`). True when it started anything.
-pub fn apply(app: &mut App, needs: &Needs) -> bool {
-    let mut started = false;
+/// (`useReloadWhenLarger`).
+pub fn apply(app: &mut App, needs: &Needs) {
     for p in &needs.periods {
         if !app.pages.home.replay.contains_key(&p.key()) {
             load_replay(app, *p);
-            started = true;
         }
     }
     for id in &needs.pinned {
         if !app.pages.home.playlist_tracks.contains_key(id) {
             load_playlist(app, id);
-            started = true;
         }
     }
     if let Some(id) = &needs.hero_album
         && !app.pages.home.hero_album.contains_key(id)
     {
         load_hero_album(app, id);
-        started = true;
     }
     if let Some(id) = &needs.hero_tracks
         && !app.pages.home.hero_tracks.contains_key(id)
     {
         load_hero_tracks(app, id);
-        started = true;
     }
     let home = &mut app.pages.home;
     home.wants = needs.wants.iter().cloned().collect::<HashMap<_, _>>();
@@ -243,18 +191,10 @@ pub fn apply(app: &mut App, needs: &Needs) -> bool {
     home.track_limit = track_limit(home, &needs.album_panels, &needs.added_panels);
     if home.recent_limit > home.recent_sent {
         load_recent(app);
-        started = true;
     }
     if app.pages.home.track_limit > app.pages.home.tracks_sent {
         load_tracks(app);
-        started = true;
     }
-    started
-}
-
-/// The default period's request, for scenes and tests.
-pub fn default_period() -> Period {
-    DEFAULT_PERIOD
 }
 
 /// The newest tracks the hero falls back to, for `play`'s queue.

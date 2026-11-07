@@ -30,11 +30,6 @@ pub fn installer_name(version: &str) -> String {
     format!("Lumen-Native-{version}-x64-setup.exe")
 }
 
-/// The portable build (which can't update itself).
-pub fn portable_name(version: &str) -> String {
-    format!("Lumen-Native-{version}-x64-portable.zip")
-}
-
 /// `sha256sum` lines for the release's native files.
 pub fn sums_name(version: &str) -> String {
     format!("Lumen-Native-{version}-SHA256SUMS.txt")
@@ -221,10 +216,8 @@ pub fn is_update(latest: &semver::Version, current: &str) -> bool {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .http_status_as_error(false)
+    crate::net::agent_config()
         .timeout_connect(Some(Duration::from_secs(15)))
-        .user_agent(super::USER_AGENT)
         .build()
         .into()
 }
@@ -362,7 +355,6 @@ pub struct Updater {
     downloaded: Option<PathBuf>,
     automatic: bool,
     unsupported: Option<String>,
-    api: String,
     /// Bumped by `configure`; what an older check or download finds is dropped.
     generation: u64,
 }
@@ -388,18 +380,12 @@ impl Updater {
             downloaded: None,
             automatic: false,
             unsupported,
-            api: GITHUB_API.into(),
             generation: 0,
         }
     }
 
     pub fn status(&self) -> &UpdateStatus {
         &self.status
-    }
-
-    /// Points checks at another API (tests).
-    pub fn set_api(&mut self, api: &str) {
-        self.api = api.trim_end_matches('/').into();
     }
 
     pub fn configure(&mut self, branch: &str, repo_url: &str) -> Result<UpdateStatus, String> {
@@ -440,8 +426,8 @@ impl Updater {
         self.status.message = "Checking for updates…".into();
         self.status.can_install = false;
         self.status.progress = None;
-        let (api, repo, branch, current) = (self.api.clone(), self.repo.clone()?, self.status.branch, self.status.current_version.clone());
-        Some((self.generation, move || find_update(&api, &repo, branch, &current)))
+        let (repo, branch, current) = (self.repo.clone()?, self.status.branch, self.status.current_version.clone());
+        Some((self.generation, move || find_update(GITHUB_API, &repo, branch, &current)))
     }
 
     fn finish_check(&mut self, generation: u64, result: CheckResult) {

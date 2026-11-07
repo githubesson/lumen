@@ -28,7 +28,7 @@ fn app(server: &MockServer, sync: bool) -> App {
         client: Some(server.client()),
         session: Session::Loading,
         history: History::new(Location::parse("/")),
-        playlists: None,
+        playlists: Default::default(),
         pending_invites: 0,
         ui: Default::default(),
         player: Default::default(),

@@ -13,7 +13,7 @@ use rune::{Color, Cursor, Cx, El, col, el, row, text};
 
 use crate::api::UploadResult;
 use crate::app::App;
-use crate::theme::{Theme, color_mix};
+use crate::theme::Theme;
 use crate::ui::kit::{Dialog, dialog_footer, error_banner, eyebrow, scroll_area_fit};
 use crate::ui::{Btn, font, ico, icons as i, line, tnum};
 
@@ -21,56 +21,13 @@ pub use crate::core::upload::{
     UPLOAD_EXTENSIONS, UPLOAD_REQUEST_MAX_BYTES, UploadScope as Scope, default_upload_scope as default_scope, is_uploadable_file as is_uploadable,
     upload_scope,
 };
-
-/// `planUploadBatches`: requests that each stay under the cap, in order; a
-/// file whose size isn't known goes alone, one too big for any is left out.
-pub fn plan_batches<T: Clone>(files: &[T], size_of: impl Fn(&T) -> Option<u64>, max: u64) -> (Vec<Vec<T>>, Vec<T>) {
-    let plan = crate::core::upload::plan_upload_batches(files, size_of, max);
-    (plan.batches, plan.too_large)
-}
+use crate::core::upload::{
+    UploadStatus, plan_upload_batches, too_large_upload_result, upload_added_any, upload_result_detail, upload_result_status,
+};
 
 /// The last path component, for messages and part headers.
 fn file_name(p: &std::path::Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Status {
-    Failed,
-    Skipped,
-    Added,
-    Duplicate,
-}
-
-/// `uploadResultStatus`: an error wins, then a skip, then an insert.
-pub fn result_status(r: &UploadResult) -> Status {
-    if r.error.as_deref().is_some_and(|e| !e.is_empty()) {
-        Status::Failed
-    } else if r.skipped == Some(true) {
-        Status::Skipped
-    } else if r.inserted {
-        Status::Added
-    } else {
-        Status::Duplicate
-    }
-}
-
-/// `uploadResultDetail`.
-pub fn result_detail(r: &UploadResult) -> String {
-    if let Some(e) = r.error.as_deref().filter(|e| !e.is_empty()) {
-        return e.to_string();
-    }
-    match result_status(r) {
-        Status::Failed => "Failed",
-        Status::Skipped => "Skipped (unsupported format)",
-        Status::Added => "Added",
-        Status::Duplicate => "Already in library",
-    }
-    .to_string()
-}
-
-fn too_large_result(file: &str) -> UploadResult {
-    UploadResult { file: file.to_string(), inserted: false, error: Some("file too large".into()), ..Default::default() }
 }
 
 #[derive(Default)]
@@ -154,15 +111,15 @@ fn pick(app: &mut App, tx: &mut rune::Tx) {
 fn submit(app: &mut App) {
     let admin = is_admin(app);
     let s = &mut app.overlays.upload;
-    if s.files.is_empty() || s.busy {
+    if s.files.is_empty() || s.busy || app.client.is_none() {
         return;
     }
     s.busy = true;
     s.error = None;
     let scope = upload_scope(admin, s.scope.unwrap_or(default_scope(admin)));
-    let (batches, too_large) = plan_batches(&s.files, |p| std::fs::metadata(p).ok().map(|m| m.len()), UPLOAD_REQUEST_MAX_BYTES);
-    let too_large: Vec<String> = too_large.iter().map(|p| file_name(p)).collect();
-    send_batch(app, batches, 0, Vec::new(), too_large, scope);
+    let plan = plan_upload_batches(&s.files, |p| std::fs::metadata(p).ok().map(|m| m.len()), UPLOAD_REQUEST_MAX_BYTES);
+    let too_large: Vec<String> = plan.too_large.iter().map(|p| file_name(p)).collect();
+    send_batch(app, plan.batches, 0, Vec::new(), too_large, scope);
 }
 
 /// Send `batches[n]`, then the next, collecting results.
@@ -170,8 +127,8 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
     let session = app.overlays.upload.session;
     if n >= batches.len() {
         let s = &mut app.overlays.upload;
-        let added = uploaded.iter().any(|r| r.inserted);
-        uploaded.extend(too_large.iter().map(|f| too_large_result(f)));
+        let added = upload_added_any(&uploaded);
+        uploaded.extend(too_large.iter().map(|f| too_large_upload_result(f)));
         s.results = Some(uploaded);
         s.busy = false;
         if added {
@@ -209,11 +166,11 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
                                 ..Default::default()
                             });
                         }
-                        results.extend(too_large.iter().map(|f| too_large_result(f)));
+                        results.extend(too_large.iter().map(|f| too_large_upload_result(f)));
                         s.results = Some(results);
                     }
                     s.busy = false;
-                    if uploaded.iter().any(|r| r.inserted) {
+                    if upload_added_any(&uploaded) {
                         crate::pages::library_changed(app);
                     }
                 }
@@ -222,61 +179,16 @@ fn send_batch(app: &mut App, batches: Vec<Vec<PathBuf>>, n: usize, mut uploaded:
     );
 }
 
-
-/// `RadioCardOption`.
-fn radio_card(t: &Theme, key: &str, label: &str, description: &str, checked: bool, pick: Scope) -> El {
-    let border = if checked { t.c.primary } else { t.c.border };
-    let mut card = crate::ui::css_border(row(), 1.0, border, t.radius_lg())
-        .key(key.to_string())
-        .w_full()
-        .padding(13.0)
-        .gap(12.0)
-        .items_start()
-        .radius(t.radius_lg())
-        .role("radio")
-        .checked(checked)
-        .label(label.to_string())
-        .cursor(Cursor::Pointer)
-        .focusable(true)
-        .on_press(move |app: &mut App| app.overlays.upload.scope = Some(pick));
-    if checked {
-        card = card.fill(color_mix(t.c.primary, 0.05, Color::TRANSPARENT));
-    }
-    card.child(radio_dot(t, checked).mt(2.0)).child(
-        col()
-            .grow(1.0)
-            .min_w(0.0)
-            .child(text(label).font(font(14.0, 500.0)).color(t.c.foreground).h(20.3))
-            .child(
-                crate::ui::snug_lines(&format!("{key}-desc"), text(description).font(font(12.0, 400.0)).color(t.c.muted_foreground).wrap(), 17.4)
-                    .mt(2.0),
-            ),
-    )
-}
-
-/// A native radio with `accent-color: var(--primary)` (13 px): an accent
-/// ring, a gap and an accent dot when checked; a grey ring when not.
-fn radio_dot(t: &Theme, checked: bool) -> El {
-    let gap = if t.dark() { t.c.popover } else { Color::WHITE };
-    if checked {
-        el().size(13.0, 13.0)
-            .radius(999.0)
-            .fill(t.c.primary)
-            .center()
-            .child(el().size(10.0, 10.0).radius(999.0).fill(gap).center().child(el().size(7.0, 7.0).radius(999.0).fill(t.c.primary)))
-    } else {
-        el().size(13.0, 13.0).radius(999.0).fill(if t.dark() { rune::color::hex("#3b3b3b").unwrap() } else { Color::WHITE }).border(
-            1.0,
-            if t.dark() { rune::color::hex("#858585").unwrap() } else { rune::color::hex("#767676").unwrap() },
-        )
-    }
+/// `RadioCardOption` for one of the upload's scopes.
+fn scope_card(t: &Theme, key: &str, label: &str, description: &str, scope: Scope, pick: Scope) -> El {
+    crate::ui::native::radio_card(t, key, scope == pick, label, description, move |app: &mut App| app.overlays.upload.scope = Some(pick))
 }
 
 fn status_dot(t: &Theme, r: &UploadResult) -> El {
-    match result_status(r) {
-        Status::Added | Status::Duplicate => ico(&i::CHECK, 16.0, t.c.primary).mt(1.0),
+    match upload_result_status(r) {
+        UploadStatus::Added | UploadStatus::Duplicate => ico(&i::CHECK, 16.0, t.c.primary).mt(1.0),
         s => {
-            let c = if s == Status::Failed { t.c.destructive } else { t.c.muted_foreground };
+            let c = if s == UploadStatus::Failed { t.c.destructive } else { t.c.muted_foreground };
             el().size(16.0, 16.0).mt(1.0).center().child(el().size(6.0, 6.0).radius(999.0).fill(c))
         }
     }
@@ -303,20 +215,20 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                         .w_full()
                         .gap(8.0)
                         .role("radiogroup")
-                        .child(radio_card(
+                        .child(scope_card(
                             t,
                             "upload-scope-global",
                             "Global library",
                             "Visible to all users. Use this for the main shared collection.",
-                            scope == Scope::Global,
+                            scope,
                             Scope::Global,
                         ))
-                        .child(radio_card(
+                        .child(scope_card(
                             t,
                             "upload-scope-personal",
                             "Personal",
                             "Only you'll see these tracks alongside the global library.",
-                            scope == Scope::Personal,
+                            scope,
                             Scope::Personal,
                         )),
                 ),
@@ -380,7 +292,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         body = body.child(
             text(format!(
                 "{} left out, not a format the server can add: {}",
-                crate::overlays::palette::pluralize(n as u64, "file"),
+                crate::format::pluralize(n as u64, "file"),
                 s.left_out.join(", ")
             ))
             .font(font(12.0, 400.0))
@@ -406,7 +318,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                             .grow(1.0)
                             .min_w(0.0)
                             .child(line(r.file.clone(), font(14.0, 400.0), t.c.foreground))
-                            .child(text(result_detail(r)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground).wrap().mt(2.0)),
+                            .child(text(upload_result_detail(r)).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground).wrap().mt(2.0)),
                     ),
             );
         }
@@ -441,42 +353,4 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
             })
             .on_drop_hover(|app: &mut App, over, _| app.overlays.upload.drag_active = over),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn batches_stay_under_the_cap_in_order() {
-        let mb = 1u64 << 20;
-        let files = [("a", Some(300 * mb)), ("b", Some(300 * mb)), ("c", None), ("d", Some(600 * mb)), ("e", Some(10 * mb))];
-        let (batches, too_large) = plan_batches(&files, |f| f.1, UPLOAD_REQUEST_MAX_BYTES);
-        let names: Vec<Vec<&str>> = batches.iter().map(|b| b.iter().map(|f| f.0).collect()).collect();
-        assert_eq!(names, vec![vec!["a"], vec!["b"], vec!["c"], vec!["e"]]);
-        assert_eq!(too_large.iter().map(|f| f.0).collect::<Vec<_>>(), vec!["d"]);
-    }
-
-    #[test]
-    fn uploadable_by_extension() {
-        assert!(is_uploadable("Song.FLAC"));
-        assert!(is_uploadable("dir/a.b.mp3"));
-        assert!(!is_uploadable("cover.jpg"));
-        assert!(!is_uploadable("README"));
-    }
-
-    #[test]
-    fn statuses_in_the_servers_order() {
-        let r = |inserted, skipped: Option<bool>, error: Option<&str>| UploadResult {
-            file: "f".into(),
-            inserted,
-            skipped,
-            error: error.map(str::to_string),
-            ..Default::default()
-        };
-        assert_eq!(result_status(&r(true, Some(true), Some("x"))), Status::Failed);
-        assert_eq!(result_status(&r(true, Some(true), None)), Status::Skipped);
-        assert_eq!(result_status(&r(true, None, None)), Status::Added);
-        assert_eq!(result_detail(&r(false, None, None)), "Already in library");
-    }
 }

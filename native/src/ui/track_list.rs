@@ -158,10 +158,6 @@ impl TrackList {
         e.opacity(if self.stale { 0.55 } else { 1.0 }).opacity_motion(crate::ui::motion::ease_out(150.0))
     }
 
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
     /// The selection bar this list draws (for a page that hosts it).
     pub fn selection_bar(&self, app: &App, t: &Theme, place: BarPlace) -> El {
         track_select::selection_bar(app, t, &self.key, self.source, place)
@@ -287,7 +283,7 @@ impl TrackList {
     /// select-all checkbox while selecting.
     fn header_row(&self, app: &App, t: &Theme) -> El {
         let items = (self.source)(app);
-        let sel = app.widgets.lists.get(&self.key);
+        let sel = app.widgets.lists.selection(&self.key);
         let label = |s: &str| -> El {
             if self.header { text(s).font(font(12.0, 500.0)).color(t.c.muted_foreground) } else { el() }
         };
@@ -303,7 +299,7 @@ impl TrackList {
             // where the table sits on a card (Replay's top tracks).
             r = css_border_bottom(r.pb(1.0).fill(t.c.background), 1.0, t.c.border);
         }
-        let (all, some) = (sel.all_selected(items), sel.some_selected(items));
+        let (all, some) = sel.all_some(items);
         let key = self.key.clone();
         let source = self.source;
         let check = track_select::checkbox(t, &format!("{}-checkall", self.key), all, some && !all, if all {
@@ -341,7 +337,7 @@ impl TrackList {
 /// `useMenuSelection`: the selection a right-click on `tr` acts on, when
 /// the row is part of one of two or more.
 pub fn menu_selection(app: &App, list: &str, source: Source, tr: &TrackListItem) -> Option<crate::overlays::track_menu::MenuSelection> {
-    let sel = app.widgets.lists.get(list);
+    let sel = app.widgets.lists.selection(list);
     let items = source(app);
     if !(sel.mode && sel.count(items) > 1 && sel.ids.contains(&tr.id)) {
         return None;

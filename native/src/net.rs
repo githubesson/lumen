@@ -8,8 +8,9 @@
 //! frame and snapshots are deterministic.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use rune::Waker;
 
@@ -17,6 +18,16 @@ use crate::app::App;
 
 type Job = Box<dyn FnOnce() + Send>;
 type Apply = Box<dyn FnOnce(&mut App) + Send>;
+
+/// What every request says it is: `Lumen-Desktop/<release version>`.
+pub const USER_AGENT: &str = concat!("Lumen-Desktop/", env!("LUMEN_VERSION"));
+
+/// An HTTP agent's settings as every one of the app's starts: a non-2xx
+/// status is an answer to read, not an error, and the app's user agent.
+/// Callers add their timeouts and redirect rules.
+pub fn agent_config() -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+    ureq::Agent::config_builder().http_status_as_error(false).user_agent(USER_AGENT)
+}
 
 /// A waker that can be installed after the fact: the app is built before
 /// rune hands over its waker in `setup`.
@@ -77,12 +88,33 @@ pub struct Net {
     rx: Receiver<Apply>,
     waker: LateWaker,
     sync: Arc<AtomicBool>,
+    /// The timer thread [`Net::after`] hands its changes to, started on first use.
+    timers: OnceLock<Sender<(Instant, Apply)>>,
 }
 
 impl Net {
     pub fn new(waker: LateWaker) -> Net {
         let (tx, rx) = channel();
-        Net { pool: Pool::new("lumen-net", 6), tx, rx, waker, sync: Arc::new(AtomicBool::new(false)) }
+        Net {
+            pool: Pool::new("lumen-net", 6),
+            tx,
+            rx,
+            waker,
+            sync: Arc::new(AtomicBool::new(false)),
+            timers: OnceLock::new(),
+        }
+    }
+
+    /// Run `done` on the UI thread once `delay` has passed (a debounce, a
+    /// "Copied" flag going back), without holding a request worker while it
+    /// waits. Headless scenes run it on the next drain, as their requests.
+    pub fn after(&self, delay: Duration, done: impl FnOnce(&mut App) + Send + 'static) {
+        if self.is_sync() {
+            let _ = self.tx.send(Box::new(done));
+            return;
+        }
+        let timers = self.timers.get_or_init(|| start_timers(self.tx.clone(), self.waker.clone()));
+        let _ = timers.send((Instant::now() + delay, Box::new(done)));
     }
 
     /// Run `work` off the UI thread and hand its result to `done` on it.
@@ -136,6 +168,40 @@ impl Net {
         }
         any
     }
+}
+
+/// The thread behind [`Net::after`]: holds each change until its time, then
+/// queues it for the UI thread (in the order they fall due).
+fn start_timers(apply: Sender<Apply>, waker: LateWaker) -> Sender<(Instant, Apply)> {
+    let (tx, rx) = channel::<(Instant, Apply)>();
+    std::thread::Builder::new()
+        .name("lumen-timers".into())
+        .spawn(move || {
+            let mut pending: Vec<(Instant, Apply)> = Vec::new();
+            loop {
+                let next = pending.iter().map(|(at, _)| *at).min();
+                let got = match next {
+                    Some(at) => rx.recv_timeout(at.saturating_duration_since(Instant::now())),
+                    None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                };
+                match got {
+                    Ok(timer) => pending.push(timer),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+                let now = Instant::now();
+                let (due, later): (Vec<_>, Vec<_>) = pending.drain(..).partition(|(at, _)| *at <= now);
+                pending = later;
+                if !due.is_empty() {
+                    for (_, done) in due {
+                        let _ = apply.send(done);
+                    }
+                    waker.wake();
+                }
+            }
+        })
+        .expect("spawn timers");
+    tx
 }
 
 /// A handle background threads (the audio engine, sockets) use to change

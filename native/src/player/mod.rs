@@ -31,14 +31,14 @@ use std::time::{Duration, Instant};
 use rune::Tx;
 use serde_json::Value;
 
-use crate::api::{Client, TrackListItem, seg};
+use crate::api::{Client, TrackListItem};
 use crate::app::{App, Session as AppSession};
 use crate::net::{LateWaker, Pool};
 
 // The player UI's vocabulary (the queue popover, the device picker, the
 // error panel), ahead of the views that use it.
 #[allow(unused_imports)]
-pub use self::core::{ListPlaybackState, QueueProgress, Repeat, SMOOTH_MIX_SECONDS, list_playback_state, playable_tracks};
+pub use self::core::{ListPlaybackState, QueueProgress, Repeat, list_playback_state, playable_tracks};
 pub use self::engine::output::OutputDevice;
 #[allow(unused_imports)]
 pub use self::error::{ErrorLine, PlaybackError, PlaybackErrorDetails, ServerAnswer};
@@ -69,17 +69,21 @@ enum Msg {
 #[derive(Default)]
 struct Remote {
     selected: Option<PlaybackDevice>,
+    /// The views show `selected`'s queue (copied once per change of it).
+    shown: bool,
+    /// When `selected`'s heartbeat was sent (ms since the epoch), parsed once.
+    updated_ms: Option<u64>,
     controlled: Option<ControlledState>,
     last_result: Option<CommandResult>,
     throttle: VolumeThrottle,
     /// Commands to send once another is applied (`play_track` then `set_shuffle`).
     follow_ups: HashMap<String, (String, Value)>,
-    /// The target's reported settings the controlled state last took in.
-    reconciled: Option<Reported>,
+    /// The target (by id) and its reported settings the controlled state last took in.
+    reconciled: Option<(String, Reported)>,
 }
 
 /// A device's reported volume, mute, shuffle and repeat.
-type Reported = (String, Option<f64>, Option<bool>, Option<bool>, Option<Repeat>);
+type Reported = (Option<f64>, Option<bool>, Option<bool>, Option<Repeat>);
 
 /// What publishing keys on (`usePlaybackActivityPublisher`'s effect deps).
 #[derive(Clone, PartialEq)]
@@ -120,7 +124,14 @@ pub struct Player {
     output: Option<engine::OutputControl>,
     output_device_id: String,
     output_lost: bool,
+    /// [`engine::output::OutputShared::changes`] as last seen.
+    output_changes: u64,
     media: MediaSession,
+    /// What the OS media controls were last given: (current track's
+    /// revision, exposed, playing).
+    media_shown: Option<(u64, bool, bool)>,
+    /// The remote-control notice was showing at the last poll.
+    notice_shown: bool,
     pool: Pool,
     msgs_tx: Sender<Msg>,
     msgs: Receiver<Msg>,
@@ -198,7 +209,10 @@ impl Player {
             output: None,
             output_device_id: String::new(),
             output_lost: false,
+            output_changes: 0,
             media: MediaSession::none(),
+            media_shown: None,
+            notice_shown: false,
             pool: Pool::new("lumen-player", 2),
             msgs_tx,
             msgs,
@@ -232,29 +246,8 @@ impl Player {
         self::core::queue_progress(self.queue.len(), self.index.unwrap_or(0), window)
     }
 
-    /// A list's play button: `listPlaybackState` against the shown track.
-    pub fn list_state(&self, tracks: &[TrackListItem]) -> ListPlaybackState {
-        list_playback_state(tracks, self.current(), self.playing)
-    }
-
-    /// The failure's lines for the details panel, and the text to copy.
-    pub fn error_lines(&self) -> Vec<ErrorLine> {
-        self.error.as_ref().map(|e| e.lines(self.current())).unwrap_or_default()
-    }
-
     pub fn error_text(&self) -> Option<String> {
         self.error.as_ref().map(|e| e.text(self.current()))
-    }
-
-    /// Smooth mix's fade, in seconds (0: off).
-    pub fn crossfade_seconds(&self) -> f64 {
-        self.local.crossfade_seconds
-    }
-
-    /// A counter that moves when devices, the connection, output devices or
-    /// the remote-control notice change.
-    pub fn generation(&self) -> u64 {
-        self.generation
     }
 
     /// Headless scenes: show `error` as the current track's failure, as the

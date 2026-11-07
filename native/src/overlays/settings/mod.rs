@@ -8,13 +8,14 @@ pub mod discord;
 pub mod discord_card;
 pub mod rows;
 
-use rune::{Color, Cursor, Cx, El, Icon, Shadow, TextEdit, col, el, row, text};
+use rune::{Cursor, Cx, El, Icon, TextEdit, col, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
-use crate::ui::forms::{OpenSelect, SelectOption, SelectVariant, search_input};
+use crate::ui::forms::search_input;
 use crate::ui::kit::scroll_area_with;
 use crate::ui::{BtnState, css_border, font, ico, iconbtn, icons as i, line, motion, with_lh};
+use crate::ui::ShadowMd;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SectionId {
@@ -38,8 +39,8 @@ pub struct State {
     pub side_shown: bool,
     /// A headless scene's stand-in for the updater's status (the real one
     /// is `app.desktop.updater`'s, see `desktop_bridge::update_status`).
-    pub updater: Option<desktop_bridge::UpdateStatus>,
-    pub lastfm: rows::LastFm,
+    pub updater: Option<crate::desktop::updater::UpdateStatus>,
+    pub lastfm: crate::core::lastfm::LastFmConnection,
     pub desktop: rows::DesktopUi,
     pub updates: rows::UpdatesUi,
     pub discord: discord::CardUi,
@@ -117,23 +118,14 @@ struct SectionDef<'a> {
 
 /// Every section that has rows, in order.
 fn sections<'a>(app: &'a App, t: &'a Theme, cx: &mut Cx<App>, side: bool) -> Vec<SectionDef<'a>> {
-    let desktop = desktop_bridge::config(app);
+    let d = desktop_bridge::config(app);
     let mut out = vec![
         SectionDef { id: SectionId::Appearance, title: "Appearance", icon: &i::PALETTE, settings: rows::appearance(app, t) },
         SectionDef { id: SectionId::Playback, title: "Playback", icon: &i::VOLUME_2, settings: rows::playback(app, t) },
+        SectionDef { id: SectionId::Desktop, title: "Desktop", icon: &i::MONITOR, settings: rows::desktop(app, t, &d) },
+        SectionDef { id: SectionId::Connections, title: "Connections", icon: &i::LINK_2, settings: rows::connections(app, t, &d) },
+        SectionDef { id: SectionId::Discord, title: "Discord", icon: &discord::DISCORD_ICON, settings: discord::settings(app, t, cx, &d, side) },
     ];
-    if let Some(d) = &desktop {
-        out.push(SectionDef { id: SectionId::Desktop, title: "Desktop", icon: &i::MONITOR, settings: rows::desktop(app, t, d) });
-    }
-    out.push(SectionDef {
-        id: SectionId::Connections,
-        title: "Connections",
-        icon: &i::LINK_2,
-        settings: rows::connections(app, t, desktop.as_ref()),
-    });
-    if let Some(d) = &desktop {
-        out.push(SectionDef { id: SectionId::Discord, title: "Discord", icon: &discord::DISCORD_ICON, settings: discord::settings(app, t, cx, d, side) });
-    }
     if desktop_bridge::update_status(app).is_some() {
         out.push(SectionDef { id: SectionId::Updates, title: "Updates", icon: &i::DOWNLOAD, settings: rows::updates(app, t) });
     }
@@ -156,94 +148,7 @@ pub fn switch_control(sw: El) -> El {
     el().h(23.1).child(sw)
 }
 
-/// `SettingRow`'s description: plain text, or the updater's status line
-/// (tabular, red when it failed).
-pub enum Desc {
-    Text(String),
-    Status { text: String, error: bool },
-}
-
-/// `SettingRow` as the dialog draws it (`.settings-row`).
-pub fn setting_row(
-    t: &Theme,
-    label: &str,
-    desc: Option<Desc>,
-    control: Option<El>,
-    below: Option<El>,
-    error: Option<&str>,
-    last: bool,
-) -> El {
-    // `line-height: 1.45` boxes are fractional; rune rounds text boxes up, so
-    // the label keeps the CSS height.
-    let mut texts = col().min_w(0.0).shrink().child(text(label).font(font(14.0, 400.0)).color(t.c.foreground).h(20.3));
-    let key = format!("settings-desc-{label}");
-    match desc {
-        Some(Desc::Text(d)) => {
-            let d = text(d).font(with_lh(font(12.0, 400.0), 16.8)).color(t.c.muted_foreground).wrap_anywhere();
-            texts = texts.child(crate::ui::snug_lines(&key, d, 16.8).mt(2.0));
-        }
-        Some(Desc::Status { text: d, error }) => {
-            let ink = if error { t.c.destructive } else { t.c.muted_foreground };
-            let d = text(d).font(crate::ui::tnum(with_lh(font(12.0, 400.0), 16.8))).color(ink).wrap_anywhere();
-            texts = texts.child(crate::ui::snug_lines(&key, d, 16.8).mt(2.0));
-        }
-        None => {}
-    }
-    let mut main = row().min_h(28.0).gap(16.0).items_center().justify_between().child(texts);
-    if let Some(c) = control {
-        main = main.child(el().child(c));
-    }
-    let mut r = col().w_full().gap(8.0).pt(14.0).pb(if last { 14.0 } else { 15.0 }).child(main);
-    if !last {
-        r = crate::ui::css_border_bottom(r, 1.0, t.c.border);
-    }
-    if let Some(b) = below {
-        r = r.child(b);
-    }
-    if let Some(e) = error {
-        r = r.child(text(e).font(font(12.0, 400.0)).color(t.c.destructive).wrap());
-    }
-    r
-}
-
-/// A `<Select variant="minimal">` in a settings row: the value itself in the
-/// foreground, like a menu button (`.settings-row-control [role=combobox]`).
-pub fn select(
-    app: &App,
-    t: &Theme,
-    key: &str,
-    options: Vec<SelectOption>,
-    value: &str,
-    disabled: bool,
-    on_change: fn(&mut App, &str),
-) -> El {
-    let open = app.select.as_ref().is_some_and(|s| s.key == key);
-    let label = options.iter().find(|o| o.value == value).map(|o| o.label.clone()).unwrap_or_else(|| "Select…".into());
-    let spec = OpenSelect::new(key, options, value, SelectVariant::Minimal, on_change);
-    let b = row()
-        .key(key)
-        .h(28.0)
-        .pl(6.0)
-        .pr(2.0)
-        .gap(4.0)
-        .items_center()
-        .radius(t.radius_md())
-        .role("combobox")
-        .expanded(open)
-        .label(label.clone())
-        .child(text(label).font(with_lh(font(14.0, 400.0), 20.0)).color(t.c.foreground))
-        .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.foreground));
-    if disabled {
-        return b.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed);
-    }
-    b.cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| {
-        if app.select.as_ref().is_some_and(|s| s.key == spec.key) {
-            app.select = None;
-        } else {
-            app.select = Some(spec.clone());
-        }
-    })
-}
+pub use crate::ui::forms::{Desc, setting_row, setting_select as select};
 
 fn nav(app: &App, t: &Theme, list: &[(SectionId, &'static str, &'static Icon)], current: Option<SectionId>) -> El {
     let s = &app.overlays.settings;
@@ -311,6 +216,8 @@ fn nav(app: &App, t: &Theme, list: &[(SectionId, &'static str, &'static Icon)], 
 }
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
+    // The preview marks its paused clock again if it draws it.
+    app.overlays.settings.discord.clock_shown.set(None);
     if !app.ui.settings_open {
         return None;
     }
@@ -318,7 +225,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let [ww, wh] = super::window_size(cx);
     let roomy = ww >= SIDE_ROOM;
     let all = sections(app, t, cx, roomy);
-    let claimed = roomy && discord::claims_side(app, &all_claims(&all, s));
+    let claimed = roomy && discord::claims_side(&all_claims(&all, s));
     let side_open = claimed && s.side_shown;
 
     let terms: Vec<String> = s.query.text.trim().to_lowercase().split_whitespace().map(str::to_string).collect();
@@ -399,7 +306,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let pane = scroll_area_with(t, "settings-pane", pane, overflows).grow(1.0).min_w(0.0).h_full();
 
     let r = t.radius_xl();
-    let a = t.c.shadow_md_alpha;
     let mut panel = css_border(row(), 1.0, t.c.border, r)
         .key("settings-panel")
         .w_full()
@@ -408,8 +314,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .padding(1.0)
         .radius(r)
         .fill(t.c.popover)
-        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .shadow_md(t)
         .clip_rounded(r)
         .role("dialog")
         .label("Settings")

@@ -123,13 +123,21 @@ impl Config {
         put("audioSinkId", self.audio_sink_id.clone().map(Value::String));
         put("updateBranch", self.update_branch.clone().map(Value::String));
         put("updateRepoUrl", self.update_repo_url.clone().map(Value::String));
-        let p = path();
-        if let Some(dir) = p.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
         let text = serde_json::to_string_pretty(&Value::Object(map))?;
-        let tmp = p.with_extension("json.tmp");
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, &p)
+        write_atomic(&path(), text.as_bytes())
     }
+}
+
+/// Write `bytes` to `path` whole or not at all: into a `.tmp` beside it,
+/// then renamed over it. Creates the folder when it's missing.
+pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = match path.extension() {
+        Some(ext) => path.with_extension(format!("{}.tmp", ext.to_string_lossy())),
+        None => path.with_extension("tmp"),
+    };
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
 }

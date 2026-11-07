@@ -103,24 +103,9 @@ pub fn kbd(t: &Theme, keys: &str) -> El {
 /// `CoverArt`: the image at `url` filling a `w`×`h` box, the muted surface
 /// while it loads, and the entity's initial once it fails (or without a URL).
 pub fn cover_art(t: &Theme, images: &Images, url: Option<&str>, label: &str, w: f32, h: f32, radius: f32) -> El {
-    // The image rounds its own corners: no clipping layer per cover.
-    let base = el().size(w, h).radius(radius).fill(t.c.muted);
-    let state = match url {
-        Some(u) => images.get_sized_lazy(u, w, h),
-        None => Cover::Failed,
-    };
-    let base = load_when_shown(base, &state, url, w, h);
-    match state {
-        Cover::Ready(img) => base.child(el().w(w).h(h).radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
-        Cover::Loading => base,
-        Cover::Failed => {
-            // `font-size: clamp(16px, 32%, 40px)`: the percentage is of the
-            // inherited 14 px font size, so the clamp floor wins.
-            let fs = 16.0;
-            let letter = label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
-            base.center().child(text(letter).font(font(fs, 500.0)).color(t.c.muted_foreground))
-        }
-    }
+    // `font-size: clamp(16px, 32%, 40px)`: the percentage is of the
+    // inherited 14 px font size, so the clamp floor wins.
+    cover(t, images, url, label, CoverBox::Fixed(w, h), radius, 16.0)
 }
 
 /// A cover whose letter uses an explicit size (`.sidebar-playlist-art
@@ -134,17 +119,46 @@ pub fn cover_art_letter_size(
     radius: f32,
     letter: f32,
 ) -> El {
-    let base = el().size(size, size).radius(radius).fill(t.c.muted);
-    let state = url.map(|u| images.get_sized_lazy(u, size, size)).unwrap_or(Cover::Failed);
-    let base = load_when_shown(base, &state, url, size, size);
+    cover(t, images, url, label, CoverBox::Fixed(size, size), radius, letter)
+}
+
+/// A [`cover`]'s box: `w`×`h`, or as wide as its parent and square (the
+/// cards' `.card-art`).
+pub(super) enum CoverBox {
+    Fixed(f32, f32),
+    Square,
+}
+
+/// `CoverArt` in `shape`: the image (fetched at the box's size; a square
+/// card's at 240 px, the widest a grid or shelf column runs, smaller ones
+/// drawing from its mips), the muted surface while it loads, or the
+/// initial of `label` in `letter` px type. The image rounds its own
+/// corners: no clipping layer per cover.
+pub(super) fn cover(t: &Theme, images: &Images, url: Option<&str>, label: &str, shape: CoverBox, radius: f32, letter: f32) -> El {
+    let (base, (fw, fh)) = match shape {
+        CoverBox::Fixed(w, h) => (el().size(w, h), (w, h)),
+        CoverBox::Square => (el().w_full().aspect_ratio(1.0), (240.0, 240.0)),
+    };
+    let base = base.radius(radius).fill(t.c.muted);
+    let state = url.map(|u| images.get_sized_lazy(u, fw, fh)).unwrap_or(Cover::Failed);
+    let base = load_when_shown(base, &state, url, fw, fh);
     match state {
-        Cover::Ready(img) => base.child(el().w(size).h(size).radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill)),
-        Cover::Loading => base,
-        Cover::Failed => {
-            let ch = label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
-            base.center().child(text(ch).font(font(letter, 500.0)).color(t.c.muted_foreground))
+        Cover::Ready(img) => {
+            let pic = match shape {
+                CoverBox::Fixed(w, h) => el().w(w).h(h),
+                CoverBox::Square => el().w_full().h_full(),
+            };
+            base.child(pic.radius(radius).pixels_fit(img.pixels(), rune::SurfaceFit::Fill))
         }
+        Cover::Loading => base,
+        Cover::Failed => base.center().child(text(cover_letter(label)).font(font(letter, 500.0)).color(t.c.muted_foreground)),
     }
+}
+
+/// `CoverArt`'s placeholder letter: the label's first character, upper
+/// case, or "?".
+fn cover_letter(label: &str) -> String {
+    label.trim().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into())
 }
 
 /// `<img loading="lazy">`: a cover still loading fetches next while its box
@@ -198,9 +212,6 @@ pub struct Btn {
     pub leading: Option<&'static Icon>,
     /// The leading icon's size (`size-3.5`, 14, unless a page sets `size-4`).
     pub leading_size: f32,
-    pub trailing: Option<&'static Icon>,
-    /// The icon's colour when it differs from the label's.
-    pub leading_color: Option<Color>,
 }
 
 impl Btn {
@@ -213,8 +224,6 @@ impl Btn {
             disabled: false,
             leading: None,
             leading_size: 14.0,
-            trailing: None,
-            leading_color: None,
         }
     }
     pub fn primary(mut self) -> Btn {
@@ -245,10 +254,6 @@ impl Btn {
     /// The leading icon at `size` px (`size-4` is 16).
     pub fn icon_size(mut self, size: f32) -> Btn {
         self.leading_size = size;
-        self
-    }
-    pub fn trailing(mut self, glyph: &'static Icon) -> Btn {
-        self.trailing = Some(glyph);
         self
     }
 
@@ -290,15 +295,12 @@ impl Btn {
             b = b.border(1.0, border);
         }
         if let Some(g) = self.leading {
-            b = b.child(ico(g, self.leading_size, self.leading_color.unwrap_or(ink)));
+            b = b.child(ico(g, self.leading_size, ink));
         }
         if !self.label.is_empty() {
             // One line box as tall as CSS makes it (rune rounds text boxes up).
             let style = font(fs, 500.0);
             b = b.child(text(self.label).font(style).color(ink).h(style.line_height));
-        }
-        if let Some(g) = self.trailing {
-            b = b.child(ico(g, self.leading_size, ink));
         }
         if self.disabled {
             b.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed)
@@ -308,39 +310,27 @@ impl Btn {
     }
 }
 
-/// `.input`: a 32 px outlined single-line field; `placeholder` shows while
-/// it's empty. Unbound: use [`input_with`] to bind it.
-pub fn input(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str) -> El {
-    input_with(t, key, edit, placeholder, |f| f)
+impl Btn {
+    /// The width [`Btn::build`] lays the button out at, as CSS does: its
+    /// padding and border (11 px a side), the icons, the label's advance and
+    /// the gaps between them. For a layout that shares a row with it.
+    pub fn width(&self) -> f32 {
+        let (fs, gap) = if self.small { (13.0, 4.0) } else { (14.0, 6.0) };
+        let mut parts: Vec<f32> = Vec::new();
+        if self.leading.is_some() {
+            parts.push(self.leading_size);
+        }
+        if !self.label.is_empty() {
+            parts.push(rune::text::advance(&self.label, font(fs, 500.0)));
+        }
+        22.0 + parts.iter().sum::<f32>() + gap * parts.len().saturating_sub(1) as f32
+    }
 }
 
-/// [`input`] with its text field passed through `field_fn` first, to bind it
+/// `.input`: a 32 px outlined single-line field; `placeholder` shows while
+/// it's empty. Its text field goes through `field_fn` first, to bind it
 /// (`.on_edit(|s: &mut App| &mut s.x)`) or add `.secure()`, `.on_submit(..)`.
 pub fn input_with(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str, field_fn: impl FnOnce(El) -> El) -> El {
-    let focused = edit.focused;
-    let mut field = el().key(format!("{key}-box")).h(32.0).w_full().radius(t.radius_lg()).fill(t.c.input_bg).items_center();
-    field = crate::ui::css_border(field, 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg());
-    if focused {
-        field = field
-            .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: t.c.focus_ring, inset: false })
-            .box_shadow(Shadow {
-                x: 0.0,
-                y: 0.0,
-                blur: 0.0,
-                spread: 4.0,
-                color: crate::theme::color_mix(t.c.ring, 0.3, Color::TRANSPARENT),
-                inset: false,
-            });
-    }
-    field.child(field_fn(
-        rune::text_input(edit, font(14.0, 400.0))
-            .key(key)
-            .single_line()
-            .placeholder(placeholder, t.c.muted_foreground)
-            .color(t.c.foreground)
-            .caret(t.c.foreground, t.c.selection)
-            .selection_color(t.c.selection)
-            .grow(1.0)
-            .px(11.0),
-    ))
+    let field = crate::ui::forms::text_field(t, key, edit, font(14.0, 400.0), placeholder);
+    crate::ui::forms::input_box(t, key, edit.focused, field_fn(field))
 }

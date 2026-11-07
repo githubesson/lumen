@@ -23,7 +23,7 @@ Electron app in `frontend/` with full feature parity, Windows first.
 | `src/app.rs` | `App` state, root view, `poll`, scenes, `AppSpec` |
 | `src/route.rs` | `Location` (path + query, like the web URL) and `History` |
 | `src/theme.rs` | Tokens from `tokens.css` (`Theme`, `Palette`, `color_mix`) |
-| `src/ui/` | Text helpers (`font`, `line`, `label`), widgets (`iconbtn`, `Btn`, `input`, `cover_art`, `kbd`, `css_border`), lucide icons (`ui::icons`, generated) |
+| `src/ui/` | Text helpers (`font`, `line`, `exact`, `css_text_h`), widgets (`iconbtn`, `Btn`, `input_with`, `cover_art`, `kbd`, `css_border`), lucide icons (`ui::icons`, generated) |
 | `src/api/` | HTTP client (cookies persisted), payload types, media URLs |
 | `src/net.rs` | Background work: `app.net.run(work, done)`; results land in `poll` |
 | `src/images.rs` | Cover cache: `app.images.get(url)` |
@@ -56,7 +56,8 @@ Electron app in `frontend/` with full feature parity, Windows first.
   shows the *parent*), which is CSS with `background-clip: padding-box` (e.g. `.btn`). A plain
   CSS `border` paints over the element's own background: use `ui::css_border(el, w, c, radius)`
   (add the width to the element's padding, since CSS borders take layout space;
-  `box-sizing: border-box` is global in the web app). `ui::css_border_bottom` for hairlines.
+  `box-sizing: border-box` is global in the web app). `ui::css_border_bottom` and
+  `ui::css_border_top` for hairlines.
 - **Hover**: `.hover(colour)` draws an overlay over the fill while hovered. CSS that swaps
   `background` on hover needs the overlay that composites to the new colour:
   `ui::hover_overlay(base, target)`. Text/icon colour on hover: `.group_color(c)` on the child
@@ -71,7 +72,8 @@ Electron app in `frontend/` with full feature parity, Windows first.
   - *Centred lines snap a pixel high*: a row that centres a text (`align-items: center`)
     starts Rune's rounded box half the rounding above the browser's, and both engines snap
     the baseline to a whole pixel, often the one above. Wrap such text in
-    `ui::centred(text, style)` (a draw-only nudge of half the rounding).
+    `ui::centred(text, style)` (a draw-only nudge of half the rounding; `ui::centred_lh(text, lh)`
+    for a line height of its own).
   - Never hand-tune glyph offsets against a reference shot; measure with
     `node tools/centroid.mjs ref.png rune.png x,y,w,h` (ink centroid, sub-pixel) and compare
     layout boxes with `--tree` against the DOM (`tools/reference/rects.ref.ts`, which prints
@@ -84,26 +86,33 @@ Electron app in `frontend/` with full feature parity, Windows first.
 | Module | Ports | Use |
 | --- | --- | --- |
 | `ui::track_list` | `TrackList.tsx` | `TrackList::new("key", \|a\| &a.pages.x.tracks).view_gap(18.0).empty(el).page(app, t, head, tail)` as a page's whole view (virtual rows: every long list goes this way), or `.build(app, t)` for short lists inside a page that can't be virtual (the album sleeve). `.queue`, `.no_cover`, `.no_album`, `.headless`, `.not_selectable`, `.no_source_badge`, `.bar_elsewhere`, `.omit_artists`, `.extra(Extra { .. })`, `.stale(b)` (`.refreshable`), `.head_gap(g)`. A `Source` is a `fn(&App) -> &[TrackListItem]`, so a filtered list keeps its rows in page state (Library's `detail.rows`, the playlist's `shown_items`). `virtual_page(..)` gives a table of its own (the playlist's) the same virtual rows; `menu_selection(..)` the menu's selection. |
-| `ui::track_select` | `useTrackSelection`, `TrackSelectionToolbar`, `TrackCheckbox` | Selection lives in `app.widgets.lists` by list key; `selection_bar(app, t, key, source, BarPlace::Group)` for a toolbar group, `BarPlace::Attached` for a plain host (the album sleeve), `selection_bar_placeholder(t, key, place)` while loading, `checkbox(..)`. |
-| `ui::track_row` | `TrackRowCells.tsx`, `TrackRow` | `index_cell`, `playing_bars`, `favorite_button`, `badge`, plus `actions`, `play_from`, `start_list`, `is_local`, `can_share` (`core/track.ts`). |
+| `ui::track_select` | `useTrackSelection`, `TrackSelectionToolbar`, `TrackCheckbox` | Selection lives in `app.widgets.lists` by list key (`lists.selection(key)` borrows it); `selection_bar(app, t, key, source, BarPlace::Group)` for a toolbar group, `BarPlace::Attached` for a plain host (the album sleeve), `selection_bar_placeholder(t, key, place)` while loading, `checkbox(..)`. |
+| `ui::track_row` | `TrackRowCells.tsx`, `TrackRow` | `index_cell`, `playing_bars`, `favorite_button` (its pop is `HEART_POP`, shared with the bar's heart), `badge`, plus `actions`, `play_from`, `start_list`, `is_local`, `can_share` (`core/track.ts`). A track's cover URL is `track.cover_at(size)` (`trackCoverUrl`). |
 | `overlays::track_menu` | `TrackContextMenu.tsx` | `track_menu::open(app, track, [x, y], MenuContext { queue, edit, move_to_album, info, share, selection })` from `.on_secondary_press`; `MenuContext::bind(&track, queue)` is the hook's `bind(track, { queue })`. Every track row opens it. |
 | `ui::tooltip` | `TitleTooltips.tsx`, `Tooltip.tsx` | `use crate::ui::tooltip::TipExt;` then `el.tip("its-key", "Text")`, `.tip_side(.., Side::Right)`, `.tip_truncated(key, text, style)` (truncation hints), `tooltip::tip_body(el, key, Body::..)`. Don't use Rune's `.help`. |
-| `ui::cards` | `MediaCard`, `PlaylistCard`, `TopArtist` | `MediaCard::new(key, title).to(href).cover(url).subtitle(s).on_play(label, f).rank_badge(replay_rank(t, n)).build(app, t)` (width from its parent), `media_card_height`, `media_card_placeholders`, `playlist_card(app, t, &p)`, `top_artist_glyph`, `top_artist_press`, `square_art`. |
+| `ui::cards` | `MediaCard`, `PlaylistCard`, `TopArtist` | `MediaCard::new(key, title).to(href).cover(url).subtitle(s).on_play(label, f).rank_badge(replay_rank(t, n)).build(app, t)` (width from its parent; `replay_rank` is `.replay-rank`, Home's and Replay's), `media_card_height`, `media_card_placeholders`, `playlist_card(app, t, &p)`, `top_artist_glyph`, `top_artist_press`, `square_art`; `card_box` / `card_metrics` / `card_text` / `card_play` for a `.card` of one's own (Library's), `disc(t, icon, circle, glyph)` the round primary disc under every play glyph. |
 | `ui::shelf` | `ShelfScroller` | `shelf(app, t, key, "Top artists", cards, SHELF_COL)`. |
-| `ui::blocks` | `Section`, `ListPageHeader`, `PageHeader`, `ListMeta`, `LoadMoreSentinel`, `DataState`, `CenteredCard`, `RadioCardOption`, `IosSpinner`, `AnimatedNumber`, `PlayListButton` | `section(..)` (`section_with(.., SectionLook::artist())` for a page's override, `section_head` above a virtual list), `list_page_header(app, t, key, ListHeader { .. })` (`kind_el` / `title_el` for rich slots), `meta_line`, `page_header(t, title, count, actions)`, `list_meta`, `load_more`, `data_state`, `centered_card`, `radio_card`, `ios_spinner`, `animated_number(app, cx, key, value, style, ink)`, `play_list_button`. |
-| `ui::chart` | `ActivityChart` | `activity_chart(t, key, &[Bar { start, plays }], Bucket::Day)`; `activity_chart_sized(.., h)` fills a panel. |
-| `ui::kit`, `ui::forms` | `SegmentedControl`, `Select`, `SearchInput` | `segmented` (`segmented_counted` for a count after a label), `select(..)` (its listbox opens on the current option; `OpenSelect::new`), `search_input(t, key, edit, placeholder, width, \|f\| f.on_edit(..))`. |
-| `ui::paging` | `usePaginatedList` | `Paginated<T>` in page state with `reset` / `load_more` / `reload` through an accessor and a `Fetcher`. |
+| `ui::blocks` | `Section`, `ListPageHeader`, `PageHeader`, `ListMeta`, `DataState`, `IosSpinner`, `AnimatedNumber`, `PlayListButton` | `section(..)` (`section_with(.., SectionLook::artist())` for a page's override, `section_head` above a virtual list), `list_page_header(app, t, key, ListHeader { .. })` (`kind_el` / `title_el` for rich slots), `meta_line`, `page_header(t, title, count, actions)`, `list_meta`, `data_state(t, data, error, loading_label, empty, content)`, `ios_spinner(t, key, size, label)`, `animated_value(app, cx, key, value)` with `format_count`, `play_list_button`. |
+| `ui::native` | Chromium's `<input type="radio">` / `checkbox`, `RadioCardOption` | `radio(t, checked)`, `checkbox(t, checked)` (13 px), `radio_card(t, key, checked, label, description, on_pick)`; `ring(t)` / `field(t)` are Chromium's control colours. |
+| `pages::auth::card` | `CenteredCard` | `centered_card(t, h, title, intro, body)`, with `field`, `error`, `intro`, `note` boxed to its width and `page_scroller`. |
+| `ui::chart` | `ActivityChart` | `activity_chart_sized(t, key, &replay.activity, replay.bucket, h)` (140 is `.activity-chart`'s height; Home's panel fills its room). |
+| `ui::kit`, `ui::forms` | `SegmentedControl`, `Select`, `SearchInput`, `TextInput`, `SettingRow` | `segmented` (`segmented_counted` for a count after a label; `segment_indicator(t, key)` is the travelling pill for a hand-built group, `segment_lit` the lit look on a pill of one's own), `select(..)` (its listbox opens on the current option; `OpenSelect::new`; `SelectVariant::Native` is a `<select class="input">`), `search_input(t, key, edit, placeholder, width, \|f\| f.on_edit(..))`, `input_box(t, key, focused, text_field(t, key, edit, style, placeholder))` for an `.input` of one's own (`ui::input_with` is the plain one; `focus_rings`; `Bind`), `setting_row(t, label, Some(Desc::Text(..)), control, below, error, last)` (`setting_row_in` with a text width), `setting_select` for its `<Select variant="minimal">`; `kit::surface(t, pad)` is `.surface`, `toolbar_group(t, key, children)` `.toolbar-group`. |
+| `resource` | `useApiResource` | `Res<T>` in page state (data, error, loading); `resource::load(app, \|a\| Some(&mut a.pages.x.res), fetch, fallback, then)` (only the latest load lands), `res.update(f)` (`update`: loads out then don't land), `res.set(data)`, `res.started()`. `app.playlists` is one (`usePlaylists`). |
+| `pages::library::paging` | `usePaginatedList`, `LoadMoreSentinel` | `Paged<T>` in page state, `reload(app, slot, resource, fetch, ..)` / `load_more` / `revalidate` through a `Slot` and a `Fetch`, `sentinel(..)` at the list's end. |
 
 Text boxes: Rune rounds a text's height up to whole pixels (17.4 → 18), which adds up down a
 column of lines (a header's kind, title and meta). Wrap a line in `ui::exact(text, lh)` to keep
 the browser's fractional height (add `.shrink()` where it may truncate in a row); wrapped text
-takes `ui::css_text_h(s, style, Some(width))` when its width is known, else
-`ui::snug_lines(key, text, lh)`. `ui::balanced_width` is `text-wrap: balance`; `ui::text_end`
-puts right-aligned text on its box's edge.
+takes `ui::css_text_h(s, style, Some(width))` when its width is known (`css_text_h_with` for
+`wrap_anywhere`, `css_lines` for the line count), else `ui::snug_lines(key, text, lh)`.
+`ui::ch(n, style)` is CSS `ch`; `ui::skeleton_line(t, size, lh, frac)` is `.skeleton-text`
+(`skeleton_line_w` for a fixed width). Before a page's first layout, `shell::content_estimate(app, t,
+window_w)` is its width (less its own padding) as the shell divides the window.
+`ui::balanced_width` is `text-wrap: balance`; `ui::text_end` puts right-aligned text on its
+box's edge (`nudge_end` / `nudge_centre` for a text element already built).
 
 The library changed (an upload, an edit, a delete, a rescan): call `pages::library_changed(app)`
-(`libraryChanged.emit()`); it fires `core::events::LIBRARY_CHANGED` and the open lists reload.
+(`libraryChanged.emit()`); the open lists reload.
 
 Reference scenes for interactions use `act` in `scenes.ref.ts` (`keepPointer` for hover) and a
 script in `tools/reference/scripts/` on the Rune side:

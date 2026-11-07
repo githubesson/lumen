@@ -4,7 +4,7 @@
 //! lists hidden panels, Add panel, Reset and Done. Move, then Swap here on
 //! another panel, does the same as a drag, from the keyboard.
 
-use rune::{Color, Cursor, El, Key, KeyEvent, Phase, Tx, col, el, row, text};
+use rune::{Cursor, El, Key, KeyEvent, Phase, Tx, col, el, row, text};
 
 use crate::app::App;
 use crate::ui::tooltip::TipExt;
@@ -20,6 +20,7 @@ use super::kinds::{PanelKind, period_sub};
 use super::logic::Period;
 use super::Model;
 use super::board::lh;
+use crate::ui::ShadowMd;
 
 /// The open dialog: Add panel, a panel's settings (and the panel next to
 /// it, for focus if it's removed), or Reset's confirmation.
@@ -68,7 +69,7 @@ pub fn save(app: &mut App, next: &HomeArrangement) {
 }
 
 fn title_of(app: &App, p: &HomePanel) -> String {
-    panel_title(p, app.playlists.as_deref())
+    panel_title(p, app.playlists.data.as_deref())
 }
 
 /// A panel's name for screen readers and announcements: with its period,
@@ -289,7 +290,6 @@ fn label_card(app: &App, t: &Theme, m: &Model, panel: &HomePanel, next: Option<S
         Some(_) => "target",
         None => "idle",
     };
-    let a = t.c.shadow_md_alpha;
     let mut card = crate::ui::css_border(col(), 1.0, t.c.border, t.radius_lg())
         .key(format!("slot-{id}-label"))
         .items_center()
@@ -298,8 +298,7 @@ fn label_card(app: &App, t: &Theme, m: &Model, panel: &HomePanel, next: Option<S
         .py(13.0)
         .radius(t.radius_lg())
         .fill(t.c.card)
-        .box_shadow(rune::Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(rune::Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .shadow_md(t)
         .child(ico(&i::GRIP_VERTICAL, 16.0, t.c.muted_foreground))
         .child(lh(text(title).font(font(16.0, 600.0)).color(t.c.card_foreground).wrap_anywhere(), 23.2));
     if panel.kind.info().period {
@@ -417,7 +416,7 @@ pub fn bar(app: &App, t: &Theme, m: &Model, width: f32) -> El {
     place(2, actions_w, &mut lines);
 
     let text_block = |w: f32| {
-        let hint_h = (rune::text::measure(&hint, &[], font(13.0, 400.0), Some(w)).1 / 18.85).round().max(1.0) * 18.85;
+        let hint_h = crate::ui::css_text_h(&hint, font(13.0, 400.0), Some(w));
         col()
             .grow(1.0)
             .min_w(0.0)
@@ -461,7 +460,6 @@ pub fn bar(app: &App, t: &Theme, m: &Model, width: f32) -> El {
             .child(Btn::new("board-done", "Done").small().primary().icon(&i::CHECK).build(t).on_press(done))
     };
 
-    let a = t.c.shadow_md_alpha;
     let r = t.radius_xl();
     let mut b = crate::ui::css_border(col(), 1.0, t.c.border, r)
         .key("board-editbar")
@@ -472,8 +470,7 @@ pub fn bar(app: &App, t: &Theme, m: &Model, width: f32) -> El {
         .py(13.0)
         .radius(r)
         .fill(t.c.card)
-        .box_shadow(rune::Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(rune::Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .shadow_md(t)
         .sticky_top(0.0)
         .role("region")
         .label("Customize Home");

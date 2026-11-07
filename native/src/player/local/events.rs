@@ -132,14 +132,16 @@ impl LocalPlayer {
         self.sync_listened_time();
         let now = self.adapter.current_time();
         let d = self.adapter.duration();
-        let to_prepare = self.next_track_to_prepare().cloned();
-        if let Some(next) = &to_prepare
+        // The next entry's place: nothing below changes the queue.
+        let next = self.next_to_prepare();
+        if let Some(i) = next
             && d > 0.0
             && now / d >= NEXT_TRACK_PREPARE_RATIO
-            && self.prepared_next.as_ref().map(|p| &p.0) != Some(&next.id)
+            && self.prepared_next.as_ref().map(|p| &p.0) != Some(&self.queue[i].id)
         {
-            let uri = self.stream_url(&next.id);
-            self.prepared_next = Some((next.id.clone(), uri.clone()));
+            let id = self.queue[i].id.clone();
+            let uri = self.stream_url(&id);
+            self.prepared_next = Some((id, uri.clone()));
             self.adapter.prepare_next(&uri);
         }
         if let Some(cur) = &self.current
@@ -167,7 +169,7 @@ impl LocalPlayer {
         // ends with it. A short next song fades in over half its length at most.
         let fade = self.crossfade_seconds;
         let remaining = d - now;
-        if let (Some(cur), Some(next)) = (&self.current, &to_prepare) {
+        if let (Some(cur), Some(next)) = (&self.current, next.map(|i| &self.queue[i])) {
             let next_seconds = next.duration_ms as f64 / 1000.0;
             let fade_length = if next_seconds > 0.0 { fade.min(next_seconds / 2.0) } else { fade };
             if fade > 0.0

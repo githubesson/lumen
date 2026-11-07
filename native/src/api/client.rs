@@ -9,8 +9,8 @@
 //! rejects with 401 marks the session dead unless its route says otherwise
 //! ([`Behavior::notify`]). The app observes that through
 //! [`Client::on_unauthorized`] (a callback on the worker thread, e.g. one that
-//! queues a sign-out through `app.net.sender()`) or by polling
-//! [`Client::take_unauthorized`]. A request sent before the session changed
+//! queues a sign-out through `app.net.sender()`); tests poll
+//! `Client::take_unauthorized`. A request sent before the session changed
 //! ([`Client::advance_auth_generation`], on login and logout) never signs the
 //! new session out.
 
@@ -69,6 +69,7 @@ impl ApiError {
     pub fn is_unauthorized(&self) -> bool {
         self.status == 401 && self.is_api_error()
     }
+    #[cfg(test)]
     pub fn is_aborted(&self) -> bool {
         self.kind == ErrorKind::Aborted
     }
@@ -100,10 +101,10 @@ impl std::error::Error for ApiError {}
 pub type ApiResult<T> = Result<T, ApiError>;
 
 /// `errorMessage`: the server's message for an API error, else `fallback`,
-/// so raw network and parse errors never reach the UI. An empty message
-/// gets the fallback too.
+/// so raw network and parse errors never reach the UI. An empty (or blank)
+/// message gets the fallback too.
 pub fn error_message(err: &ApiError, fallback: &str) -> String {
-    if err.is_api_error() && !err.message.is_empty() { err.message.clone() } else { fallback.to_string() }
+    if err.is_api_error() && !err.message.trim().is_empty() { err.message.clone() } else { fallback.to_string() }
 }
 
 /// What a successful request returns before decoding.
@@ -143,8 +144,6 @@ pub type Progress = Arc<dyn Fn(u64, u64) + Send + Sync>;
 pub enum Body {
     None,
     Json(serde_json::Value),
-    /// A ready multipart body and its boundary.
-    Multipart { boundary: String, bytes: Vec<u8> },
     /// A body read as it is sent (multipart uploads of files on disk), with
     /// its exact length.
     Stream { content_type: String, len: u64, reader: Box<dyn Read + Send> },
@@ -198,7 +197,9 @@ struct Inner {
     base: String,
     agent: ureq::Agent,
     jar_path: Option<PathBuf>,
-    jar_lock: Mutex<()>,
+    /// The jar as last written to `jar_path` (or loaded from it): a response
+    /// that left the cookies alone writes nothing.
+    saved_jar: Mutex<Vec<u8>>,
     auth_generation: AtomicU64,
     unauthorized: AtomicBool,
     on_unauthorized: Mutex<Option<UnauthorizedHandler>>,
@@ -210,15 +211,13 @@ impl Client {
     /// A client for `base` (`https://host`, no trailing slash needed). The
     /// cookie jar lives at `jar_path` when given.
     pub fn new(base: &str, jar_path: Option<PathBuf>) -> Client {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
+        let agent: ureq::Agent = crate::net::agent_config()
             // ureq keeps 3 idle connections a host by default: with the
             // cover workers and API requests running at once, the rest
             // closed after each request and the next paid a new TCP and TLS
             // handshake. Keep one for each.
             .max_idle_connections(32)
             .max_idle_connections_per_host(16)
-            .user_agent(concat!("Lumen-Desktop/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
         if let Some(path) = &jar_path
@@ -228,12 +227,13 @@ impl Client {
             let _ = jar.load_json(BufReader::new(file));
             jar.release();
         }
+        let saved_jar = Mutex::new(jar_json(&agent).unwrap_or_default());
         Client {
             inner: Arc::new(Inner {
                 base: base.trim_end_matches('/').to_string(),
                 agent,
                 jar_path,
-                jar_lock: Mutex::new(()),
+                saved_jar,
                 auth_generation: AtomicU64::new(0),
                 unauthorized: AtomicBool::new(false),
                 on_unauthorized: Mutex::new(None),
@@ -276,7 +276,7 @@ impl Client {
         let mut jar = self.inner.agent.cookie_jar_lock();
         jar.clear();
         jar.release();
-        self.save_jar();
+        self.save_jar(true);
     }
 
     /// Call `handler` (on the worker thread that saw it) whenever a request
@@ -286,6 +286,7 @@ impl Client {
     }
 
     /// Whether a request found the session rejected since the last call.
+    #[cfg(test)]
     pub fn take_unauthorized(&self) -> bool {
         self.inner.unauthorized.swap(false, Ordering::AcqRel)
     }
@@ -328,7 +329,7 @@ impl Client {
         let url = self.url(path);
         let agent = &self.inner.agent;
         let timeout = match body {
-            Body::Multipart { .. } | Body::Stream { .. } => None,
+            Body::Stream { .. } => None,
             _ => behavior.timeout,
         };
         let config = |b: ureq::RequestBuilder<_>| b.config().timeout_global(timeout).build();
@@ -368,9 +369,6 @@ impl Client {
                     Body::Json(v) => {
                         r.header("Content-Type", "application/json").send(v.to_string().into_bytes())
                     }
-                    Body::Multipart { boundary, bytes } => r
-                        .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
-                        .send(bytes),
                     Body::Stream { content_type, len, reader } => r
                         .header("Content-Type", content_type)
                         .header("Content-Length", len.to_string())
@@ -380,7 +378,7 @@ impl Client {
         }
         .map_err(|e| transport_error(&e))?;
 
-        self.save_jar();
+        self.save_jar(false);
         let status = response.status().as_u16();
         let header = |name: &str| {
             response.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string)
@@ -505,23 +503,31 @@ impl Client {
         self.send_with("GET", url, Body::None, Some(REQUEST_TIMEOUT), &[("Accept", "*/*")])
     }
 
-    fn save_jar(&self) {
+    /// Write the jar to disk when it changed since the last write (a
+    /// `Set-Cookie`, here or on a redirect on the way, or a cookie expiring),
+    /// or always when `force`d. Cover fetches by the dozen change nothing,
+    /// so they write nothing.
+    fn save_jar(&self, force: bool) {
         let Some(path) = &self.inner.jar_path else { return };
-        let _guard = self.inner.jar_lock.lock();
-        let jar = self.inner.agent.cookie_jar_lock();
-        let mut out = Vec::new();
-        let ok = jar.save_json(&mut out).is_ok();
-        jar.release();
-        if ok {
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            let tmp = path.with_extension("tmp");
-            if std::fs::write(&tmp, &out).is_ok() {
-                let _ = std::fs::rename(&tmp, path);
-            }
+        // Held while reading the jar too, so an older state never lands last.
+        let mut saved = self.inner.saved_jar.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(out) = jar_json(&self.inner.agent) else { return };
+        if !force && *saved == out {
+            return;
+        }
+        if crate::config::write_atomic(path, &out).is_ok() {
+            *saved = out;
         }
     }
+}
+
+/// The agent's cookie jar as `session.json` holds it.
+fn jar_json(agent: &ureq::Agent) -> Option<Vec<u8>> {
+    let jar = agent.cookie_jar_lock();
+    let mut out = Vec::new();
+    let ok = jar.save_json(&mut out).is_ok();
+    jar.release();
+    ok.then_some(out)
 }
 
 fn is_absolute(url: &str) -> bool {

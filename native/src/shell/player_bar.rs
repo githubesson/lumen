@@ -6,7 +6,6 @@
 
 use rune::{Cursor, Cx, El, Icon, col, el, row, text};
 
-use crate::api::media;
 use crate::app::App;
 use crate::player::Repeat;
 use crate::shell::Bp;
@@ -49,16 +48,12 @@ pub fn t_btn_with(t: &Theme, key: &str, glyph: El, active: bool, disabled: bool)
     }
 }
 
-/// `SeekBar` (`.bar`, `.bar-fill`, `.bar-thumb`): a 4 px track with the
-/// played part in the primary colour, a 24 px tall hit area that takes no
-/// layout space, and a 12 px thumb shown on hover and while dragging (grown
-/// 1.25×). Seeks commit on release unless `live` (the volume follows the
-/// pointer). Arrows step 5% from `current`, Home and End go to the ends.
-pub fn seek_bar(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &str, live: bool, on_seek: fn(&mut App, f32)) -> El {
-    seek_bar_h(app, t, key, current, label, live, 4.0, on_seek)
-}
-
-/// [`seek_bar`] with a track `h` px tall (the mini player's volume is 3).
+/// `SeekBar` (`.bar`, `.bar-fill`, `.bar-thumb`): an `h` px track (4, the
+/// mini player's volume 3) with the played part in the primary colour, a
+/// 24 px tall hit area that takes no layout space, and a 12 px thumb shown
+/// on hover and while dragging (grown 1.25×). Seeks commit on release
+/// unless `live` (the volume follows the pointer). Arrows step 5% from
+/// `current`, Home and End go to the ends.
 #[allow(clippy::too_many_arguments)]
 pub fn seek_bar_h(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &str, live: bool, h: f32, on_seek: fn(&mut App, f32)) -> El {
     bar_with(app, t, key, current, label, live, h, on_seek, false)
@@ -144,7 +139,7 @@ fn bar_with(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &s
 /// The now-playing cover (`.np-art`): the track's, or the muted placeholder.
 pub fn np_art(app: &App, t: &Theme, size: f32, radius: f32) -> El {
     let track = app.player.current();
-    let cover = track.map(|tr| media::track_cover(&tr.id, tr.album_id.as_deref(), tr.cover_url.as_deref(), None));
+    let cover = track.map(|tr| tr.cover_at(None));
     let letter = track
         .map(|tr| crate::format::display_text(tr.album_title.as_deref().filter(|s| !s.is_empty()).or(Some(&tr.title)), "·"))
         .unwrap_or_else(|| "·".into());
@@ -168,8 +163,8 @@ pub fn np_context(app: &App, e: El) -> El {
     match d.current {
         Some(track) if !d.remote => {
             let track = track.clone();
-            e.on_secondary_press(move |app: &mut App, at, tx: &mut rune::Tx| {
-                adapters::open_track_menu(app, tx, &track, at, adapters::MenuContext::default())
+            e.on_secondary_press(move |app: &mut App, at, _tx: &mut rune::Tx| {
+                adapters::open_track_menu(app, &track, at, adapters::MenuContext::default())
             })
         }
         _ => e,
@@ -264,13 +259,8 @@ pub fn progress_value(app: &App) -> f32 {
     if duration > 0.0 { (p.position / duration) as f32 } else { 0.0 }
 }
 
-/// `.progress-time`: a tabular 12 px time, at least `min_w` wide.
-pub fn time_label(t: &Theme, key: &str, s: String, min_w: f32, align: rune::Align) -> El {
-    let label = text(s.clone()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground);
-    time_box(key, label, &s, min_w, align)
-}
-
-/// [`time_label`] bound to a live clock label.
+/// `.progress-time`: a tabular 12 px time, at least `min_w` wide, bound to a
+/// live clock label.
 pub fn live_time_label(t: &Theme, key: &str, live: &rune::LiveText, min_w: f32, align: rune::Align) -> El {
     let (label, s) = pui::progress::time_text(t, live);
     time_box(key, label, &s, min_w, align)
@@ -282,8 +272,8 @@ fn time_box(key: &str, label: El, s: &str, min_w: f32, align: rune::Align) -> El
     let s = s.to_string();
     match align {
         rune::Align::Start => e.child(label),
-        rune::Align::End => e.justify_end().child(pui::nudge_end(label, &s, style)),
-        _ => e.justify_center().child(pui::nudge_centre(label, &s, style)),
+        rune::Align::End => e.justify_end().child(ui::nudge_end(label, &s, style)),
+        _ => e.justify_center().child(ui::nudge_centre(label, &s, style)),
     }
 }
 
@@ -325,7 +315,7 @@ pub fn favorite_button(app: &App, t: &Theme, icon_size: f32, btn: f32) -> El {
         .key(format!("favorite-heart-{pops}"))
         .transition(rune::Transition::none());
     if pops > 0 && fav {
-        heart = heart.looping(rune::LoopSpec::sequence(rune::Sequence::new(&HEART_POP)));
+        heart = heart.looping(rune::LoopSpec::sequence(rune::Sequence::new(&ui::track_row::HEART_POP)));
     }
     let disabled = d.current.is_none() || d.remote;
     let mut b = util_disabled(app, t_btn_with(t, "favorite", heart, fav, disabled), disabled)
@@ -337,13 +327,6 @@ pub fn favorite_button(app: &App, t: &Theme, icon_size: f32, btn: f32) -> El {
     }
     b
 }
-
-/// `heart-pop`: 1 → 1.25 at 40% → 1, 240 ms ease-out.
-static HEART_POP: [rune::Beat; 3] = [
-    rune::Beat::new(0.0),
-    rune::Beat::new(0.096).scale(1.25).easing(rune_motion::Easing::EASE_OUT),
-    rune::Beat::new(0.24).easing(rune_motion::Easing::EASE_OUT),
-];
 
 /// The lyrics button: the column's toggle, or the mini player's lyrics panel's.
 pub fn lyrics_button(app: &App, t: &Theme) -> El {
@@ -490,7 +473,7 @@ pub fn view(app: &App, t: &Theme, bp: Bp, cx: &mut Cx<App>) -> El {
     if let Some(notice) = devices::remote_indicator(app, t, false) {
         shell = shell.child(notice);
     }
-    for pop in [queue::popover(app, t, cx), devices::popover(app, t, cx), error::popover(app, t, cx)].into_iter().flatten() {
+    for pop in [queue::popover(app, t, cx), devices::popover(app, t), error::popover(app, t, cx)].into_iter().flatten() {
         shell = shell.child(pop);
     }
     shell

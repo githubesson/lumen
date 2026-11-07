@@ -3,9 +3,10 @@
 
 use rune::{Cx, El, Span, col};
 
-use super::requests::{self as rq, MusicRoot};
 use super::{call, library, parts};
+use crate::api::admin::{self as api, MusicRoot};
 use crate::app::App;
+use crate::core::admin::music_roots::{music_root_name, music_root_removal, root_removal_changed_library};
 use crate::theme::Theme;
 use crate::ui::{Btn, font, kit};
 
@@ -47,7 +48,7 @@ fn close(app: &mut App) {
 fn remove(app: &mut App, purge: bool) {
     let s = st(app);
     let Some(root) = s.target.clone() else { return };
-    let can_purge = root.covered_by.as_deref().unwrap_or("").is_empty();
+    let (can_purge, _) = music_root_removal(&root);
     if s.busy.is_some() || (purge && !can_purge) {
         return;
     }
@@ -55,13 +56,13 @@ fn remove(app: &mut App, purge: bool) {
     s.error = None;
     call(
         app,
-        move |c| rq::delete_music_root(c, &root.id, purge),
+        move |c| api::delete_music_root(c, &root.id, purge),
         move |app, r| {
             st(app).busy = None;
             match r {
                 Ok(deleted) => {
                     library::removed(app);
-                    if crate::core::admin::music_roots::root_removal_changed_library(purge, Some(deleted)) {
+                    if root_removal_changed_library(purge, Some(deleted.deleted_tracks)) {
                         crate::pages::library_changed(app);
                     }
                 }
@@ -91,16 +92,16 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         return None;
     }
     let root = s.target.as_ref()?;
-    let covered = root.covered_by.as_deref().filter(|c| !c.is_empty());
+    let (_, covered) = music_root_removal(root);
     let busy = s.busy.is_some();
-    let window = cx.layout_size("app").unwrap_or([1280.0, 820.0]);
+    let window = crate::shell::window_size(cx);
     let inner = (window[0] - 32.0).min(512.0) - 34.0;
     let mut body = col().padding(16.0).gap(10.0);
     if let Some(e) = &s.error {
         body = body.child(parts::banner(t, e));
     }
     body = body.child(para(t, &[("Lumen stops watching ", false), (&root.path, true), (" as its own folder. Nothing on disk is deleted.", false)], false, inner));
-    body = body.child(match covered {
+    body = body.child(match covered.as_deref() {
         Some(c) => para(t, &[("It's inside ", false), (c, true), (", which is still watched, so its tracks stay in your library.", false)], true, inner),
         None => para(
             t,
@@ -127,7 +128,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     }
     Some(
         kit::Dialog::new("admin-remove-dialog", body)
-            .title(format!("Remove {}?", library::root_name(root)))
+            .title(format!("Remove {}?", music_root_name(root)))
             .footer(kit::dialog_footer(t, None, buttons))
             .build(t, window, close),
     )

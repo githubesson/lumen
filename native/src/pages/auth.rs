@@ -82,20 +82,19 @@ pub fn enter(app: &mut App, loc: &Location) {
 
 /// `/reset-password` inside the shell's content.
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
-    force_reset::view(app, t, window_h(cx, "app"))
+    force_reset::view(app, t, window_h(cx))
 }
 
-/// The window's height (`100dvh`), from the last layout of `root` (the
-/// signed-out root, or the shell's `app`).
-pub fn window_h(cx: &Cx<App>, root: &str) -> f32 {
-    cx.layout_size(root).map_or(820.0, |s| s[1])
+/// The window's height (`100dvh`).
+pub fn window_h(cx: &Cx<App>) -> f32 {
+    crate::shell::window_size(cx)[1]
 }
 
 /// Every screen outside the shell, with the window's drag strip and its
 /// floating controls (`.root-window-controls`) where `App.tsx` puts them.
 pub fn signed_out(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let gate = gate(app);
-    let h = window_h(cx, "signed-out");
+    let h = window_h(cx);
     let signed_in = app.me().is_some();
     let body = match gate {
         Gate::Welcome { change } => welcome::view(app, t, h, change),

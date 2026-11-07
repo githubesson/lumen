@@ -3,6 +3,8 @@
 //! track edits and the page's actions live here; the header, panels and
 //! dialogs in their own modules.
 
+use std::collections::HashSet;
+
 use rune::{Cx, El, Key, KeyEvent, Tx, col};
 
 use crate::api::{ApiResult, Playlist, PlaylistCover, PlaylistTrackEntry, TrackListItem, Visibility, media};
@@ -47,7 +49,19 @@ pub struct Detail {
     /// Deleted, or access lost: nothing cached or listed stands in for it.
     pub gone: bool,
     pub loaded: Option<Playlist>,
+    /// The rows; set through [`Detail::set_tracks`], which keeps what's
+    /// worked out from them.
     pub tracks: Option<Vec<PlaylistTrackEntry>>,
+    /// Bumped by each [`Detail::set_tracks`]: [`sync`] compares it rather
+    /// than the rows.
+    tracks_rev: u64,
+    /// From the rows: their total length, the header art's track (the
+    /// saved order's, so re-sorting doesn't swap the cover), who added them
+    /// (each once) and their track ids (Add tracks greys those out).
+    pub total_ms: u64,
+    pub first_cover: Option<TrackListItem>,
+    pub adders: Vec<String>,
+    pub ids: HashSet<String>,
     /// None until the server has answered, so cached rows don't count as queued.
     pub download: Option<Download>,
     pub collabs: Vec<Collaborator>,
@@ -66,15 +80,19 @@ pub struct Detail {
     poll: u64,
     pub table: tracks::State,
     /// What the table shows, kept by [`sync`]: `tracks` sorted for display
-    /// then filtered by the search, as indices into `tracks` and as queue
-    /// items (the selection's rows), and the whole sorted play queue.
+    /// (`order`, the play queue's order) then filtered by the search, as
+    /// indices into `tracks` and as queue items (the selection's rows), and
+    /// the whole sorted play queue.
+    order: Vec<usize>,
     pub shown_idx: Vec<usize>,
     pub shown_items: Vec<TrackListItem>,
     pub queue_items: Vec<TrackListItem>,
     /// Bumped when `shown_idx` changes (the virtual rows' version).
     pub shown_rev: u64,
-    /// The inputs `shown_*` were made from.
-    shown_of: Option<(Option<Vec<PlaylistTrackEntry>>, SortKey, bool, String)>,
+    /// The rows' revision and sort `order` was made from, and the search
+    /// `shown_*` were.
+    sorted_of: Option<(u64, SortKey, bool)>,
+    shown_query: String,
     pub settings: settings::State,
     pub collab: collaborators::State,
     pub add: add_tracks::State,
@@ -84,12 +102,18 @@ impl Detail {
     fn new(id: &str, mount: u64, cached: Option<Cached>, listed: Option<&Playlist>) -> Detail {
         let shown = cached.as_ref().map(|c| &c.playlist).or(listed);
         let settings = settings::State::new(shown);
-        Detail {
+        let rows = cached.as_ref().map(|c| c.tracks.clone());
+        let mut d = Detail {
             id: id.to_string(),
             mount,
             gone: false,
             loaded: cached.as_ref().map(|c| c.playlist.clone()),
-            tracks: cached.as_ref().map(|c| c.tracks.clone()),
+            tracks: None,
+            tracks_rev: 0,
+            total_ms: 0,
+            first_cover: None,
+            adders: Vec::new(),
+            ids: HashSet::new(),
             download: None,
             collabs: cached.map(|c| c.collabs).unwrap_or_default(),
             error: None,
@@ -103,31 +127,36 @@ impl Detail {
             etag: None,
             poll: 0,
             table: tracks::State::default(),
+            order: Vec::new(),
             shown_idx: Vec::new(),
             shown_items: Vec::new(),
             queue_items: Vec::new(),
             shown_rev: 0,
-            shown_of: None,
+            sorted_of: None,
+            shown_query: String::new(),
             settings,
             collab: collaborators::State::default(),
             add: add_tracks::State::default(),
-        }
+        };
+        d.set_tracks(rows);
+        d
     }
 
-    /// The rows as the table shows them, by index into `tracks`: sorted,
-    /// then filtered by `q` (trimmed and lowercased).
-    fn compute_shown(&self, q: &str) -> Vec<usize> {
-        let Some(rows) = &self.tracks else { return Vec::new() };
-        let order = logic::sort_for_display(rows, self.sort, self.sort_asc);
-        if q.is_empty() {
-            return order;
+    /// The rows from now on (None: not known yet), and what's worked out
+    /// from them once rather than each frame.
+    pub(super) fn set_tracks(&mut self, rows: Option<Vec<PlaylistTrackEntry>>) {
+        let list = rows.as_deref().unwrap_or(&[]);
+        self.total_ms = list.iter().map(|r| r.duration_ms).sum();
+        self.first_cover = list.iter().find(|t| t.album_id.is_some()).or(list.first()).map(|e| e.as_track());
+        self.adders.clear();
+        for by in list.iter().filter_map(|t| t.added_by_id.as_deref()) {
+            if !self.adders.iter().any(|a| a == by) {
+                self.adders.push(by.to_string());
+            }
         }
-        order.into_iter().filter(|&i| logic::search_key(&rows[i]).contains(q)).collect()
-    }
-
-    /// The play queue, in the order the table sorts it.
-    pub fn queue(&self) -> Vec<TrackListItem> {
-        self.queue_items.clone()
+        self.ids = list.iter().map(|e| e.track_id.clone()).collect();
+        self.tracks = rows;
+        self.tracks_rev += 1;
     }
 }
 
@@ -145,28 +174,25 @@ pub fn queue_source(app: &App) -> &[TrackListItem] {
 }
 
 /// Before each frame: when the rows, the sort or the search changed,
-/// work out again what the table shows. Returns whether it did.
+/// work out again what the table shows (sorting only when the rows or the
+/// sort did). Returns whether it did.
 pub fn sync(app: &mut App) -> bool {
     let q = app.pages.playlists.fields.search.text.trim().to_lowercase();
     let Some(d) = app.pages.playlists.detail.as_mut() else { return false };
-    if let Some((tracks, sort, asc, query)) = &d.shown_of
-        && *sort == d.sort
-        && *asc == d.sort_asc
-        && *query == q
-        && *tracks == d.tracks
-    {
+    let sorted = (d.tracks_rev, d.sort, d.sort_asc);
+    let rows = d.tracks.as_deref().unwrap_or(&[]);
+    if d.sorted_of != Some(sorted) {
+        d.order = logic::sort_for_display(rows, d.sort, d.sort_asc);
+        d.queue_items = d.order.iter().map(|&i| rows[i].as_track()).collect();
+        d.sorted_of = Some(sorted);
+    } else if d.shown_query == q {
         return false;
     }
-    let idx = d.compute_shown(&q);
-    let rows = d.tracks.as_deref().unwrap_or(&[]);
-    d.shown_items = idx.iter().map(|&i| rows[i].as_track()).collect();
-    d.queue_items = match &d.tracks {
-        Some(rows) => logic::sort_for_display(rows, d.sort, d.sort_asc).into_iter().map(|i| rows[i].as_track()).collect(),
-        None => Vec::new(),
-    };
-    d.shown_idx = idx;
+    // The rows as the table shows them: sorted, then filtered by the search.
+    d.shown_idx = if q.is_empty() { d.order.clone() } else { d.order.iter().copied().filter(|&i| logic::search_key(&rows[i]).contains(&q)).collect() };
+    d.shown_items = d.shown_idx.iter().map(|&i| rows[i].as_track()).collect();
     d.shown_rev += 1;
-    d.shown_of = Some((d.tracks.clone(), d.sort, d.sort_asc, q));
+    d.shown_query = q;
     true
 }
 
@@ -200,7 +226,7 @@ pub fn listed<'a>(app: &'a App, d: &Detail) -> Option<&'a Playlist> {
     if d.gone {
         return None;
     }
-    app.playlists.as_ref()?.iter().find(|p| p.id == d.id)
+    app.playlists.data.as_ref()?.iter().find(|p| p.id == d.id)
 }
 
 /// What the page shows: the loaded playlist, else the sidebar's row.
@@ -234,12 +260,6 @@ fn same_listing(row: &Playlist, p: &Playlist, cover: &Option<PlaylistCover>) -> 
             == cover.as_ref().map(|c| (&c.track_id, &c.album_id, &c.cover_url))
 }
 
-/// Header art follows the saved order, so re-sorting doesn't swap the cover.
-pub fn first_cover_track(d: &Detail) -> Option<TrackListItem> {
-    let rows = d.tracks.as_ref()?;
-    rows.iter().find(|t| t.album_id.is_some()).or(rows.first()).map(|e| e.as_track())
-}
-
 pub(super) fn write_cache(app: &mut App) {
     let Some(d) = detail(app) else { return };
     if let (Some(p), Some(t)) = (&d.loaded, &d.tracks) {
@@ -265,7 +285,7 @@ pub fn enter(app: &mut App, id: &str) {
     pages.mounts += 1;
     let mount = pages.mounts;
     let cached = pages.cache.get(id).cloned();
-    let listed = app.playlists.as_ref().and_then(|l| l.iter().find(|p| p.id == id));
+    let listed = app.playlists.data.as_ref().and_then(|l| l.iter().find(|p| p.id == id));
     let d = Detail::new(id, mount, cached, listed);
     let fields = &mut app.pages.playlists.fields;
     *fields = super::Fields::default();
@@ -331,7 +351,7 @@ fn loaded(
             d.loaded = Some(p.clone());
             if !busy {
                 d.etag = t.etag.clone();
-                d.tracks = Some(t.data.as_ref().map(|x| x.tracks.clone()).unwrap_or_default());
+                d.set_tracks(Some(t.data.as_ref().map(|x| x.tracks.clone()).unwrap_or_default()));
                 if let Some(x) = &t.data {
                     d.download = Some(Download { queued: x.tidal_queued, retry_at: x.tidal_retry_at.clone() });
                 }
@@ -366,7 +386,7 @@ fn loaded(
             let id = d.id.clone();
             d.gone = true;
             d.loaded = None;
-            d.tracks = None;
+            d.set_tracks(None);
             d.error = Some("This playlist was deleted, or you no longer have access to it.".into());
             app.pages.playlists.cache.remove(&id);
             // Take it out of the sidebar too.
@@ -443,7 +463,7 @@ fn refresh(app: &mut App, mount: u64, token: u64) {
                 d.etag = r.etag;
                 if let Some(x) = r.data {
                     d.download = Some(Download { queued: x.tidal_queued, retry_at: x.tidal_retry_at });
-                    d.tracks = Some(x.tracks);
+                    d.set_tracks(Some(x.tracks));
                 }
                 write_cache(app);
             }
@@ -613,7 +633,7 @@ pub fn subject(app: &App) -> Option<Subject> {
     let p = playlist(app, d)?;
     let cover = match p.custom_cover.as_deref().filter(|v| !v.is_empty()) {
         Some(v) => Some(media::playlist_cover_path(&p.id, v, Some(96))),
-        None => first_cover_track(d).map(|t| media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), Some(96))),
+        None => d.first_cover.as_ref().map(|t| t.cover_at(Some(96))),
     };
     let detail: Vec<String> =
         d.tracks.as_ref().map(|t| pluralize(t.len(), "track")).into_iter().chain([logic::subtitle(p)]).collect();
@@ -694,7 +714,8 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
             playlist: p,
             perms,
             tracks: d.tracks.as_deref(),
-            first_cover: first_cover_track(d),
+            total_ms: d.total_ms,
+            first_cover: d.first_cover.as_ref(),
             queued: if auto { queued } else { None },
             saving_cover: d.saving_cover,
         },

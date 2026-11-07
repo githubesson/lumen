@@ -93,32 +93,12 @@ pub fn export_url(client: &Client, input: &str) -> Result<String, String> {
     Ok(client.url(trimmed))
 }
 
-/// `sanitizeExportFilename`.
+/// `sanitizeExportFilename`: `sanitizeFilename` of the name's last path
+/// part, "track" when nothing is left.
 pub fn sanitize_filename(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    let replaced: String = base.chars().map(|c| if "<>:\"/\\|?*".contains(c) || (c as u32) < 0x20 { '_' } else { c }).collect();
-    let mut collapsed = String::with_capacity(replaced.len());
-    let mut space = false;
-    for c in replaced.chars() {
-        if c.is_whitespace() {
-            if !space {
-                collapsed.push(' ');
-            }
-            space = true;
-        } else {
-            collapsed.push(c);
-            space = false;
-        }
-    }
-    let trimmed = collapsed.trim_end_matches(['.', ' ']);
-    // `.slice(0, 180)` in UTF-16 units, without splitting a character.
-    let mut units = 0;
-    let end = trimmed.char_indices().find(|(_, c)| {
-        units += c.len_utf16();
-        units > 180
-    });
-    let cut = end.map_or(trimmed, |(i, _)| &trimmed[..i]);
-    if cut.is_empty() { "track".into() } else { cut.to_string() }
+    let safe = crate::core::audio_format::sanitize_filename(base);
+    if safe.is_empty() { "track".into() } else { safe }
 }
 
 /// `uniqueExportPath`: `name.ext`, else `name (1).ext`, `name (2).ext`…
@@ -141,11 +121,9 @@ pub fn unique_export_path(folder: &Path, filename: &str) -> Result<PathBuf, Stri
 /// `downloadToFile`: follows up to five redirects, sending the cookie only to
 /// the server, and writes `dest` fresh (never over a file that appeared meanwhile).
 fn download_to_file(client: &Client, url: &str, dest: &Path, cookie: Option<&str>) -> Result<(), String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
+    let agent: ureq::Agent = crate::net::agent_config()
         .max_redirects(0)
         .timeout_global(Some(TIMEOUT))
-        .user_agent(super::USER_AGENT)
         .build()
         .into();
     let mut current = url::Url::parse(url).map_err(|e| e.to_string())?;

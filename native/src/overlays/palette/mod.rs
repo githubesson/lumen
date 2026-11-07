@@ -7,49 +7,31 @@
 //! everything else stays in place.
 pub mod score;
 
+use std::cell::RefCell;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
-use rune::{Color, Cursor, Cx, El, Icon, Key, KeyEvent, Shadow, TextEdit, Tx, col, el, row, text};
+use rune::{Cursor, Cx, El, Icon, Key, KeyEvent, TextEdit, Tx, col, el, row, text};
 
+use crate::api::search::{SEARCH_TYPE_OPTIONS, SearchType, search_entity_id};
 use crate::api::{SearchAlbum, SearchArtist, TrackListItem, TrackSource, media};
 use crate::app::App;
+use crate::core::entity_labels::{album_subtitle, artist_subtitle};
 use crate::theme::Theme;
 use crate::ui::kit::{SegSize, scroll_area_fit, segmented_sized};
 use crate::ui::{cover_art, css_border, css_border_bottom, font, ico, icons as i, line, tnum};
+use crate::ui::ShadowMd;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SearchType {
-    #[default]
-    All,
-    Track,
-    Album,
-    Artist,
-}
-
-impl SearchType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SearchType::All => "all",
-            SearchType::Track => "track",
-            SearchType::Album => "album",
-            SearchType::Artist => "artist",
-        }
-    }
-    /// `SEARCH_PLACEHOLDER_NOUN`.
-    fn noun(self) -> &'static str {
-        match self {
-            SearchType::All => "music",
-            SearchType::Track => "songs",
-            SearchType::Album => "albums",
-            SearchType::Artist => "artists",
-        }
+/// `SEARCH_PLACEHOLDER_NOUN`.
+fn noun(kind: SearchType) -> &'static str {
+    match kind {
+        SearchType::All => "music",
+        SearchType::Track => "songs",
+        SearchType::Album => "albums",
+        SearchType::Artist => "artists",
     }
 }
-
-/// `SEARCH_TYPE_OPTIONS`.
-const SEARCH_TYPES: &[(SearchType, &str)] =
-    &[(SearchType::All, "All"), (SearchType::Track, "Songs"), (SearchType::Album, "Albums"), (SearchType::Artist, "Artists")];
 
 #[derive(Default)]
 pub struct State {
@@ -58,16 +40,24 @@ pub struct State {
     pub tracks: Vec<TrackListItem>,
     pub albums: Vec<SearchAlbum>,
     pub artists: Vec<SearchArtist>,
+    /// Bumped as the results above change.
+    results: u64,
     pub loading: bool,
     pub error: Option<String>,
     /// The highlighted item's value; None highlights the first one.
     pub selected: Option<String>,
     /// The newest search; older answers are dropped.
-    latest: Arc<AtomicU64>,
+    latest: u64,
+    /// What [`visible`] made last, and what it made it from.
+    shown: RefCell<Option<(Inputs, Arc<Vec<Group>>)>>,
 }
 
-pub fn is_open(app: &App) -> bool {
-    app.ui.palette_open
+/// Swap in a search's results (or none).
+fn set_results(s: &mut State, tracks: Vec<TrackListItem>, albums: Vec<SearchAlbum>, artists: Vec<SearchArtist>) {
+    s.tracks = tracks;
+    s.albums = albums;
+    s.artists = artists;
+    s.results += 1;
 }
 
 /// Open with a fresh search session and the input focused.
@@ -78,19 +68,17 @@ pub fn open(app: &mut App) {
     s.query = TextEdit::new("");
     s.query.focused = true;
     s.search_type = SearchType::All;
-    s.tracks.clear();
-    s.albums.clear();
-    s.artists.clear();
+    set_results(s, Vec::new(), Vec::new(), Vec::new());
     s.loading = false;
     s.error = None;
     s.selected = None;
-    s.latest.fetch_add(1, Ordering::Relaxed);
+    s.latest += 1;
 }
 
 pub fn close(app: &mut App) {
     app.ui.palette_open = false;
     app.overlays.palette.loading = false;
-    app.overlays.palette.latest.fetch_add(1, Ordering::Relaxed);
+    app.overlays.palette.latest += 1;
 }
 
 /// Ctrl+K.
@@ -111,12 +99,11 @@ pub fn changed(app: &mut App) {
 fn refresh(app: &mut App) {
     let s = &mut app.overlays.palette;
     s.selected = None;
-    let id = s.latest.fetch_add(1, Ordering::Relaxed) + 1;
+    s.latest += 1;
+    let id = s.latest;
     let q = s.query.text.trim().to_string();
     if q.chars().count() < 2 {
-        s.tracks.clear();
-        s.albums.clear();
-        s.artists.clear();
+        set_results(s, Vec::new(), Vec::new(), Vec::new());
         s.error = None;
         s.loading = false;
         return;
@@ -135,43 +122,36 @@ fn refresh(app: &mut App) {
     s.selected = first;
     let kind = s.search_type;
     let limit = if kind == SearchType::All { 8 } else { 20 };
-    let latest = s.latest.clone();
     let Some(client) = app.client.clone() else { return };
-    let wait = !app.net.is_sync();
-    app.net.run(
-        move || {
-            if wait {
-                std::thread::sleep(std::time::Duration::from_millis(160));
-            }
-            if latest.load(Ordering::Relaxed) != id {
-                return None;
-            }
-            Some(crate::api::search::search(&client, &crate::api::search::SearchParams { page: crate::api::PageParams { limit: Some(limit), q: Some(q.clone()), ..Default::default() }, kind: crate::api::search::SearchType::parse(kind.as_str()), sources: None }))
-        },
-        move |app, result| {
-            let s = &mut app.overlays.palette;
-            let Some(result) = result else { return };
-            if s.latest.load(Ordering::Relaxed) != id || !app.ui.palette_open {
-                return;
-            }
-            match result {
-                Ok(r) => {
-                    s.albums = r.albums;
-                    s.artists = r.artists;
-                    s.tracks = r.tracks;
-                    s.error = (!r.warnings.is_empty()).then(|| r.warnings.join(" "));
+    app.net.after(Duration::from_millis(160), move |app| {
+        if app.overlays.palette.latest != id {
+            return;
+        }
+        app.net.run(
+            move || {
+                let page = crate::api::PageParams { limit: Some(limit), q: Some(q), ..Default::default() };
+                crate::api::search::search(&client, &crate::api::search::SearchParams { page, kind: Some(kind), sources: None })
+            },
+            move |app, result| {
+                let s = &mut app.overlays.palette;
+                if s.latest != id || !app.ui.palette_open {
+                    return;
                 }
-                Err(e) => {
-                    // A failed query must not bring back the previous query's results.
-                    s.tracks.clear();
-                    s.albums.clear();
-                    s.artists.clear();
-                    s.error = Some(super::error_message(&e, "Search failed."));
+                match result {
+                    Ok(r) => {
+                        set_results(s, r.tracks, r.albums, r.artists);
+                        s.error = (!r.warnings.is_empty()).then(|| r.warnings.join(" "));
+                    }
+                    Err(e) => {
+                        // A failed query must not bring back the previous query's results.
+                        set_results(s, Vec::new(), Vec::new(), Vec::new());
+                        s.error = Some(super::error_message(&e, "Search failed."));
+                    }
                 }
-            }
-            s.loading = false;
-        },
-    );
+                s.loading = false;
+            },
+        );
+    });
 }
 
 fn pick_type(app: &mut App, kind: SearchType) {
@@ -232,43 +212,42 @@ fn library_href(q: &str, kind: SearchType, rest: &str) -> String {
     format!("/library?q={}&type={}{rest}", urlencoding::encode(q), kind.as_str())
 }
 
-/// `albumSubtitle`: "Artist · 12 tracks · TIDAL".
-fn album_subtitle(a: &SearchAlbum) -> String {
-    let artist = crate::format::display_text(a.album.artist_name.as_deref(), "");
-    let artist = if !artist.is_empty() {
-        artist
-    } else if a.album.is_compilation {
-        "Various Artists".into()
-    } else {
-        "Unknown artist".into()
-    };
-    let mut parts = vec![artist, pluralize(a.album.track_count as u64, "track")];
-    if a.source == TrackSource::Tidal {
-        parts.push("TIDAL".into());
-    }
-    parts.join(" · ")
+/// What the shown items are made from: they're made again only when it changes.
+#[derive(PartialEq)]
+struct Inputs {
+    query: String,
+    kind: SearchType,
+    results: u64,
+    loading: bool,
+    /// The playlists' ids, names and visibility, hashed.
+    playlists: Option<u64>,
+    pending_invites: usize,
+    admin: bool,
+    playing: bool,
+    has_track: bool,
+    dark: bool,
 }
 
-/// `artistSubtitle`.
-fn artist_subtitle(a: &SearchArtist) -> String {
-    let mut parts =
-        vec![if a.source == TrackSource::Tidal { "TIDAL artist".to_string() } else { pluralize(a.artist.track_count as u64, "track") }];
-    if a.artist.album_count > 0 {
-        parts.push(pluralize(a.artist.album_count as u64, "album"));
-    }
-    parts.join(" · ")
-}
-
-pub fn pluralize(n: u64, singular: &str) -> String {
-    format!("{n} {}", if n == 1 { singular.to_string() } else { format!("{singular}s") })
-}
-
-/// `searchEntityID`.
-fn entity_id(id: &str, source: TrackSource, source_id: Option<&str>) -> String {
-    if source == TrackSource::Tidal {
-        source_id.filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(|| id.trim_start_matches("tidal:").to_string())
-    } else {
-        id.to_string()
+fn inputs(app: &App) -> Inputs {
+    let s = &app.overlays.palette;
+    let playlists = app.playlists.data.as_ref().map(|ps| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for p in ps {
+            (&p.id, &p.name, p.visibility == crate::api::Visibility::Collaborative).hash(&mut h);
+        }
+        h.finish()
+    });
+    Inputs {
+        query: s.query.text.clone(),
+        kind: s.search_type,
+        results: s.results,
+        loading: s.loading,
+        playlists,
+        pending_invites: app.pending_invites,
+        admin: app.me().is_some_and(|m| m.is_admin()),
+        playing: app.player.playing,
+        has_track: app.player.has_track(),
+        dark: app.theme().dark(),
     }
 }
 
@@ -286,13 +265,13 @@ fn groups(app: &App) -> Vec<Group> {
             .iter()
             .map(|a| {
                 let tidal = a.source == TrackSource::Tidal;
-                let id = entity_id(&a.album.id, a.source, a.source_id.as_deref());
+                let id = search_entity_id(&a.album.id, Some(a.source), a.source_id.as_deref());
                 let art = media::album_art(&a.album.id, Some(a.album.has_cover), a.cover_url.as_deref(), Some(a.source), Some(64), None);
                 Item {
                     value: format!("album {} {} {}", a.album.id, a.album.title, a.album.artist_name.as_deref().unwrap_or("")),
                     lead: Lead::Cover { url: art, label: a.album.title.clone(), round: false },
                     title: crate::format::display_text(Some(&a.album.title), ""),
-                    sub: Some(album_subtitle(a)),
+                    sub: Some(album_subtitle(a.album.artist_name.as_deref(), a.album.is_compilation, a.album.track_count, Some(a.source), true)),
                     hint: Some("open".into()),
                     disabled: s.loading,
                     act: Act::Go(library_href(
@@ -311,13 +290,13 @@ fn groups(app: &App) -> Vec<Group> {
             .iter()
             .map(|a| {
                 let tidal = a.source == TrackSource::Tidal;
-                let id = entity_id(&a.artist.id, a.source, a.source_id.as_deref());
+                let id = search_entity_id(&a.artist.id, Some(a.source), a.source_id.as_deref());
                 let art = a.cover_url.as_deref().filter(|u| !u.is_empty()).map(|u| media::resolve_cover(u, Some(64)));
                 Item {
                     value: format!("artist {} {}", a.artist.id, a.artist.name),
                     lead: Lead::Cover { url: art, label: a.artist.name.clone(), round: true },
                     title: crate::format::display_text(Some(&a.artist.name), ""),
-                    sub: Some(artist_subtitle(a)),
+                    sub: Some(artist_subtitle(a.artist.track_count, a.artist.album_count, Some(a.source))),
                     hint: Some("open".into()),
                     disabled: s.loading,
                     act: Act::Go(library_href(
@@ -358,7 +337,7 @@ fn groups(app: &App) -> Vec<Group> {
                         t.album_title.as_deref().unwrap_or("")
                     ),
                     lead: Lead::Cover {
-                        url: Some(media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), Some(64))),
+                        url: Some(t.cover_at(Some(64))),
                         label,
                         round: false,
                     },
@@ -402,7 +381,7 @@ fn groups(app: &App) -> Vec<Group> {
     }
     out.push(Group { heading: Some("Navigate"), items: navigate });
 
-    if let Some(ps) = app.playlists.as_ref().filter(|p| !p.is_empty()) {
+    if let Some(ps) = app.playlists.data.as_ref().filter(|p| !p.is_empty()) {
         let items = ps
             .iter()
             .map(|p| Item {
@@ -484,8 +463,22 @@ fn groups(app: &App) -> Vec<Group> {
 /// What shows: with a short query, cmdk's filter (score > 0) and ranking.
 /// Items sort by score within their group (stable for ties); the groups
 /// keep their order, as cmdk 1.1.1's group pass looks groups up by an id
-/// they don't carry and never moves them.
-fn visible(app: &App) -> Vec<Group> {
+/// they don't carry and never moves them. Made again only when what it's
+/// made from changed.
+fn visible(app: &App) -> Arc<Vec<Group>> {
+    let now = inputs(app);
+    let shown = &app.overlays.palette.shown;
+    if let Some((was, groups)) = &*shown.borrow()
+        && *was == now
+    {
+        return groups.clone();
+    }
+    let groups = Arc::new(filtered(app));
+    *shown.borrow_mut() = Some((now, groups.clone()));
+    groups
+}
+
+fn filtered(app: &App) -> Vec<Group> {
     let s = &app.overlays.palette;
     let all = groups(app);
     let search = s.query.text.as_str();
@@ -527,11 +520,13 @@ fn item_key(value: &str) -> String {
 }
 
 fn run(app: &mut App, act: Act) {
-    let tracks = app.overlays.palette.tracks.clone();
     close(app);
     match act {
         Act::Go(href) => app.navigate_to(&href),
-        Act::Play(n) => app.player.play_list(tracks, n),
+        Act::Play(n) => {
+            let tracks = app.overlays.palette.tracks.clone();
+            app.player.play_list(tracks, n);
+        }
         Act::Run(cmd) => match cmd {
             Command::PlayPause => app.player.toggle_play(),
             Command::Next => app.player.next(),
@@ -670,7 +665,7 @@ fn footer(t: &Theme) -> El {
         }
         r.child(text(format!(" {what}")).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground))
     };
-    let bar = row()
+    let bar = crate::ui::css_border_top(row(), 1.0, t.c.border)
         .key("cmdk-footer")
         .w_full()
         .h(FOOTER_H)
@@ -678,7 +673,6 @@ fn footer(t: &Theme) -> El {
         .pt(1.0)
         .gap(12.0)
         .items_center()
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert())
         .child(hint(&["↵"], "to select"))
         .child(hint(&["↑", "↓"], "to navigate"))
         .child(hint(&["esc"], "to close"))
@@ -700,7 +694,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let input = rune::text_input(&s.query, font(14.0, 400.0))
         .key("cmdk-input")
         .single_line()
-        .placeholder(format!("Type a command or search {}…", s.search_type.noun()), t.c.muted_foreground)
+        .placeholder(format!("Type a command or search {}…", noun(s.search_type)), t.c.muted_foreground)
         .label("Command palette")
         .color(t.c.foreground)
         .selection_color(t.c.selection)
@@ -718,7 +712,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .items_center()
         .child(ico(&i::SEARCH, 16.0, t.c.muted_foreground))
         .child(input)
-        .child(segmented_sized(t, "cmdk-type", SEARCH_TYPES, s.search_type, pick_type, SegSize::SMALL));
+        .child(segmented_sized(t, "cmdk-type", &SEARCH_TYPE_OPTIONS, s.search_type, pick_type, SegSize::SMALL));
 
     let mut items = col().key("cmdk-items").w_full().padding(4.0);
     if s.loading {
@@ -733,7 +727,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     } else if flat.is_empty() {
         items = items.child(empty("No results.", false));
     }
-    for g in &groups {
+    for g in groups.iter() {
         let mut group = col().w_full();
         if let Some(h) = g.heading {
             group = group.child(
@@ -752,7 +746,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let overflows = content_h.is_none_or(|h| h > max_list + 0.5);
     let list = scroll_area_fit(t, "cmdk-list", items.role("listbox"), overflows, Some(max_list));
 
-    let a = t.c.shadow_md_alpha;
     let r = t.radius_xl();
     let panel = css_border(col(), 1.0, t.c.border, r)
         .key("cmdk-root")
@@ -762,8 +755,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .padding(1.0)
         .radius(r)
         .fill(t.c.popover)
-        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .shadow_md(t)
         .clip_rounded(r)
         .role("dialog")
         .label("Command palette")

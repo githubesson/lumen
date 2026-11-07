@@ -517,17 +517,6 @@ fn older_servers_link_the_primary_artist_through_the_album() {
     let old = ok(full_info(|i| i.artists = vec![ta("Main", Main, None), ta("Guest", Featured, None)]));
     let album = TidalAlbum { id: "500".into(), artist: Some("main ".into()), artist_id: Some("9".into()), ..Default::default() };
 
-    assert_eq!(track_info_artist_album_id(Some(&track), Some(&old)).as_deref(), Some("500"));
-    assert_eq!(track_info_artist_album_id(Some(&track), Some(&failed(ApiError::transport("timeout")))), None);
-    assert_eq!(track_info_artist_album_id(Some(&track), Some(&ok(full_info(|i| i.artists.clear())))), None);
-    let current = ok(full_info(|i| i.artists = vec![ta("Main", Main, Some("9"))]));
-    assert_eq!(track_info_artist_album_id(Some(&track), Some(&current)), None);
-    let mut no_album = track.clone();
-    no_album.source_album_id = None;
-    assert_eq!(track_info_artist_album_id(Some(&no_album), Some(&old)), None);
-    assert_eq!(track_info_artist_album_id(Some(&file(|t| t.source_album_id = Some("500".into()))), None), None);
-    assert_eq!(track_info_artist_album_id(None, Some(&old)), None);
-
     let view = track_info_rows(&track, Some(&old), Some(&album));
     assert_eq!(view.artists, [tidal_artist("Main", "9"), plain("Guest")]);
     assert_eq!(rows_of(&view, SectionKey::Credits)[0].names, Some(vec![tidal_artist("Main", "9")]));

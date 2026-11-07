@@ -15,7 +15,6 @@ mod library;
 mod parts;
 mod pins;
 mod remove_folder;
-pub mod requests;
 mod table;
 mod tidal;
 mod users;
@@ -24,7 +23,7 @@ use std::cell::Cell;
 
 use rune::{Cx, El, col, text};
 
-use crate::api::{ApiError, ApiResult, Client};
+use crate::api::Client;
 use crate::app::App;
 use crate::route::Location;
 use crate::theme::Theme;
@@ -47,22 +46,6 @@ impl Section {
             Some("invites") => Section::Invites,
             _ => Section::Library,
         }
-    }
-}
-
-/// `useApiResource`: data that outlives a visit, the last load's error, and
-/// whether a load is out.
-#[derive(Clone, Debug)]
-pub struct Res<T> {
-    pub data: Option<T>,
-    pub error: Option<String>,
-    pub loading: bool,
-    nonce: u64,
-}
-
-impl<T> Default for Res<T> {
-    fn default() -> Self {
-        Res { data: None, error: None, loading: false, nonce: 0 }
     }
 }
 
@@ -100,42 +83,7 @@ impl Default for State {
     }
 }
 
-/// `errorMessage(err, fallback)`: the server's message, else the fallback
-/// (a request that never got an answer says nothing useful).
-pub fn error_message(e: &ApiError, fallback: &str) -> String {
-    let own = e.status != 0 || e.message.ends_with("Refresh sources or restart the backend.");
-    if own && !e.message.is_empty() { e.message.clone() } else { fallback.to_string() }
-}
-
-/// Load `fetch` into the resource `lens` reaches, then run `then`.
-pub fn load<T: Send + 'static>(
-    app: &mut App,
-    lens: fn(&mut App) -> &mut Res<T>,
-    fetch: impl FnOnce(&Client) -> ApiResult<T> + Send + 'static,
-    fallback: &'static str,
-    then: impl FnOnce(&mut App) + Send + 'static,
-) {
-    let Some(client) = app.client.clone() else { return };
-    let res = lens(app);
-    res.nonce += 1;
-    res.loading = true;
-    res.error = None;
-    let nonce = res.nonce;
-    app.net.run(
-        move || fetch(&client),
-        move |app, result| {
-            let res = lens(app);
-            if res.nonce == nonce {
-                res.loading = false;
-                match result {
-                    Ok(data) => res.data = Some(data),
-                    Err(e) => res.error = Some(error_message(&e, fallback)),
-                }
-            }
-            then(app);
-        },
-    )
-}
+pub use crate::api::error_message;
 
 /// Run `work` off the UI thread with the client, then `done` with its result.
 pub fn call<T: Send + 'static>(
@@ -145,6 +93,30 @@ pub fn call<T: Send + 'static>(
 ) {
     let Some(client) = app.client.clone() else { return };
     app.net.run(move || work(&client), done);
+}
+
+/// [`call`] for a long wait (a rescan's progress, a TIDAL sign-in): it runs
+/// on a thread of its own, so it doesn't hold one of the request workers for
+/// minutes. Headless scenes run it inline, as their requests.
+pub fn call_long<T: Send + 'static>(
+    app: &mut App,
+    name: &str,
+    work: impl FnOnce(&Client) -> T + Send + 'static,
+    done: impl FnOnce(&mut App, T) + Send + 'static,
+) {
+    if app.net.is_sync() {
+        call(app, work, done);
+        return;
+    }
+    let Some(client) = app.client.clone() else { return };
+    let sender = app.net.sender();
+    std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            let result = work(&client);
+            sender.send(move |app| done(app, result));
+        })
+        .expect("spawn admin poll");
 }
 
 /// Whether the page still shows `section` from mount `id` (a loop of an

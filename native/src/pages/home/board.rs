@@ -4,16 +4,19 @@
 
 use std::rc::Rc;
 
-use rune::{Color, Cursor, El, Shadow, TextStyle, col, el, row, text};
+use rune::{Color, Cursor, El, TextStyle, col, el, row, text};
 
 use crate::api::{Playlist, TrackListItem};
 use crate::app::App;
 use crate::theme::{Density, Theme};
-use crate::ui::{Btn, cover_art, font, ico, icons as i, line, tnum, with_lh};
+use crate::ui::blocks::SectionLook;
+use crate::ui::{Btn, cover_art, css_baseline, font, ico, icons as i, line, skeleton_line, tnum, track_row as rows, with_lh};
 
-use crate::ui::cards::{Action, top_artist_glyph, top_artist_press};
+use crate::ui::cards::{Action, disc, playlist_subtitle, top_artist_glyph, top_artist_press};
 use crate::ui::tooltip::TipExt;
-use super::logic::{TopArtistAction, display_text, playlist_subtitle, track_cover_url};
+use super::logic::TopArtistAction;
+use crate::ui::ShadowMd;
+use crate::format::{clean_text, display_text_nullish};
 
 /// Row art is 40-48px; the server's next size up covers a 2x screen.
 pub const ROW_ART_SIZE: u32 = 128;
@@ -21,23 +24,6 @@ pub const ROW_ART_SIZE: u32 = 128;
 pub const ROW_H: f32 = 52.0;
 /// `.board-artist`: 48 px avatar in 8 px padding.
 pub const ARTIST_H: f32 = 64.0;
-
-/// Where a line's baseline sits in its box, as Blink lays it out
-/// ([`crate::ui::css_baseline`]: Geist's ascent and descent rounded, the
-/// half-leading above floored).
-pub fn baseline(size: f32, line_h: f32) -> f32 {
-    crate::ui::css_baseline(size, line_h)
-}
-
-/// `.skeleton-text` in a line of `size`: a bar 0.75em tall, `frac` of the
-/// line wide, centred on the line's x-height (`vertical-align: middle`).
-pub fn skeleton_line(t: &Theme, size: f32, line_h: f32, frac: f32) -> El {
-    let h = size * 0.75;
-    let mid = baseline(size, line_h) - size * 0.53 / 2.0;
-    el().w_full()
-        .h(line_h)
-        .child(el().absolute(0.0, mid - h / 2.0).w_frac(frac).h(h).radius(t.radius_sm()).fill(t.c.muted))
-}
 
 /// Text held in a box `h` tall: Chromium stacks fractional line boxes (a
 /// 12 px line is 17.4 px), where Rune rounds each text's box up to a whole
@@ -58,15 +44,15 @@ fn sub_style() -> TextStyle {
     font(12.0, 400.0)
 }
 /// `.section-title`: 16 px semibold, -0.01em.
-pub fn title_style() -> TextStyle {
-    font(16.0, 600.0).tracking(-0.16)
+fn title_style() -> TextStyle {
+    SectionLook::default().title
 }
 const LINK: &str = "view all →";
 
 /// The head's text column sits lower than the "view all" link by the
 /// difference of their baselines (`.section-head`'s `align-items: baseline`).
 fn head_shift() -> f32 {
-    baseline(14.0, 20.3) - baseline(12.0, 17.4)
+    css_baseline(14.0, 20.3) - css_baseline(12.0, 17.4)
 }
 
 /// How wide the title may be in a panel `content` wide.
@@ -77,14 +63,7 @@ fn title_room(content: f32) -> f32 {
 
 /// The title's height: 23.2 px a line, wrapping when long.
 fn title_height(title: &str, content: f32) -> f32 {
-    let (_, h) = rune::text::measure_with(
-        title,
-        &[],
-        title_style(),
-        Some(title_room(content)),
-        rune::text::RichLayoutOptions::new().wrap_anywhere(),
-    );
-    (h / 23.2).round().max(1.0) * 23.2
+    crate::ui::css_text_h_with(title, title_style(), Some(title_room(content)), rune::text::RichLayoutOptions::new().wrap_anywhere())
 }
 
 /// The panel head's height (eyebrow and title).
@@ -213,6 +192,30 @@ pub fn status_height(error: &str, content: f32) -> f32 {
 
 // ── Rows ────────────────────────────────────────────────────────────────────
 
+/// The list a row plays through and its menu queues, read when it's used
+/// (`usePlayFromList`'s ref), so a panel holds no copy of a list the state
+/// already has.
+#[derive(Clone)]
+pub enum Queue {
+    /// One of Home's lists, found again in the state.
+    Of(Rc<dyn Fn(&App) -> &[TrackListItem]>),
+    /// Rows a panel worked out (On repeat's).
+    Rows(Rc<Vec<TrackListItem>>),
+}
+
+impl Queue {
+    pub fn of(f: impl Fn(&App) -> &[TrackListItem] + 'static) -> Queue {
+        Queue::Of(Rc::new(f))
+    }
+
+    pub fn read<'a>(&'a self, app: &'a App) -> &'a [TrackListItem] {
+        match self {
+            Queue::Of(f) => f(app),
+            Queue::Rows(rows) => rows,
+        }
+    }
+}
+
 /// A track row's options (`BoardTrackList`'s props).
 pub struct TrackRow {
     pub ranked: bool,
@@ -224,8 +227,9 @@ pub struct TrackRow {
     pub current: bool,
     /// The end column (a duration, a play count).
     pub meta: String,
-    pub on_play: Action,
-    pub queue: Rc<Vec<TrackListItem>>,
+    /// What a press plays from (its playable rows, `play(track, queue)`)
+    /// and the menu queues.
+    pub queue: Queue,
 }
 
 fn row_box(t: &Theme, key: String) -> El {
@@ -241,14 +245,7 @@ fn row_box(t: &Theme, key: String) -> El {
 
 /// The round play button (`.board-play`), 28 px, shown on hover.
 fn play_disc(t: &Theme) -> El {
-    let a = t.c.shadow_md_alpha;
-    el().size(28.0, 28.0)
-        .radius(999.0)
-        .fill(t.c.primary)
-        .center()
-        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
-        .child(ico(&i::PLAY_FILLED, 14.0, t.c.primary_foreground))
+    disc(t, &i::PLAY_FILLED, 28.0, 14.0).shadow_md(t)
 }
 
 fn row_text(t: &Theme, title: El, sub: &str) -> El {
@@ -279,10 +276,10 @@ pub fn track_row(app: &App, t: &Theme, key: String, track: &TrackListItem, o: Tr
     }
     if !o.bare {
         let label = track.album_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| track.title.clone());
-        r = r.child(cover_art(t, &app.images, Some(&track_cover_url(track, Some(ROW_ART_SIZE))), &label, 40.0, 40.0, t.radius_md()));
+        r = r.child(cover_art(t, &app.images, Some(&track.cover_at(Some(ROW_ART_SIZE))), &label, 40.0, 40.0, t.radius_md()));
     }
-    let title = line(display_text(Some(&track.title), ""), font(title_size(t), 500.0), t.c.foreground);
-    r = r.child(row_text(t, title, &display_text(track.artist.as_deref(), "Unknown artist")));
+    let title = line(clean_text(Some(&track.title)), font(title_size(t), 500.0), t.c.foreground);
+    r = r.child(row_text(t, title, &display_text_nullish(track.artist.as_deref(), "Unknown artist")));
     let meta = text(o.meta.clone()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground);
     let mut end = el().h_full().items_center().justify_end();
     if o.ranked || unavailable {
@@ -297,20 +294,23 @@ pub fn track_row(app: &App, t: &Theme, key: String, track: &TrackListItem, o: Tr
     let queue = o.queue.clone();
     let menu_track = track.clone();
     r = r.on_secondary_press(move |app: &mut App, at, _| {
-        let ctx = crate::overlays::track_menu::MenuContext::bind(&menu_track, (*queue).clone());
+        let ctx = crate::overlays::track_menu::MenuContext::bind(&menu_track, queue.read(app).to_vec());
         crate::overlays::track_menu::open(app, menu_track.clone(), [at.x, at.y], ctx)
     });
     if unavailable {
         return r.opacity(0.45).label(track.title.clone()).tip(&key, "No longer on TIDAL");
     }
-    let play = o.on_play;
+    let (queue, tr) = (o.queue, track.clone());
     r.hover(t.c.accent)
         .hover_motion(crate::ui::motion::ease(100.0), crate::ui::motion::ease(100.0))
         .role("button")
         .label(format!("Play {}", track.title))
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .on_press(move |app: &mut App| play(app))
+        .on_press(move |app: &mut App| {
+            let list = queue.read(app).to_vec();
+            rows::play_from(app, &tr, &list);
+        })
 }
 
 /// `.board-list`: rows in one column, or two (top to bottom, then the next
@@ -444,7 +444,7 @@ pub fn artist_tile(app: &App, t: &Theme, key: String, a: ArtistItem, width: f32)
     if let Some(glyph) = top_artist_glyph(t, a.action, 28.0, 14.0) {
         avatar = avatar.child(glyph.absolute(10.0, 10.0));
     }
-    let name = line(display_text(Some(&a.name), ""), font(title_size(t), 500.0), t.c.foreground);
+    let name = line(clean_text(Some(&a.name)), font(title_size(t), 500.0), t.c.foreground);
     let mut tile = row()
         .key(key)
         .w(width)

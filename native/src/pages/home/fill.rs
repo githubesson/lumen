@@ -26,9 +26,6 @@ impl FillUsual {
     }
 }
 
-/// A board row's height (`.board-row`), for a list with no row to measure yet.
-pub const BOARD_ROW_HEIGHT: f32 = 52.0;
-
 /// What the fill area measures: its grid, and the room it has.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FillMetrics {
@@ -43,8 +40,6 @@ pub struct FillMetrics {
     pub margins: f32,
     /// Items in the grid now.
     pub items: usize,
-    /// The min-height the area was given at its last measure, if any.
-    pub held_at: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,26 +56,20 @@ pub fn fit_items(usual: FillUsual, m: FillMetrics) -> Fit {
     let usual_rows = usual_count.min(m.items).div_ceil(m.columns);
     let min_height =
         if usual_rows > 0 { m.margins + usual_rows as f32 * m.row + (usual_rows - 1) as f32 * m.gap } else { 0.0 };
-    // As tall as its own min-height, the area has no room past it, and that
-    // min-height can be out of date: count on the one it gets now.
-    let room = match m.held_at {
-        Some(held) if m.height <= held + 1.0 => m.height.min(min_height),
-        _ => m.height,
-    };
     // Half a pixel of slack for fractional sizes.
-    let rows = ((room - m.margins + m.gap + 0.5) / (m.row + m.gap)).floor().max(0.0) as usize;
+    let rows = ((m.height - m.margins + m.gap + 0.5) / (m.row + m.gap)).floor().max(0.0) as usize;
     Fit { count: usual_count.max(rows * m.columns), min_height }
 }
 
 /// The usual rows' height for `items` items of a grid (`minHeight` alone):
 /// what a fill area adds to its panel's natural height.
 pub fn usual_height(usual: FillUsual, columns: usize, items: usize, row: f32, gap: f32, margins: f32) -> f32 {
-    fit_items(usual, FillMetrics { height: 0.0, columns, row, gap, margins, items, held_at: None }).min_height
+    fit_items(usual, FillMetrics { height: 0.0, columns, row, gap, margins, items }).min_height
 }
 
 /// How many items fit in `room` (the area's height once laid out).
 pub fn count_in(usual: FillUsual, room: f32, columns: usize, row: f32, gap: f32, margins: f32, items: usize) -> usize {
-    fit_items(usual, FillMetrics { height: room, columns, row, gap, margins, items, held_at: None }).count
+    fit_items(usual, FillMetrics { height: room, columns, row, gap, margins, items }).count
 }
 
 #[cfg(test)]
@@ -88,7 +77,7 @@ mod tests {
     use super::*;
 
     fn rows(f: impl FnOnce(&mut FillMetrics)) -> FillMetrics {
-        let mut m = FillMetrics { height: 260.0, columns: 1, row: 52.0, gap: 0.0, margins: 0.0, items: 20, held_at: None };
+        let mut m = FillMetrics { height: 260.0, columns: 1, row: 52.0, gap: 0.0, margins: 0.0, items: 20 };
         f(&mut m);
         m
     }
@@ -136,18 +125,5 @@ mod tests {
         assert_eq!(fit_items(FillUsual::Count(0), at(60.0)), Fit { count: 0, min_height: 0.0 });
         assert_eq!(fit_items(FillUsual::Count(0), at(64.0)), Fit { count: 1, min_height: 0.0 });
         assert_eq!(fit_items(FillUsual::Count(0), at(200.0)).count, 3);
-    }
-
-    #[test]
-    fn no_room_past_its_own_min_height() {
-        let covers4 = |m: &mut FillMetrics| (m.columns, m.row, m.gap, m.margins, m.items) = (4, 128.0, 4.0, -4.0, 4);
-        let held = |at| rows(|m| {
-            covers4(m);
-            m.height = 455.0;
-            m.held_at = Some(at);
-        });
-        assert_eq!(fit_items(FillUsual::ARow, held(455.0)), Fit { count: 4, min_height: 124.0 });
-        assert_eq!(fit_items(FillUsual::ARow, held(124.0)).count, 12);
-        assert_eq!(fit_items(FIVE, rows(|m| m.held_at = Some(260.0))), Fit { count: 5, min_height: 260.0 });
     }
 }

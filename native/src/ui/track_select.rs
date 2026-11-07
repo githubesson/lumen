@@ -42,13 +42,16 @@ impl Selection {
     pub fn count(&self, items: &[TrackListItem]) -> usize {
         items.iter().filter(|t| self.ids.contains(&t.id)).count()
     }
-    pub fn all_selected(&self, items: &[TrackListItem]) -> bool {
-        !items.is_empty() && self.count(items) == items.len()
-    }
-    pub fn some_selected(&self, items: &[TrackListItem]) -> bool {
-        self.count(items) > 0
+    /// Whether every one of `items` is selected, and whether any is (the
+    /// select-all box: checked, or its dash), in one pass.
+    pub fn all_some(&self, items: &[TrackListItem]) -> (bool, bool) {
+        let n = self.count(items);
+        (n > 0 && n == items.len(), n > 0)
     }
 }
+
+/// The selection of a list nobody has touched.
+static NO_SELECTION: std::sync::LazyLock<Selection> = std::sync::LazyLock::new(Selection::default);
 
 /// Every list's selection, by list key, and the selectable lists the last
 /// view drew (they take the `v`, Escape and Ctrl+A shortcuts).
@@ -61,11 +64,9 @@ pub struct Lists {
 }
 
 impl Lists {
-    pub fn get(&self, key: &str) -> Selection {
-        self.map.get(key).cloned().unwrap_or_default()
-    }
-    pub fn selection(&self, key: &str) -> Option<&Selection> {
-        self.map.get(key)
+    /// The list's selection (an empty one for a list nobody has touched).
+    pub fn selection(&self, key: &str) -> &Selection {
+        self.map.get(key).unwrap_or(&NO_SELECTION)
     }
     pub fn entry(&mut self, key: &str) -> &mut Selection {
         self.map.entry(key.to_string()).or_default()
@@ -147,9 +148,8 @@ pub fn toggle_row(app: &mut App, key: &str, source: Source, id: &str, index: usi
 /// `exportSelected` (`exportTracksAsFiles`): name each selected library
 /// file (`prepareTrackDownload`, off the UI thread), then the desktop's
 /// folder picker and download (`desktop::export`).
-pub fn export_selected(app: &mut App, key: &str, source: Source, tx: &mut Tx) {
-    let _ = tx;
-    let s = app.widgets.lists.get(key);
+pub fn export_selected(app: &mut App, key: &str, source: Source) {
+    let s = app.widgets.lists.selection(key);
     if s.exporting {
         return;
     }
@@ -232,11 +232,7 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {
 pub fn checkbox(t: &Theme, key: &str, checked: bool, indeterminate: bool, label: &str) -> El {
     let on = checked || indeterminate;
     // Chromium picks the mark's colour for contrast against the accent.
-    let (fill, mark) = if t.dark() {
-        (t.c.primary, rune::color::hex("#3b3b3b").unwrap())
-    } else {
-        (t.c.primary, Color::WHITE)
-    };
+    let (fill, mark) = (t.c.primary, crate::ui::native::field(t));
     let mut b = el()
         .key(key)
         .size(16.0, 16.0)
@@ -255,10 +251,8 @@ pub fn checkbox(t: &Theme, key: &str, checked: bool, indeterminate: bool, label:
             Shape::new().stroke(vec![[3.5, 8.1], [6.3, 11.5], [12.1, 3.7]], 2.2, mark)
         };
         b = b.child(canvas(shape).size(16.0, 16.0));
-    } else if t.dark() {
-        b = b.fill(rune::color::hex("#3b3b3b").unwrap()).border(1.0, rune::color::hex("#858585").unwrap());
     } else {
-        b = b.fill(Color::WHITE).border(1.0, rune::color::hex("#767676").unwrap());
+        b = b.fill(crate::ui::native::field(t)).border(1.0, crate::ui::native::ring(t));
     }
     b
 }
@@ -277,11 +271,15 @@ pub enum BarPlace {
 /// count, Select all / Deselect all, Export files and the clear button.
 pub fn selection_bar(app: &App, t: &Theme, key: &str, source: Source, place: BarPlace) -> El {
     let items = source(app);
-    let s = app.widgets.lists.get(key);
-    let count = s.count(items);
-    let all = s.all_selected(items);
+    let s = app.widgets.lists.selection(key);
+    // One pass: how many are selected, and whether any is a library file.
+    let (mut count, mut local) = (0, false);
+    for t in items.iter().filter(|t| s.ids.contains(&t.id)) {
+        count += 1;
+        local |= crate::ui::track_row::is_local(t);
+    }
+    let all = count > 0 && count == items.len();
     let some = count > 0;
-    let local = s.selected(items).iter().any(|t| crate::ui::track_row::is_local(*t));
     let export_disabled = !local;
     let total = items.len();
     let status_text = if s.mode {
@@ -332,7 +330,7 @@ pub fn selection_bar(app: &App, t: &Theme, key: &str, source: Source, place: Bar
         if export_disabled && some {
             export = crate::ui::tooltip::tip(export, &format!("{key}-export"), EXPORT_DISABLED_REASON);
         }
-        bar = bar.child(export.on_press_tx(move |app: &mut App, tx| export_selected(app, &k2, source, tx)));
+        bar = bar.child(export.on_press(move |app: &mut App| export_selected(app, &k2, source)));
         let k3 = k.clone();
         let size = if group { 26.0 } else { 30.0 };
         let mut close = iconbtn(t, &format!("{key}-selectclear"), &i::X, 16.0, BtnState::default())

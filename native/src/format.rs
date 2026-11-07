@@ -62,11 +62,6 @@ pub fn fmt_bytes(bytes: f64) -> String {
     format!("{} {}", to_fixed(v, digits), UNITS[i])
 }
 
-/// `formatBytes` for an optional count.
-pub fn format_bytes(bytes: Option<f64>) -> String {
-    bytes.map_or_else(|| "—".into(), fmt_bytes)
-}
-
 /// `formatSampleRate`: "44.1 kHz" / "48 kHz"; "—" when unknown.
 pub fn format_sample_rate(hz: Option<f64>) -> String {
     match hz {
@@ -112,17 +107,6 @@ pub fn format_calendar_date(date: Option<&str>) -> String {
 pub fn fmt_date(iso: &str) -> String {
     match dates::parse(iso) {
         Some(ms) => dates::medium_date(&dates::local_parts(ms)),
-        None => "Invalid Date".into(),
-    }
-}
-
-/// `fmtDateTime`: "Sep 4, 2026, 3:45 PM" in local time.
-pub fn fmt_date_time(iso: &str) -> String {
-    match dates::parse(iso) {
-        Some(ms) => {
-            let p = dates::local_parts(ms);
-            format!("{}, {}", dates::medium_date(&p), dates::short_time(&p))
-        }
         None => "Invalid Date".into(),
     }
 }
@@ -180,6 +164,13 @@ pub fn clean_text(value: Option<&str>) -> String {
 pub fn display_text(s: Option<&str>, fallback: &str) -> String {
     let cleaned = clean_text(s);
     if cleaned.is_empty() { fallback.to_string() } else { cleaned }
+}
+
+/// core's `displayText(value, fallback)` itself: the fallback stands in only
+/// for a missing value (`??`); an empty one stays empty. Compare
+/// [`display_text`], the `displayText(value) || fallback` most views use.
+pub fn display_text_nullish(value: Option<&str>, fallback: &str) -> String {
+    clean_text(Some(value.unwrap_or(fallback)))
 }
 
 /// `Math.round`: halves round up (towards +∞).
@@ -249,7 +240,6 @@ mod tests {
         assert_eq!(fmt_bytes(150.0 * 1024f64.powi(3)), "150 GB");
         assert_eq!(fmt_bytes(1.5 * 1024f64.powi(4)), "1.5 TB");
         assert_eq!(fmt_bytes(0.0), "—");
-        assert_eq!(format_bytes(None), "—");
         assert_eq!(fmt_bytes(146.5 * 1024.0), "147 KB");
     }
 
@@ -275,8 +265,6 @@ mod tests {
     #[test]
     fn local_dates() {
         assert_eq!(fmt_date("not a date"), "Invalid Date");
-        let s = fmt_date_time("2026-09-04T12:00:00Z");
-        assert!(s.contains(", 2026, "), "{s}");
     }
 
     #[test]

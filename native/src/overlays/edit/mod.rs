@@ -5,12 +5,13 @@ mod album;
 mod move_album;
 mod track;
 
-use rune::{Color, Cx, El, Shadow, TextEdit, col, el, row, text};
+use rune::{Cx, El, TextEdit, col, el, row, text};
 
-use crate::api::{Album, TrackDetail, TrackListItem};
+use crate::api::{Album, ApiResult, Client, TrackDetail, TrackListItem};
 use crate::app::App;
-use crate::theme::{Theme, color_mix};
-use crate::ui::{Btn, css_border, font};
+use crate::theme::Theme;
+use crate::ui::{Btn, font};
+use crate::ui::forms::{input_box, text_field};
 
 pub use album::AlbumForm;
 pub use track::TrackForm;
@@ -77,14 +78,39 @@ pub fn close(app: &mut App) {
 
 fn dismiss(app: &mut App) {
     let s = &app.overlays.edit;
-    if !s.busy && s.moving_id.is_none() {
+    if !s.busy && !s.cover_busy && s.moving_id.is_none() {
         close(app);
     }
 }
 
+/// Save the open form with `send`: on success the library changed and the
+/// dialog closes; a failure shows under the form.
+fn submit(app: &mut App, send: impl FnOnce(&Client) -> ApiResult<()> + Send + 'static) {
+    let Some(client) = app.client.clone() else { return };
+    let s = &mut app.overlays.edit;
+    s.busy = true;
+    s.error = None;
+    let nonce = s.nonce;
+    app.net.run(
+        move || send(&client),
+        move |app, result| {
+            let s = &mut app.overlays.edit;
+            if s.nonce != nonce {
+                return;
+            }
+            s.busy = false;
+            match result {
+                Ok(()) => {
+                    crate::pages::library_changed(app);
+                    close(app);
+                }
+                Err(e) => s.error = Some(crate::overlays::error_message(&e, "Save failed.")),
+            }
+        },
+    );
+}
 
-/// Binds a field to its `TextEdit` in the app state.
-pub type Bind = fn(&mut App) -> &mut TextEdit;
+pub use crate::ui::forms::Bind;
 
 /// `TextInput` (`.input`) bound to `bind`; Enter submits the form.
 pub fn input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, label: &str, bind: Bind, submit: Option<fn(&mut App)>) -> El {
@@ -98,31 +124,7 @@ pub fn number_input(t: &Theme, key: &str, edit: &TextEdit, label: &str, bind: Bi
 
 #[allow(clippy::too_many_arguments)]
 fn input_with(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, label: &str, bind: Bind, submit: Option<fn(&mut App)>, digits: bool) -> El {
-    let focused = edit.focused;
-    let mut field = css_border(el(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
-        .key(format!("{key}-box"))
-        .h(32.0)
-        .w_full()
-        .min_w(0.0)
-        .radius(t.radius_lg())
-        .fill(t.c.input_bg)
-        .items_center();
-    if focused {
-        field = field
-            .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: t.c.focus_ring, inset: false })
-            .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 4.0, color: color_mix(t.c.ring, 0.3, Color::TRANSPARENT), inset: false });
-    }
-    let mut i = rune::text_input(edit, font(14.0, 400.0))
-        .key(key)
-        .single_line()
-        .placeholder(placeholder, t.c.muted_foreground)
-        .label(label)
-        .color(t.c.foreground)
-        .selection_color(t.c.selection)
-        .grow(1.0)
-        .min_w(0.0)
-        .px(11.0)
-        .on_edit(bind);
+    let mut i = text_field(t, key, edit, font(14.0, 400.0), placeholder).label(label).min_w(0.0).on_edit(bind);
     if digits {
         i = i.on_input_change(move |app: &mut App, _| {
             let e = bind(app);
@@ -135,7 +137,7 @@ fn input_with(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, label: &
     if let Some(f) = submit {
         i = i.on_submit(move |app: &mut App, _| f(app));
     }
-    field.child(i)
+    input_box(t, key, edit.focused, i).min_w(0.0)
 }
 
 /// `Field` in a `FieldRow`: a grid whose auto rows (label, control, hint)
@@ -187,16 +189,11 @@ pub fn save_cancel(t: &Theme, busy: bool, disabled: bool, save: fn(&mut App)) ->
         .child(Btn::new("edit-save", if busy { "Saving…" } else { "Save" }).primary().disabled(busy || disabled).build(t).on_press(save))
 }
 
-/// `LoadingState`.
-pub fn loading(t: &Theme) -> El {
-    el().padding(20.0).child(text("Loading…").font(crate::ui::tnum(font(14.0, 400.0))).color(t.c.muted_foreground))
-}
-
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let window = super::window_size(cx);
     match app.overlays.edit.which? {
         Which::Track => Some(track::view(app, t, window)),
         Which::Album => Some(album::view(app, t, window)),
-        Which::Move => Some(move_album::view(app, t, window, cx)),
+        Which::Move => Some(move_album::view(app, t, window)),
     }
 }

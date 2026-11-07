@@ -27,17 +27,7 @@ pub fn sanitize_filename(name: &str) -> String {
         }
     }
     let trimmed = collapsed.trim_end_matches(['.', ' ']);
-    // `slice(0, 180)` counts UTF-16 code units.
-    let mut out = String::new();
-    let mut units = 0;
-    for c in trimmed.chars() {
-        units += c.len_utf16();
-        if units > 180 {
-            break;
-        }
-        out.push(c);
-    }
-    out
+    crate::core::js::slice_utf16(trimmed, 180).to_string()
 }
 
 /// `downloadFilename`: "Artist - Title.ext". The detail, when loaded, gives

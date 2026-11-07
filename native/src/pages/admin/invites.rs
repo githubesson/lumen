@@ -2,15 +2,22 @@
 //! making registration links, the one-time link of the invite just made,
 //! and the active and past invites.
 
-use std::time::Duration;
-
 use rune::{El, TextEdit, col, el, row};
 
-use super::requests::{self as rq, Invite};
 use super::table::{self, Action, Cell, Col, Empty, Line};
-use super::{Res, call, format, load, parts};
+use super::{call, format, parts};
+use crate::api::Role;
+use crate::api::admin::{self as api, InviteCreate};
+use crate::api::auth::Invite;
 use crate::app::App;
+use crate::core::admin::invites::{
+    InviteStatus, invite_expiry_label, invite_role_label, invite_status, invite_usage, partition_invites,
+    validate_invite_creation_with_date,
+};
+use crate::core::dates::now_ms;
+use crate::format::fmt_date;
 use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
+use crate::resource::{Res, load};
 use crate::theme::Theme;
 use crate::ui::forms::{SelectOption, SelectVariant, select};
 use crate::ui::{Btn, css_border, font, ico, icons as i, mono, tnum};
@@ -18,14 +25,12 @@ use crate::ui::{Btn, css_border, font, ico, icons as i, mono, tnum};
 pub struct State {
     pub rows: Res<Vec<Invite>>,
     pub action_error: Option<String>,
-    /// "user" or "admin".
-    pub role: String,
+    pub role: Role,
     pub max_uses: TextEdit,
     pub expires: TextEdit,
     pub just_created: Option<Invite>,
     pub creating: bool,
-    pub copied: bool,
-    copied_gen: u64,
+    pub copied: crate::ui::flash::Flag,
     pub past_open: bool,
 }
 
@@ -34,13 +39,12 @@ impl Default for State {
         State {
             rows: Res::default(),
             action_error: None,
-            role: "user".into(),
+            role: Role::User,
             max_uses: TextEdit::new("1"),
             expires: TextEdit::new(""),
             just_created: None,
             creating: false,
-            copied: false,
-            copied_gen: 0,
+            copied: Default::default(),
             past_open: false,
         }
     }
@@ -49,8 +53,8 @@ impl Default for State {
 fn st(app: &mut App) -> &mut State {
     &mut app.pages.admin.invites
 }
-fn rows_res(app: &mut App) -> &mut Res<Vec<Invite>> {
-    &mut app.pages.admin.invites.rows
+fn rows_res(app: &mut App) -> Option<&mut Res<Vec<Invite>>> {
+    Some(&mut app.pages.admin.invites.rows)
 }
 fn max_uses_edit(app: &mut App) -> &mut TextEdit {
     &mut app.pages.admin.invites.max_uses
@@ -66,117 +70,11 @@ pub fn mount(app: &mut App) {
 }
 
 fn reload(app: &mut App, then: impl FnOnce(&mut App) + Send + 'static) {
-    load(app, rows_res, rq::list_invites, "Failed to load invites.", then);
-}
-
-/// `inviteStatus`: revoked, then expired, then out of uses.
-fn status(inv: &Invite, now: i64) -> &'static str {
-    if inv.revoked_at.as_deref().is_some_and(|r| !r.is_empty()) {
-        return "revoked";
-    }
-    if let Some(at) = inv.expires_at.as_deref().and_then(format::parse_iso) {
-        if at <= now {
-            return "expired";
-        }
-    }
-    if inv.uses >= inv.max_uses {
-        return "exhausted";
-    }
-    "active"
-}
-
-fn role_label(role: &str) -> &'static str {
-    if role == "admin" { "Admin" } else { "User" }
-}
-
-fn usage(inv: &Invite) -> String {
-    format!("{} / {}", inv.uses, inv.max_uses)
-}
-
-/// What `validateInviteCreationWithDate` makes of the form.
-struct Validation {
-    max_uses: Option<i64>,
-    expires_at: Option<String>,
-    max_uses_error: Option<&'static str>,
-    expires_error: Option<&'static str>,
-}
-
-impl Validation {
-    fn valid(&self) -> bool {
-        self.max_uses_error.is_none() && self.expires_error.is_none()
-    }
-}
-
-/// The expiry field's text as a local date and time, the forms a
-/// `datetime-local` field and a person type: `2026-11-20T09:30`,
-/// `11/20/2026, 9:30 AM`, `11/20/2026 21:30`.
-fn parse_local(s: &str) -> Option<i64> {
-    let s = s.trim();
-    let (date, time) = match s.find(['T', ' ', ',']) {
-        Some(at) => (&s[..at], s[at + 1..].trim_start_matches([',', ' '])),
-        None => (s, ""),
-    };
-    let (y, m, d) = if date.contains('-') {
-        let p: Vec<&str> = date.split('-').collect();
-        (p.first()?.parse::<i64>().ok()?, p.get(1)?.parse::<u32>().ok()?, p.get(2)?.parse::<u32>().ok()?)
-    } else {
-        let p: Vec<&str> = date.split('/').collect();
-        (p.get(2)?.parse::<i64>().ok()?, p.first()?.parse::<u32>().ok()?, p.get(1)?.parse::<u32>().ok()?)
-    };
-    let time = time.trim();
-    let (clock, pm) = match time.to_ascii_uppercase() {
-        t if t.ends_with("PM") => (time[..time.len() - 2].trim().to_string(), Some(true)),
-        t if t.ends_with("AM") => (time[..time.len() - 2].trim().to_string(), Some(false)),
-        _ => (time.to_string(), None),
-    };
-    let (mut h, min) = if clock.is_empty() {
-        return None;
-    } else {
-        let (h, m) = clock.split_once(':')?;
-        (h.trim().parse::<u32>().ok()?, m.trim().parse::<u32>().ok()?)
-    };
-    match pm {
-        Some(pm) if (1..=12).contains(&h) => h = h % 12 + if pm { 12 } else { 0 },
-        Some(_) => return None,
-        None => {}
-    }
-    if !(1..=12).contains(&m) || d == 0 || d > 31 || h > 23 || min > 59 || !(1..=275_760).contains(&y) {
-        return None;
-    }
-    let iso = format!("{y:04}-{m:02}-{d:02}T00:00:00Z");
-    let midnight = format::parse_iso(&iso)?;
-    Some(format::local_to_utc(midnight + h as i64 * 3_600_000 + min as i64 * 60_000))
-}
-
-fn validate(max_uses: &str, expires: &str) -> Validation {
-    let now = format::now_ms();
-    let text = expires.trim();
-    let (expires_at, expires_error) = if text.is_empty() {
-        (None, None)
-    } else {
-        match parse_local(text) {
-            None => (None, Some("Enter a valid expiry date.")),
-            Some(at) if at <= now => (None, Some("Expiry must be in the future.")),
-            // The server reads RFC 3339, which has four-digit years.
-            Some(at) if format::local(at).year > 9999 => (None, Some("Expiry is too far in the future.")),
-            Some(at) => (Some(format::to_iso(at)), None),
-        }
-    };
-    let n = max_uses.trim();
-    let max = (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| n.parse::<i64>().ok())
-        .flatten()
-        .filter(|v| (1..=2_147_483_647).contains(v));
-    Validation {
-        max_uses: max,
-        expires_at,
-        max_uses_error: max.is_none().then_some("Max uses must be a whole number from 1 to 2,147,483,647."),
-        expires_error,
-    }
+    load(app, rows_res, api::list_invites, "Failed to load invites.", then);
 }
 
 fn set_role(app: &mut App, v: &str) {
-    st(app).role = v.to_string();
+    st(app).role = if v == Role::Admin.as_str() { Role::Admin } else { Role::User };
 }
 
 fn create(app: &mut App) {
@@ -185,13 +83,13 @@ fn create(app: &mut App) {
     if s.creating {
         return;
     }
-    let v = validate(&s.max_uses.text, &s.expires.text);
-    let (true, Some(max)) = (v.valid(), v.max_uses) else { return };
+    // Checked against the clock now, not when the form last drew.
+    let v = validate_invite_creation_with_date(&s.max_uses.text, &s.expires.text, now_ms());
+    let (true, Some(max)) = (v.valid, v.max_uses) else { return };
     s.action_error = None;
     s.creating = true;
-    let role = s.role.clone();
-    let expires = v.expires_at;
-    call(app, move |c| rq::create_invite(c, &role, max, expires.as_deref()), |app, r| match r {
+    let input = InviteCreate { target_role: Some(s.role), max_uses: Some(max), expires_at: v.expires_at };
+    call(app, move |c| api::create_invite(c, &input), |app, r| match r {
         Ok(created) => {
             let s = st(app);
             let has_token = created.token.as_deref().is_some_and(|t| !t.is_empty());
@@ -199,7 +97,7 @@ fn create(app: &mut App) {
             if !has_token {
                 s.action_error = Some("The invite was made, but the server didn't send its link. Revoke it and create another.".into());
             }
-            s.copied = false;
+            s.copied.clear();
             reload(app, |app| st(app).creating = false);
         }
         Err(e) => {
@@ -211,21 +109,18 @@ fn create(app: &mut App) {
 }
 
 fn revoke(app: &mut App, inv: &Invite) {
-    let expiry = match &inv.expires_at {
-        Some(at) if !at.is_empty() => format!("expires {}", format::date(at)),
-        _ => "no expiry".into(),
-    };
+    let expiry = invite_expiry_label(inv, fmt_date);
     let id = inv.id.clone();
     confirm::ask_then(
         app,
         ConfirmSpec::new("Revoke this invite?", "Its link stops working, so no one else can sign up with it.", "Revoke").maybe_subject(Some(Subject {
                 art: Art::Icon(&i::TICKET),
-                name: format!("{} invite", role_label(&inv.target_role)),
-                detail: Some(format!("{} used · {expiry}", usage(inv))),
+                name: format!("{} invite", invite_role_label(inv.target_role)),
+                detail: Some(format!("{} used · {expiry}", invite_usage(inv))),
             })).icon(&i::TRASH_2),
         move |app: &mut App| {
                 let id = id.clone();
-                call(app, move |c| rq::revoke_invite(c, &id), |app, r| match r {
+                call(app, move |c| api::revoke_invite(c, &id), |app, r| match r {
                     Ok(()) => reload(app, |_| {}),
                     Err(e) => st(app).action_error = Some(super::error_message(&e, "Failed to revoke.")),
                 });
@@ -245,19 +140,7 @@ fn invite_url(app: &App, token: &str) -> String {
 fn copy(app: &mut App, tx: &mut rune::Tx) {
     let Some(token) = st(app).just_created.as_ref().and_then(|c| c.token.clone()) else { return };
     tx.copy(invite_url(app, &token));
-    let s = st(app);
-    s.copied = true;
-    s.copied_gen += 1;
-    let stamp = s.copied_gen;
-    app.net.run(
-        || std::thread::sleep(Duration::from_millis(2000)),
-        move |app, ()| {
-            let s = st(app);
-            if s.copied_gen == stamp {
-                s.copied = false;
-            }
-        },
-    );
+    crate::ui::flash::flash(app, |app| &mut st(app).copied, 2000);
 }
 
 fn toggle_past(app: &mut App) {
@@ -291,7 +174,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
         720.0,
     ));
 
-    let v = validate(&s.max_uses.text, &s.expires.text);
+    let v = validate_invite_creation_with_date(&s.max_uses.text, &s.expires.text, now_ms());
     let field = |label: &str, control: El, error: Option<&str>| crate::ui::forms::field(t, label, control, None, error);
     let role = field(
         "Role",
@@ -300,7 +183,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
             t,
             "admin-invite-role",
             &[SelectOption::new("user", "User"), SelectOption::new("admin", "Admin")],
-            &s.role,
+            s.role.as_str(),
             SelectVariant::Outlined,
             "",
             false,
@@ -310,11 +193,11 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
     );
     let max_uses = field(
         "Max uses",
-        parts::text_field(t, "admin-invite-max-uses", &s.max_uses, "", max_uses_edit, Some(create)),
+        parts::text_field(t, "admin-invite-max-uses", &s.max_uses, "", max_uses_edit, create),
         v.max_uses_error,
     );
     let expires = field("Expires (optional)", datetime_field(t, s), v.expires_error);
-    let can = v.valid() && !s.creating;
+    let can = v.valid && !s.creating;
     let mut btn = Btn::new("admin-invite-create", if s.creating { "Creating…" } else { "Create" })
         .primary()
         .icon(&i::PLUS)
@@ -339,13 +222,12 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
 
     if let Some(token) = s.just_created.as_ref().and_then(|c| c.token.as_deref()) {
         let url = invite_url(app, token);
-        let copy_btn = Btn::new("admin-invite-copy", if s.copied { "Copied" } else { "Copy" })
+        let copy_btn = Btn::new("admin-invite-copy", if s.copied.on() { "Copied" } else { "Copy" })
             .small()
-            .icon(if s.copied { &i::CHECK } else { &i::CLIPBOARD })
-            .build(t)
-            .on_press_tx(copy);
+            .icon(if s.copied.on() { &i::CHECK } else { &i::CLIPBOARD });
         // The middle column: the box's content less the check, the button and their gaps.
-        let copy_w = 22.0 + 14.0 + 4.0 + table::advance(if s.copied { "Copied" } else { "Copy" }, font(13.0, 500.0));
+        let copy_w = copy_btn.width();
+        let copy_btn = copy_btn.build(t).on_press_tx(copy);
         let mid = width - 34.0 - 16.0 - 12.0 - copy_w - 12.0;
         let link = css_border(col(), 1.0, t.c.border, t.radius_lg())
             .mt(8.0)
@@ -384,9 +266,8 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
         panel = panel.child(parts::banner(t, e));
     }
 
-    let now = format::now_ms();
-    let all = s.rows.data.as_deref().unwrap_or(&[]);
-    let (active, past): (Vec<&Invite>, Vec<&Invite>) = all.iter().partition(|inv| status(inv, now) == "active");
+    let now = now_ms();
+    let (active, past) = partition_invites(s.rows.data.as_deref().unwrap_or(&[]), now);
     let empty = if s.rows.data.is_none() { "Loading…" } else { "No active invites. Create one above to get started." };
     let mut section = col()
         .gap(14.0)
@@ -418,8 +299,8 @@ fn invite_table(t: &Theme, key: &str, rows: &[&Invite], empty: Option<&str>, sho
         .iter()
         .map(|inv| {
             let mut cells = vec![
-                Cell::text(Line::new(role_label(&inv.target_role), font(14.0, 400.0), t.c.foreground)),
-                Cell::text(Line::new(usage(inv), dim, t.c.muted_foreground)),
+                Cell::text(Line::new(invite_role_label(inv.target_role), font(14.0, 400.0), t.c.foreground)),
+                Cell::text(Line::new(invite_usage(inv), dim, t.c.muted_foreground)),
                 Cell::text(Line::new(
                     inv.expires_at.as_deref().filter(|e| !e.is_empty()).map_or("—".into(), format::date_time),
                     dim,
@@ -427,15 +308,15 @@ fn invite_table(t: &Theme, key: &str, rows: &[&Invite], empty: Option<&str>, sho
                 )),
             ];
             if show_status {
-                cells.push(Cell::stack(vec![table::inline_badge(t, status(inv, now), false)], 0.0));
+                cells.push(Cell::stack(vec![table::inline_badge(t, invite_status(inv, now).as_str(), false)], 0.0));
             }
-            cells.push(Cell::text(Line::new(format::date(&inv.created_at), dim, t.c.muted_foreground)));
+            cells.push(Cell::text(Line::new(fmt_date(&inv.created_at), dim, t.c.muted_foreground)));
             if revocable {
                 let inv2 = (*inv).clone();
                 cells.push(table::actions(vec![Action::new(
                     format!("admin-invite-revoke-{}", inv.id),
                     &i::TRASH_2,
-                    format!("Revoke {} invite created {}", inv.target_role, format::date(&inv.created_at)),
+                    format!("Revoke {} invite created {}", inv.target_role.as_str(), fmt_date(&inv.created_at)),
                     "Revoke",
                 )
                 .danger()
@@ -453,7 +334,7 @@ pub fn scene_created(app: &mut App) {
     st(app).just_created = Some(Invite {
         id: "inv-9".into(),
         token: Some("lmn_Nw5RtY8uLp2KqX7c".into()),
-        target_role: "user".into(),
+        target_role: Role::User,
         max_uses: 1,
         uses: 0,
         expires_at: None,
@@ -469,34 +350,10 @@ pub fn scene_past_open(app: &mut App) {
 
 /// Scene: the question before revoking the active invite.
 pub fn scene_revoke(app: &mut App) {
-    let now = format::now_ms();
-    if let Some(inv) = app.pages.admin.invites.rows.data.as_ref().and_then(|r| r.iter().find(|i| status(i, now) == "active")).cloned() {
+    let now = now_ms();
+    if let Some(inv) =
+        app.pages.admin.invites.rows.data.as_ref().and_then(|r| r.iter().find(|i| invite_status(i, now) == InviteStatus::Active)).cloned()
+    {
         revoke(app, &inv);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validation() {
-        assert!(validate("1", "").valid());
-        assert_eq!(validate("0", "").max_uses_error, Some("Max uses must be a whole number from 1 to 2,147,483,647."));
-        assert!(validate("2147483648", "").max_uses_error.is_some());
-        assert!(validate("1.5", "").max_uses_error.is_some());
-        assert_eq!(validate("1", "soon").expires_error, Some("Enter a valid expiry date."));
-        assert_eq!(validate("1", "01/02/2020, 10:00 AM").expires_error, Some("Expiry must be in the future."));
-        assert!(validate("1", "2099-11-20T09:30").valid());
-        assert!(validate("1", "11/20/2099, 9:30 PM").valid());
-    }
-
-    #[test]
-    fn statuses() {
-        let inv = Invite { max_uses: 1, uses: 0, ..Default::default() };
-        assert_eq!(status(&inv, 0), "active");
-        assert_eq!(status(&Invite { uses: 1, ..inv.clone() }, 0), "exhausted");
-        assert_eq!(status(&Invite { expires_at: Some("1970-01-01T00:00:01Z".into()), ..inv.clone() }, 5000), "expired");
-        assert_eq!(status(&Invite { revoked_at: Some("x".into()), ..inv }, 0), "revoked");
     }
 }

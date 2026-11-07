@@ -83,8 +83,7 @@ pub fn details(app: &App, t: &Theme, w: f32) -> El {
         let ink = if n == 0 { t.c.destructive } else { t.c.foreground };
         // Whole lines of the CSS line height (Rune rounds a text box up).
         let opts = rune::text::RichLayoutOptions::new().wrap_anywhere();
-        let (_, h) = rune::text::measure_with(&l.value, &[], style, Some(value_w), opts);
-        let h = (h / style.line_height).round().max(1.0) * style.line_height;
+        let h = crate::ui::css_text_h_with(&l.value, style, Some(value_w), opts);
         grid = grid.child(
             row()
                 .key(format!("error-line-{n}"))
@@ -94,7 +93,7 @@ pub fn details(app: &App, t: &Theme, w: f32) -> El {
                 .child(text(l.value.clone()).font(style).color(ink).wrap_anywhere().selectable(true).w(value_w).h(h)),
         );
     }
-    let copied = app.ui.player.copied;
+    let copied = app.ui.player.copied.on();
     let copy = Btn::new("error-copy", if copied { "Copied" } else { "Copy details" })
         .small()
         .icon(if copied { &i::CHECK } else { &i::CLIPBOARD })

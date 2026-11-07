@@ -3,14 +3,17 @@
 //! API report, sent when it changes (a new track, play, pause, a seek, the
 //! length becoming known) and not again while Discord already shows it.
 //!
-//! The web app also mirrors another signed-in device's playback when this one
-//! isn't playing (its playback WebSocket); the native player has no remote
-//! playback yet, so only local playback is reported.
+//! It reads what the player bar shows (`app.player`'s routed fields): this
+//! device's playback, or the playback of the device it controls. The web app
+//! also mirrors another signed-in device's playback while this one plays
+//! nothing (the playback socket's latest activity); the native app doesn't.
 
 use std::collections::HashMap;
 
 use crate::api::TrackListItem;
+use crate::api::media::{SignedCoverUrl, sign_album_cover};
 use crate::app::App;
+use crate::format::clean_text;
 
 /// `DiscordActivityPayload`: what's playing, for Discord and the now-playing API.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -101,20 +104,6 @@ impl Sender {
     }
 }
 
-/// `displayText` (core): the server's mis-encoded separators repaired, trimmed.
-pub fn display_text(value: Option<&str>) -> String {
-    value
-        .unwrap_or("")
-        .replace("Ã\u{0082}Â·", "·")
-        .replace("Â·", "·")
-        .replace("Ã¢â\u{0082}¬â€œ", "—")
-        .replace("Ã\u{0085}Â\u{0081}", "L")
-        .replace("Ã\u{0084}", "")
-        .replace(['Â', 'Ã'], "")
-        .trim()
-        .to_string()
-}
-
 /// The player as last seen, to tell its events apart.
 #[derive(Clone, Debug, PartialEq)]
 struct Seen {
@@ -125,13 +114,6 @@ struct Seen {
     at: f64,
 }
 
-/// A signed album cover and when it expires (unix seconds).
-#[derive(Clone, Debug)]
-struct Signed {
-    url: String,
-    expires_at: i64,
-}
-
 /// Watches the player and feeds Discord and the now-playing API.
 #[derive(Default)]
 pub struct Presence {
@@ -139,7 +121,8 @@ pub struct Presence {
     seen: Option<Seen>,
     /// Bumped by every push and clear; a cover signed for an older one is dropped.
     generation: u64,
-    covers: HashMap<String, Signed>,
+    /// Signed album covers by album, until they expire.
+    covers: HashMap<String, SignedCoverUrl>,
 }
 
 /// What a push needs for its cover.
@@ -181,9 +164,9 @@ fn activity_for(track: &TrackListItem, playing: bool, position: f64, duration: O
     let nonempty = |s: String| (!s.is_empty()).then_some(s);
     Activity {
         track_id: Some(track.id.clone()),
-        title: display_text(Some(&track.title)),
-        artist: nonempty(display_text(track.artist.as_deref())),
-        album: nonempty(display_text(track.album_title.as_deref())),
+        title: clean_text(Some(&track.title)),
+        artist: nonempty(clean_text(track.artist.as_deref())),
+        album: nonempty(clean_text(track.album_title.as_deref())),
         cover_url: cover,
         duration_sec: duration.filter(|d| *d > 0.0),
         elapsed_sec: Some(position.max(0.0).floor()),
@@ -201,25 +184,29 @@ pub fn tick(app: &mut App) {
         }
         return;
     };
-    let seen = Seen {
-        track_id: track.id.clone(),
-        playing: player.playing,
-        duration: player.duration,
-        position: player.position,
-        at: now,
-    };
-    let changed = match &app.desktop.presence.seen {
+    let (playing, duration, position) = (player.playing, player.duration, player.position);
+    let seen = &mut app.desktop.presence.seen;
+    let changed = match seen {
         None => true,
         Some(last) => {
             let expected = last.position + if last.playing { (now - last.at) / 1000.0 } else { 0.0 };
-            last.track_id != seen.track_id
-                || last.playing != seen.playing
-                || last.duration.map(|d| d.round()) != seen.duration.map(|d| d.round())
+            last.track_id != track.id
+                || last.playing != playing
+                || last.duration.map(|d| d.round()) != duration.map(|d| d.round())
                 // A seek (or a loop back to the start).
-                || (seen.position - expected).abs() > if seen.playing { 2.0 } else { 0.5 }
+                || (position - expected).abs() > if playing { 2.0 } else { 0.5 }
         }
     };
-    app.desktop.presence.seen = Some(seen);
+    // Kept in place: the track's id is copied only when it changes.
+    match seen {
+        Some(last) => {
+            if last.track_id != track.id {
+                last.track_id.clone_from(&track.id);
+            }
+            (last.playing, last.duration, last.position, last.at) = (playing, duration, position, now);
+        }
+        None => *seen = Some(Seen { track_id: track.id.clone(), playing, duration, position, at: now }),
+    }
     if changed {
         push_local(app);
     }
@@ -242,15 +229,15 @@ fn push_local(app: &mut App) {
     match app.desktop.presence.plan(&track, &origin, now_sec) {
         CoverPlan::Ready(cover) => send(app, activity_for(&track, playing, position, duration, cover)),
         CoverPlan::Sign(album) => {
-            let path = format!("/api/covers/sign?album_id={}", urlencoding::encode(&album));
             let started = super::now_playing::now_ms();
+            let id = album.clone();
             app.net.run(
-                move || client.get::<SignedCover>(&path),
+                move || sign_album_cover(&client, &id),
                 move |app, result| {
                     let cover = match result {
                         Ok(signed) => {
                             let url = origin.join(&signed.url).ok().map(|u| u.to_string());
-                            app.desktop.presence.covers.insert(album, Signed { url: signed.url, expires_at: signed.expires_at });
+                            app.desktop.presence.covers.insert(album, signed);
                             url
                         }
                         Err(_) => None,
@@ -268,12 +255,6 @@ fn push_local(app: &mut App) {
             );
         }
     }
-}
-
-#[derive(serde::Deserialize)]
-struct SignedCover {
-    url: String,
-    expires_at: i64,
 }
 
 /// One push past the sender: to the now-playing API and Discord.
@@ -357,7 +338,7 @@ mod tests {
         let mut presence = Presence::default();
         let track = TrackListItem { id: "t1".into(), title: "Song".into(), album_id: Some("a1".into()), ..Default::default() };
         assert_eq!(presence.plan(&track, &origin, 1000), CoverPlan::Sign("a1".into()));
-        presence.covers.insert("a1".into(), Signed { url: "/api/public/covers/album/a1?exp=9&sig=s".into(), expires_at: 5000 });
+        presence.covers.insert("a1".into(), SignedCoverUrl { url: "/api/public/covers/album/a1?exp=9&sig=s".into(), expires_at: 5000 });
         assert_eq!(
             presence.plan(&track, &origin, 1000),
             CoverPlan::Ready(Some("https://music.example.com/api/public/covers/album/a1?exp=9&sig=s".into()))
@@ -370,7 +351,7 @@ mod tests {
 
     #[test]
     fn reads_the_tracks_text_as_the_os_surfaces_show_it() {
-        assert_eq!(display_text(Some("  A Â· B ")), "A · B");
+        assert_eq!(clean_text(Some("  A Â· B ")), "A · B");
         let track = TrackListItem { id: "t1".into(), title: "Song".into(), artist: Some(" ".into()), ..Default::default() };
         let a = activity_for(&track, true, 12.7, Some(0.0), None);
         assert_eq!((a.artist, a.duration_sec, a.elapsed_sec), (None, None, Some(12.0)));

@@ -131,7 +131,7 @@ fn connect(url: &str, cookie: Option<&str>) -> Result<Socket, String> {
     if let Some(cookie) = cookie.and_then(|c| c.parse().ok()) {
         headers.insert("Cookie", cookie);
     }
-    if let Ok(ua) = concat!("Lumen-Desktop/", env!("CARGO_PKG_VERSION")).parse() {
+    if let Ok(ua) = crate::net::USER_AGENT.parse() {
         headers.insert("User-Agent", ua);
     }
     let mut attempt = tungstenite::client::client(request, stream);

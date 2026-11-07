@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::client::{ApiError, ApiResult, Behavior, Cancel, Client, seg};
-use super::de::nullable;
+use super::de::{nullable, string_or_number};
 use super::types::{SearchAlbum, TrackListItem};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
@@ -39,8 +39,9 @@ pub struct TidalStatus {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct TidalAccount {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_number")]
     pub user_id: String,
     #[serde(default)]
     pub removable: bool,
@@ -86,8 +87,19 @@ pub enum TidalDownloadStatus {
     Failed,
 }
 
+impl TidalDownloadStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TidalDownloadStatus::Downloaded => "downloaded",
+            TidalDownloadStatus::Existing => "existing",
+            TidalDownloadStatus::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct TidalDownload {
+    #[serde(default, deserialize_with = "string_or_number")]
     pub tidal_id: String,
     #[serde(default)]
     pub status: TidalDownloadStatus,
@@ -111,7 +123,9 @@ pub struct TidalDownload {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct TidalAuthStart {
+    #[serde(default)]
     pub flow_id: String,
+    #[serde(default)]
     pub verification_url: String,
     #[serde(default)]
     pub user_code: Option<String>,

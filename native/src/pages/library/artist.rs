@@ -20,7 +20,7 @@ use crate::ui::track_list::TrackList;
 use super::album::not_found;
 use super::cards;
 use super::logic::{self, ArtistRelease, RELEASE_FILTER_OPTIONS};
-use crate::api::{self, error_message};
+use crate::api::{self, Client};
 use super::sleeve::{clear_on_escape, skeleton};
 
 const SHELF_LIMIT: usize = 6;
@@ -34,33 +34,25 @@ pub fn enter_library(app: &mut App, id: &str) {
             s.detail.artist = Some(a);
             s.detail.tracks = Some(t);
         }
-        super::refilter(app);
+        super::landed(app);
     }
-    let Some(client) = app.client.clone() else { return };
-    let d = &mut app.pages.library.detail;
-    d.seq += 1;
-    let (seq, key, id) = (d.seq, d.key.clone(), d.id.clone());
-    app.net.run(
-        move || -> api::ApiResult<_> { Ok((api::library::get_artist(&client, &id)?, api::library::list_artist_tracks(&client, &id)?)) },
-        move |app, result| {
+    super::load_detail(
+        app,
+        false,
+        |c: &Client, id: &str| -> api::ApiResult<_> { Ok((api::library::get_artist(c, id)?, api::library::list_artist_tracks(c, id)?)) },
+        "Failed to load artist.",
+        |app, (artist, tracks)| {
             let s = &mut app.pages.library;
-            if s.detail.seq != seq || s.detail.key != key {
-                return;
-            }
-            match result {
-                Ok((artist, tracks)) => {
-                    s.cache.artists.insert(s.detail.id.clone(), (artist.clone(), tracks.clone()));
-                    s.detail.artist = Some(artist);
-                    s.detail.tracks = Some(tracks);
-                    s.detail.error = None;
-                    super::refilter(app);
-                }
-                Err(e) if e.status == 404 => {
-                    s.cache.artists.remove(&s.detail.id);
-                    s.detail.not_found = true;
-                }
-                Err(e) => s.detail.error = Some(error_message(&e, "Failed to load artist.")),
-            }
+            s.cache.artists.insert(s.detail.id.clone(), (artist.clone(), tracks.clone()));
+            s.detail.artist = Some(artist);
+            s.detail.tracks = Some(tracks);
+            super::landed(app);
+        },
+        |app| {
+            let s = &mut app.pages.library;
+            s.cache.artists.remove(&s.detail.id);
+            s.detail.not_found = true;
+            false
         },
     );
 }
@@ -69,36 +61,29 @@ pub fn enter_tidal(app: &mut App, id: &str) {
     if super::mount(app, format!("tidal-artist:{id}"), id) {
         let s = &mut app.pages.library;
         s.detail.tidal_artist = s.cache.tidal_artists.get(id).cloned();
+        super::landed(app);
     }
     load_tidal(app);
 }
 
 fn load_tidal(app: &mut App) {
-    let Some(client) = app.client.clone() else { return };
-    let d = &mut app.pages.library.detail;
-    d.seq += 1;
-    let (seq, key, id, attempt) = (d.seq, d.key.clone(), d.id.clone(), d.attempt);
-    app.net.run(
-        move || api::tidal::get_tidal_artist(&client, &id),
-        move |app, result| {
+    super::load_detail(
+        app,
+        false,
+        |c: &Client, id: &str| api::tidal::get_tidal_artist(c, id),
+        "Couldn't load artist.",
+        |app, artist| {
             let s = &mut app.pages.library;
-            if s.detail.seq != seq || s.detail.key != key {
-                return;
-            }
-            s.detail.completed = Some(attempt);
-            match result {
-                Ok(artist) => {
-                    s.cache.tidal_artists.insert(s.detail.id.clone(), artist.clone());
-                    s.detail.tidal_artist = Some(artist);
-                }
-                Err(e) => {
-                    if e.status == 404 {
-                        s.cache.tidal_artists.remove(&s.detail.id);
-                        s.detail.tidal_artist = None;
-                    }
-                    s.detail.error = Some(error_message(&e, "Couldn't load artist."));
-                }
-            }
+            s.cache.tidal_artists.insert(s.detail.id.clone(), artist.clone());
+            s.detail.tidal_artist = Some(artist);
+            super::landed(app);
+        },
+        |app| {
+            let s = &mut app.pages.library;
+            s.cache.tidal_artists.remove(&s.detail.id);
+            s.detail.tidal_artist = None;
+            super::landed(app);
+            true
         },
     );
 }
@@ -316,12 +301,9 @@ fn discography(app: &App, t: &Theme, releases: &[ArtistRelease], width: f32) -> 
     }
     if d.show_all {
         let list: Vec<Box<dyn FnOnce(f32) -> El + '_>> = shown
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(n, r)| -> Box<dyn FnOnce(f32) -> El + '_> {
-                let r = r.clone();
-                Box::new(move |w| cards::release_card(app, t, &format!("release-{n}"), &r, w))
-            })
+            .map(|(n, r)| -> Box<dyn FnOnce(f32) -> El + '_> { Box::new(move |w| cards::release_card(app, t, &format!("release-{n}"), r, w)) })
             .collect();
         body = body.child(cards::grid(t, "artist-releases", width, list));
     } else {
@@ -351,7 +333,7 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     };
     let wrap = Bp::of(window_size(cx)[0]) != Bp::Wide && window_size(cx)[0] <= 900.0;
     let (rows, query) = (&d.rows, super::detail_query(app));
-    let image = logic::artist_image_url(None, tracks, None);
+    let image = api::media::artist_image(None, tracks, None);
     let meta = logic::artist_meta_parts(artist.track_count, artist.album_count, None);
     // Everything above the songs is the head of their (virtualised) list.
     let mut head = col()
@@ -363,9 +345,8 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     if let Some(e) = &d.error {
         head = head.child(error_banner(t, e));
     }
-    let releases = logic::library_artist_releases(tracks);
-    if query.is_none() && !releases.is_empty() {
-        head = head.child(discography(app, t, &releases, width));
+    if query.is_none() && !d.releases.is_empty() {
+        head = head.child(discography(app, t, &d.releases, width));
     }
     let look = SectionLook::artist();
     head = head.child(section_head(t, None, "Songs", None, look).key("artist-songs").mt(16.0));
@@ -383,10 +364,10 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, name_param: &str) -> E
     let loading = d.completed != Some(d.attempt);
     let warning = data.map(|a| a.warnings.join(" ")).filter(|w| !w.is_empty());
     let tracks: &[TrackListItem] = data.map_or(&[], |a| &a.tracks);
-    let releases = data.map(|a| logic::fold_release_versions(&logic::tidal_artist_releases(&a.albums))).unwrap_or_default();
+    let releases = &d.releases;
     let profile = data.and_then(|a| a.artist.as_ref());
     let name = profile.map(|p| p.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| name_param.to_string());
-    let image = logic::artist_image_url(profile.and_then(|p| p.cover_url.as_deref()), tracks, None);
+    let image = api::media::artist_image(profile.and_then(|p| p.cover_url.as_deref()), tracks, None);
     let meta = data.map(|_| logic::tidal_artist_meta_parts(releases.len(), tracks.len()));
     let mut v = col()
         .key("artist-page")
@@ -412,10 +393,10 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, name_param: &str) -> E
     }
     if data.is_some() {
         if !tracks.is_empty() {
-            v = v.child(popular(app, t, tracks, width));
+            v = v.child(popular(app, t, tracks));
         }
         if !releases.is_empty() {
-            v = v.child(discography(app, t, &releases, width));
+            v = v.child(discography(app, t, releases, width));
         }
         if releases.is_empty() && tracks.is_empty() && warning.is_none() && d.error.is_none() && !loading {
             v = v.child(empty_state(t, None, "No releases found.", None, None));
@@ -437,8 +418,7 @@ fn popular_rows(app: &App) -> &[TrackListItem] {
 
 /// `PopularTracks`: the first five, then the rest behind "See more". Each
 /// row plays the whole list.
-fn popular(app: &App, t: &Theme, tracks: &[TrackListItem], width: f32) -> El {
-    let _ = width;
+fn popular(app: &App, t: &Theme, tracks: &[TrackListItem]) -> El {
     let expanded = app.pages.library.detail.popular_expanded;
     let table = TrackList::new(POPULAR_LIST, popular_rows).queue(super::detail_tracks).headless().not_selectable().no_source_badge().build(app, t);
     let mut body = col().w_full().child(table);

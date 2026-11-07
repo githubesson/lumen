@@ -1,9 +1,7 @@
 //! The player's pure rules: `core/src/player/player-core.ts`, `play-list.ts`
 //! and `queue-progress.ts`.
 
-use std::collections::HashSet;
-
-use crate::api::{TrackListItem, TrackSource};
+use crate::api::TrackListItem;
 
 /// `RepeatMode`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -51,9 +49,6 @@ impl Repeat {
         }
     }
 }
-
-/// Smooth mix's crossfade lengths to choose from, in seconds.
-pub const SMOOTH_MIX_SECONDS: [u32; 4] = [3, 6, 9, 12];
 
 /// The exposed clock moves in these steps.
 pub const TIME_STATE_GRANULARITY_SEC: f64 = 0.25;
@@ -105,40 +100,6 @@ pub fn fisher_yates_with_anchor_by(
     }
 }
 
-/// `withPlayNext`: `list` with `tracks` right after position `at` (the
-/// current track), behind any leading run of ids in `run` (earlier Play Next
-/// picks). Other copies of `tracks` are taken out first and the current track
-/// stays where it is. Returns the list and the current track's new position;
-/// with `at` outside the list they go first and the position is `None`.
-pub fn with_play_next(
-    list: &[TrackListItem],
-    at: Option<usize>,
-    tracks: &[TrackListItem],
-    run: &HashSet<String>,
-) -> (Vec<TrackListItem>, Option<usize>) {
-    let Some(at) = at.filter(|&a| a < list.len()) else {
-        let ids: HashSet<&str> = tracks.iter().map(|t| t.id.as_str()).collect();
-        let mut out = tracks.to_vec();
-        out.extend(list.iter().filter(|t| !ids.contains(t.id.as_str())).cloned());
-        return (out, None);
-    };
-    let current = &list[at];
-    let picked: Vec<&TrackListItem> = tracks.iter().filter(|t| t.id != current.id).collect();
-    let ids: HashSet<&str> = picked.iter().map(|t| t.id.as_str()).collect();
-    let keep = |t: &&TrackListItem| !ids.contains(t.id.as_str());
-    let before: Vec<&TrackListItem> = list[..at].iter().filter(keep).collect();
-    let after: Vec<&TrackListItem> = list[at + 1..].iter().filter(keep).collect();
-    let run_end = after.iter().take_while(|t| run.contains(&t.id)).count();
-    let new_at = before.len();
-    let mut out: Vec<TrackListItem> = Vec::with_capacity(list.len() + picked.len());
-    out.extend(before.into_iter().cloned());
-    out.push(current.clone());
-    out.extend(after[..run_end].iter().map(|t| (*t).clone()));
-    out.extend(picked.into_iter().cloned());
-    out.extend(after[run_end..].iter().map(|t| (*t).clone()));
-    (out, Some(new_at))
-}
-
 /// `shouldReportPlay`: the backend's "played" rule, 30 s in or half done.
 pub fn should_report_play(current_time: f64, duration: f64) -> bool {
     current_time >= 30.0 || (duration > 0.0 && current_time / duration >= 0.5)
@@ -157,15 +118,7 @@ pub fn can_start_track(track: &TrackListItem) -> bool {
     track.unavailable != Some(true)
 }
 
-/// `isTidalTrack`.
-pub fn is_tidal_track(track: &TrackListItem) -> bool {
-    track.source == Some(TrackSource::Tidal)
-}
-
-/// `playableTracks`: the rows that can be queued.
-pub fn playable_tracks(tracks: &[TrackListItem]) -> Vec<TrackListItem> {
-    tracks.iter().filter(|t| can_start_track(t)).cloned().collect()
-}
+pub use crate::core::track::{is_tidal_track, playable_tracks};
 
 /// `continuesAlbum`: `next` is the track after `current` on the same album,
 /// where smooth mix doesn't fade (album tracks often run into each other).
@@ -240,6 +193,7 @@ pub(crate) fn track(id: &str) -> TrackListItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::TrackSource;
 
     fn ids(list: &[TrackListItem]) -> Vec<&str> {
         list.iter().map(|t| t.id.as_str()).collect()
@@ -284,27 +238,6 @@ mod tests {
         assert_eq!(ids(&out), ["a", "b", "c", "d", "e"]);
         let out = fisher_yates_with_anchor_by(&list, None, |_| 0);
         assert_eq!(ids(&out), ["b", "c", "d", "e", "a"]);
-    }
-
-    #[test]
-    fn play_next_goes_after_the_current_track_and_its_run() {
-        let list = tracks(&["a", "b", "c", "d"]);
-        let none = HashSet::new();
-        let (out, at) = with_play_next(&list, Some(1), &tracks(&["x"]), &none);
-        assert_eq!((ids(&out), at), (vec!["a", "b", "x", "c", "d"], Some(1)));
-        // An earlier pick (x) keeps its place ahead of the next.
-        let run: HashSet<String> = ["x".to_string()].into();
-        let (out2, at2) = with_play_next(&out, Some(1), &tracks(&["y"]), &run);
-        assert_eq!((ids(&out2), at2), (vec!["a", "b", "x", "y", "c", "d"], Some(1)));
-        // A track already queued moves; one before the current shifts it back.
-        let (out3, at3) = with_play_next(&list, Some(2), &tracks(&["a", "d"]), &none);
-        assert_eq!((ids(&out3), at3), (vec!["b", "c", "a", "d"], Some(1)));
-        // The current track itself stays put.
-        let (out4, _) = with_play_next(&list, Some(1), &tracks(&["b"]), &none);
-        assert_eq!(ids(&out4), ["a", "b", "c", "d"]);
-        // Outside the list they go first.
-        let (out5, at5) = with_play_next(&list, None, &tracks(&["c", "z"]), &none);
-        assert_eq!((ids(&out5), at5), (vec!["c", "z", "a", "b", "d"], None));
     }
 
     #[test]

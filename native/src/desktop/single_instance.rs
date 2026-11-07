@@ -12,6 +12,7 @@
 use std::sync::OnceLock;
 
 /// The data directory, as a short stable key.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn key() -> String {
     let dir = crate::config::data_dir();
     let text = dir.to_string_lossy().to_lowercase();

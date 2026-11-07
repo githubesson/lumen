@@ -5,11 +5,15 @@ use std::collections::HashSet;
 
 use rune::{El, col, row, text};
 
-use super::requests::{self as rq, AdminUser};
 use super::table::{self, Action, Cell, Col, Empty, Line, Part};
-use super::{Res, call, delete_user, format, load, parts};
+use super::{call, delete_user, format, parts};
+use crate::api::Role;
+use crate::api::admin as api;
+use crate::api::auth::AdminUser;
 use crate::app::App;
+use crate::format::{fmt_date, pluralize};
 use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
+use crate::resource::{Res, load};
 use crate::theme::Theme;
 use crate::ui::{Btn, font, icons as i, kit, tnum};
 
@@ -24,8 +28,8 @@ pub struct State {
 fn st(app: &mut App) -> &mut State {
     &mut app.pages.admin.users
 }
-fn list_res(app: &mut App) -> &mut Res<Vec<AdminUser>> {
-    &mut app.pages.admin.users.list
+fn list_res(app: &mut App) -> Option<&mut Res<Vec<AdminUser>>> {
+    Some(&mut app.pages.admin.users.list)
 }
 
 pub fn mount(app: &mut App) {
@@ -37,17 +41,17 @@ pub fn mount(app: &mut App) {
 }
 
 pub fn reload(app: &mut App) {
-    load(app, list_res, rq::list_admin_users, "Failed to load users.", |_| {});
+    load(app, list_res, api::list_users, "Failed to load users.", |_| {});
 }
 
 /// "4 users · 1 admin · 1 disabled": the total, then the counts that aren't zero.
 fn summary(users: &[AdminUser]) -> String {
-    let admins = users.iter().filter(|u| u.role == "admin").count() as u64;
+    let admins = users.iter().filter(|u| u.role == Role::Admin).count() as u64;
     let disabled = users.iter().filter(|u| u.disabled).count();
     let reset = users.iter().filter(|u| u.must_reset_password).count();
-    let mut parts = vec![format::pluralize(users.len() as u64, "user")];
+    let mut parts = vec![pluralize(users.len() as u64, "user")];
     if admins > 0 {
-        parts.push(format::pluralize(admins, "admin"));
+        parts.push(pluralize(admins, "admin"));
     }
     if disabled > 0 {
         parts.push(format!("{disabled} disabled"));
@@ -62,11 +66,11 @@ fn set_disabled(app: &mut App, user: AdminUser) {
     st(app).action_error = None;
     st(app).busy.insert(user.id.clone());
     let (id, disable) = (user.id.clone(), !user.disabled);
-    call(app, move |c| rq::set_user_disabled(c, &id, disable), move |app, r| {
+    call(app, move |c| api::set_user_disabled(c, &id, disable), move |app, r| {
         match r {
             Ok(()) => {
                 let id = user.id.clone();
-                load(app, list_res, rq::list_admin_users, "Failed to load users.", move |app| {
+                load(app, list_res, api::list_users, "Failed to load users.", move |app| {
                     st(app).busy.remove(&id);
                 });
                 return;
@@ -86,7 +90,7 @@ fn toggle_disabled(app: &mut App, user: &AdminUser) {
         return;
     }
     let last = match &user.last_login_at {
-        Some(at) => format!("last signed in {}", format::date(at)),
+        Some(at) => format!("last signed in {}", fmt_date(at)),
         None => "never signed in".into(),
     };
     let u = user.clone();
@@ -95,7 +99,7 @@ fn toggle_disabled(app: &mut App, user: &AdminUser) {
         ConfirmSpec::new("Disable this account?", "They're signed out everywhere and can't sign in until you enable it again.", "Disable").maybe_subject(Some(Subject {
                 art: Art::Person(user.username.clone()),
                 name: user.username.clone(),
-                detail: Some(format!("{} · {last}", if user.role == "admin" { "Admin" } else { "User" })),
+                detail: Some(format!("{} · {last}", if user.role == Role::Admin { "Admin" } else { "User" })),
             })).icon(&i::USER_X),
         move |app: &mut App| set_disabled(app, u.clone()),
     );
@@ -137,7 +141,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
             let ink = if u.disabled { t.c.muted_foreground } else { t.c.foreground };
             let (min, max) = Line::new(u.username.clone(), style, ink).widths();
             let mut name = vec![(text(u.username.clone()).font(style).color(ink).wrap().shrink(), min, max)];
-            for (show, label) in [(is_me, "you"), (u.role == "admin", "admin"), (u.disabled, "disabled"), (u.must_reset_password, "reset required")] {
+            for (show, label) in [(is_me, "you"), (u.role == Role::Admin, "admin"), (u.disabled, "disabled"), (u.must_reset_password, "reset required")] {
                 if show {
                     let (b, w) = table::badge(t, label, false);
                     name.push((b, w, w));
@@ -168,7 +172,7 @@ pub fn view(app: &App, t: &Theme, width: f32) -> El {
                 key: format!("admin-user-{}", u.id),
                 cells: vec![
                     Cell::stack(vec![Part::Row(name, 8.0)], 0.0),
-                    Cell::text(Line::new(format::date(&u.created_at), dim, t.c.muted_foreground)),
+                    Cell::text(Line::new(fmt_date(&u.created_at), dim, t.c.muted_foreground)),
                     Cell::text(Line::new(last, dim, t.c.muted_foreground)),
                     acts,
                 ],

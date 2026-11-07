@@ -106,11 +106,6 @@ fn set_bounds(hwnd: HWND, r: Rect) {
     unsafe { SetWindowPos(hwnd, std::ptr::null_mut(), r.x, r.y, r.w, r.h, SWP_NOZORDER | SWP_NOACTIVATE) };
 }
 
-pub fn is_maximized() -> bool {
-    // SAFETY: a live window owned by this thread.
-    hwnd().is_some_and(|h| unsafe { IsZoomed(h) } != 0)
-}
-
 /// Through `WM_SYSCOMMAND`, so winit's idea of the window's state follows.
 pub fn minimize() -> bool {
     let Some(h) = hwnd() else { return false };

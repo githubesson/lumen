@@ -209,23 +209,14 @@ pub fn activity_chart_scale(buckets: &[ReplayActivityBucket], max_labels: usize)
     (max, buckets.len().div_ceil(max_labels.max(1)).max(1))
 }
 
-/// How much an axis label says: the phone's narrow chart is terse.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ActivityLabelStyle {
-    Compact,
-    #[default]
-    Verbose,
-}
-
-/// `activityBucketLabel`: the axis label for the bucket starting at
-/// `start_ms`, read in UTC (en-US: "7", "Mar 7", "M", "Mar 26").
-pub fn activity_bucket_label(start_ms: i64, bucket: ReplayBucket, style: ActivityLabelStyle) -> String {
+/// `activityBucketLabel` (the desktop's verbose labels; the phone's
+/// compact ones aren't ported): the axis label for the bucket starting at
+/// `start_ms`, read in UTC (en-US: "Mar 7", "Mar 26").
+pub fn activity_bucket_label(start_ms: i64, bucket: ReplayBucket) -> String {
     let p = dates::utc_parts(start_ms);
     let month = MONTHS_SHORT[p.month as usize - 1];
-    match (style, bucket) {
-        (ActivityLabelStyle::Compact, ReplayBucket::Day) => p.day.to_string(),
-        (ActivityLabelStyle::Compact, ReplayBucket::Month) => month[..1].to_string(),
-        (ActivityLabelStyle::Verbose, ReplayBucket::Month) => format!("{month} {:02}", p.year.rem_euclid(100)),
+    match bucket {
+        ReplayBucket::Month => format!("{month} {:02}", p.year.rem_euclid(100)),
         _ => format!("{month} {}", p.day),
     }
 }

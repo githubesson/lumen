@@ -1,6 +1,5 @@
 //! `core/src/metadata-edit.ts`: the track and album edit forms, and the
-//! minimal patches they send (only what changed). Plus `use-edit-draft.ts`
-//! as [`EditDraft`].
+//! minimal patches they send (only what changed).
 
 use crate::api::{Album, AlbumPatch, TrackDetail, TrackPatch};
 use crate::core::js::int_or_zero;
@@ -82,7 +81,7 @@ pub fn build_track_patch(track: &TrackDetail, form: &TrackEditForm) -> TrackPatc
     }
     let year = int_or_zero(&form.year);
     if track.year.unwrap_or(0) as i64 != year {
-        patch.year = Some(year as i32);
+        patch.year = Some(year.clamp(i32::MIN.into(), i32::MAX.into()) as i32);
     }
     let genre = form.genre.trim();
     if track.genre.as_deref().unwrap_or("") != genre {
@@ -90,11 +89,11 @@ pub fn build_track_patch(track: &TrackDetail, form: &TrackEditForm) -> TrackPatc
     }
     let tn = int_or_zero(&form.track_no).max(0);
     if track.track_no.unwrap_or(0) as i64 != tn {
-        patch.track_no = Some(tn as u32);
+        patch.track_no = Some(tn.min(u32::MAX.into()) as u32);
     }
     let dn = int_or_zero(&form.disc_no).max(0);
     if track.disc_no.unwrap_or(0) as i64 != dn {
-        patch.disc_no = Some(dn as u32);
+        patch.disc_no = Some(dn.min(u32::MAX.into()) as u32);
     }
     patch
 }
@@ -112,56 +111,12 @@ pub fn build_album_patch(album: &Album, form: &AlbumEditForm) -> AlbumPatch {
     }
     let year = int_or_zero(&form.year);
     if album.release_year.unwrap_or(0) as i64 != year {
-        patch.release_year = Some(year as i32);
+        patch.release_year = Some(year.clamp(i32::MIN.into(), i32::MAX.into()) as i32);
     }
     if form.is_compilation != album.is_compilation {
         patch.is_compilation = Some(form.is_compilation);
     }
     patch
-}
-
-/// `useEditDraft`: form state for loaded data a refetch can replace while
-/// the form is open. Until the first edit, a new source refills the draft;
-/// after that both stay put, so a save diffs against what the form showed.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditDraft<S, F> {
-    base: S,
-    draft: F,
-    edited: bool,
-}
-
-impl<S: PartialEq + Clone, F> EditDraft<S, F> {
-    pub fn new(source: S, to_form: impl FnOnce(&S) -> F) -> Self {
-        let draft = to_form(&source);
-        EditDraft { base: source, draft, edited: false }
-    }
-
-    /// A newer source: refills the draft unless the user has edited it.
-    pub fn sync(&mut self, source: &S, to_form: impl FnOnce(&S) -> F) {
-        if !self.edited && *source != self.base {
-            self.base = source.clone();
-            self.draft = to_form(source);
-        }
-    }
-
-    /// What the draft was filled from; diff against this to save.
-    pub fn base(&self) -> &S {
-        &self.base
-    }
-
-    pub fn draft(&self) -> &F {
-        &self.draft
-    }
-
-    /// Change the draft; the first change pins it and its base.
-    pub fn edit(&mut self, f: impl FnOnce(&mut F)) {
-        self.edited = true;
-        f(&mut self.draft);
-    }
-
-    pub fn is_edited(&self) -> bool {
-        self.edited
-    }
 }
 
 #[cfg(test)]
@@ -310,17 +265,5 @@ mod tests {
             AlbumEditForm { title: "Album".into(), album_artist: String::new(), year: String::new(), is_compilation: true }
         );
         assert!(build_album_patch(&bare, &album_edit_form(&bare)).is_empty());
-    }
-
-    // use-edit-draft.test.tsx
-    #[test]
-    fn edit_drafts_refill_until_edited() {
-        let mut d = EditDraft::new(1, |s: &i32| s.to_string());
-        d.sync(&2, |s| s.to_string());
-        assert_eq!((d.base(), d.draft().as_str()), (&2, "2"));
-        d.edit(|f| f.push('!'));
-        d.sync(&3, |s| s.to_string());
-        assert_eq!((d.base(), d.draft().as_str()), (&2, "2!"));
-        assert!(d.is_edited());
     }
 }

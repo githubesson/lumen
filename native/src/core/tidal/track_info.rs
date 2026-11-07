@@ -325,19 +325,6 @@ pub struct TrackInfoView {
     pub year: String,
 }
 
-/// `trackInfoArtistAlbumId`: the TIDAL album to ask for when TIDAL's
-/// details came without artist ids (an older server), to link the primary
-/// artist through the album's.
-pub fn track_info_artist_album_id(track: Option<&TrackDetail>, tidal: Option<&TidalTrackInfoResult>) -> Option<String> {
-    let track = track?;
-    let artists = tidal.and_then(|t| t.info.as_ref()).map(|i| i.artists.as_slice()).unwrap_or(&[]);
-    let album = track.source_album_id.as_deref().filter(|s| !s.is_empty())?;
-    if !is_tidal_track(track) || artists.is_empty() || artists.iter().any(|a| a.id.is_some()) {
-        return None;
-    }
-    Some(album.to_string())
-}
-
 fn is_blank(v: &str) -> bool {
     v.trim().is_empty() || v == "—"
 }

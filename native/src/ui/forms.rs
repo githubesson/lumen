@@ -267,7 +267,51 @@ fn listbox_layer(app: &App, t: &Theme, cx: &mut rune::Cx<App>) -> Option<El> {
 }
 
 /// Binds a field to its `TextEdit` in the app state.
-pub type EditBind = fn(&mut App) -> &mut TextEdit;
+pub type Bind = fn(&mut App) -> &mut TextEdit;
+
+/// `.input:focus`'s rings round `e` (`.search` takes them too): `0 0 0 1px
+/// var(--focus-ring), 0 0 0 4px color-mix(in oklch, var(--ring) 30%,
+/// transparent)`.
+pub fn focus_rings(t: &Theme, e: El) -> El {
+    e.box_shadow(rune::Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: t.c.focus_ring, inset: false }).box_shadow(rune::Shadow {
+        x: 0.0,
+        y: 0.0,
+        blur: 0.0,
+        spread: 4.0,
+        color: color_mix(t.c.ring, 0.3, Color::TRANSPARENT),
+        inset: false,
+    })
+}
+
+/// `.input`: the 32 px outlined box (keyed `{key}-box`) round `field`, a
+/// [`text_field`]; while `focused` its border takes `--focus-ring` and the
+/// [`focus_rings`] go round it.
+pub fn input_box(t: &Theme, key: &str, focused: bool, field: El) -> El {
+    let b = css_border(el(), 1.0, if focused { t.c.focus_ring } else { t.c.input }, t.radius_lg())
+        .key(format!("{key}-box"))
+        .h(32.0)
+        .w_full()
+        .radius(t.radius_lg())
+        .fill(t.c.input_bg)
+        .items_center();
+    let b = if focused { focus_rings(t, b) } else { b };
+    b.child(field)
+}
+
+/// `.input`'s text field, keyed `key`: one line of `style` in the
+/// foreground, the placeholder muted, 10 px in from the box's 1 px border.
+/// Bind it with `.on_edit(..)`; give it a `.label(..)` without a visible one.
+pub fn text_field(t: &Theme, key: &str, edit: &TextEdit, style: rune::TextStyle, placeholder: &str) -> El {
+    rune::text_input(edit, style)
+        .key(key)
+        .single_line()
+        .placeholder(placeholder, t.c.muted_foreground)
+        .color(t.c.foreground)
+        .caret(t.c.foreground, t.c.selection)
+        .selection_color(t.c.selection)
+        .grow(1.0)
+        .px(11.0)
+}
 
 /// `SearchInput`: the `.search` box with a magnifier and a text field.
 /// `bind` gets the inner text field, where its `.on_edit(..)`,
@@ -296,16 +340,7 @@ pub fn search_input(
         None => b.w_full(),
     };
     if focused {
-        b = b
-            .box_shadow(rune::Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: t.c.focus_ring, inset: false })
-            .box_shadow(rune::Shadow {
-                x: 0.0,
-                y: 0.0,
-                blur: 0.0,
-                spread: 4.0,
-                color: color_mix(t.c.ring, 0.3, Color::TRANSPARENT),
-                inset: false,
-            });
+        b = focus_rings(t, b);
     }
     b.child(ico(&i::SEARCH, 14.0, t.c.muted_foreground)).child(bind(
         rune::text_input(edit, font(14.0, 400.0))
@@ -314,6 +349,7 @@ pub fn search_input(
             .placeholder(placeholder, t.c.muted_foreground)
             .label(placeholder)
             .color(t.c.foreground)
+            .caret(t.c.foreground, t.c.selection)
             .selection_color(t.c.selection)
             .grow(1.0)
             .min_w(0.0),
@@ -354,27 +390,28 @@ pub fn field_row(children: Vec<El>) -> El {
     r
 }
 
-/// `SettingRow`: label (and description) on the left, the control on the
-/// right, `below` across the full width, a hairline under it unless `last`.
-pub fn setting_row(
-    t: &Theme,
-    label: &str,
-    description: Option<&str>,
-    control: Option<El>,
-    below: Option<El>,
-    error: Option<&str>,
-    last: bool,
-) -> El {
-    setting_row_in(t, label, description, control, below, error, last, None)
+/// `SettingRow`'s description: a line of text, or a status line (tabular,
+/// red when it failed: the updater's).
+pub enum Desc {
+    Text(String),
+    Status { text: String, error: bool },
+}
+
+/// `SettingRow` (`.settings-row`): label (and description) on the left, the
+/// control on the right, `below` across the full width, a hairline under it
+/// unless `last`.
+pub fn setting_row(t: &Theme, label: &str, desc: Option<Desc>, control: Option<El>, below: Option<El>, error: Option<&str>, last: bool) -> El {
+    setting_row_in(t, label, desc, control, below, error, last, None)
 }
 
 /// [`setting_row`] whose texts are `text_width` wide, boxed as CSS boxes
-/// them (whole lines, where rune rounds each text box up).
+/// them (whole lines, where rune rounds each text box up). Without a width
+/// the description keeps its lines' height from the last layout.
 #[allow(clippy::too_many_arguments)]
 pub fn setting_row_in(
     t: &Theme,
     label: &str,
-    description: Option<&str>,
+    desc: Option<Desc>,
     control: Option<El>,
     below: Option<El>,
     error: Option<&str>,
@@ -389,19 +426,24 @@ pub fn setting_row_in(
         None => title.h(label_style.line_height),
     };
     let mut texts = col().min_w(0.0).shrink().child(title);
-    if let Some(d) = description {
+    if let Some(d) = desc {
         let style = with_lh(font(12.0, 400.0), 16.8);
-        let mut e = text(d).font(style).color(t.c.muted_foreground).wrap_anywhere().mt(2.0);
-        if let Some(w) = text_width {
-            e = e.h(crate::ui::css_text_h(d, style, Some(w)));
-        }
-        texts = texts.child(e);
+        let (d, style, ink) = match d {
+            Desc::Text(d) => (d, style, t.c.muted_foreground),
+            Desc::Status { text, error } => (text, crate::ui::tnum(style), if error { t.c.destructive } else { t.c.muted_foreground }),
+        };
+        let h = text_width.map(|w| crate::ui::css_text_h(&d, style, Some(w)));
+        let e = text(d).font(style).color(ink).wrap_anywhere();
+        texts = texts.child(match h {
+            Some(h) => e.h(h).mt(2.0),
+            None => crate::ui::snug_lines(&format!("settings-desc-{label}"), e, style.line_height).mt(2.0),
+        });
     }
     let mut main = row().min_h(28.0).gap(16.0).items_center().justify_between().child(texts);
     if let Some(c) = control {
         main = main.child(el().child(c));
     }
-    let mut r = col().gap(8.0).pt(14.0).pb(if last { 14.0 } else { 15.0 }).child(main);
+    let mut r = col().w_full().gap(8.0).pt(14.0).pb(if last { 14.0 } else { 15.0 }).child(main);
     if !last {
         r = crate::ui::css_border_bottom(r, 1.0, t.c.border);
     }
@@ -412,4 +454,42 @@ pub fn setting_row_in(
         r = r.child(text(e).font(font(12.0, 400.0)).color(t.c.destructive).wrap());
     }
     r
+}
+
+/// `<Select variant="minimal">` in a setting row's control
+/// (`.settings-row-control [role=combobox]`): the value itself in the
+/// foreground, like a menu button, then the muted chevrons. Its accessible
+/// name is the value unless the caller sets a `.label(..)`.
+pub fn setting_select(
+    app: &App,
+    t: &Theme,
+    key: &str,
+    options: Vec<SelectOption>,
+    value: &str,
+    disabled: bool,
+    on_change: fn(&mut App, &str),
+) -> El {
+    let open = app.select.as_ref().is_some_and(|s| s.key == key);
+    let label = options.iter().find(|o| o.value == value).map(|o| o.label.clone()).unwrap_or_else(|| "Select…".into());
+    let spec = OpenSelect::new(key, options, value, SelectVariant::Minimal, on_change);
+    // `padding: 4px 2px 4px 6px` round `text-sm`'s 20 px line.
+    let b = row()
+        .key(key)
+        .h(28.0)
+        .pl(6.0)
+        .pr(2.0)
+        .gap(4.0)
+        .items_center()
+        .radius(t.radius_md())
+        .role("combobox")
+        .expanded(open)
+        .label(label.clone())
+        .child(line(label, with_lh(font(14.0, 400.0), 20.0), t.c.foreground))
+        .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground));
+    if disabled {
+        return b.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed);
+    }
+    b.cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| {
+        app.select = if app.select.as_ref().is_some_and(|s| s.key == spec.key) { None } else { Some(spec.clone()) };
+    })
 }

@@ -75,7 +75,6 @@ pub fn rescan_progress(status: Option<&RescanStatus>) -> Option<RescanProgress> 
     Some(RescanProgress { count, detail })
 }
 
-pub const RESCAN_POLL_MS: u64 = 2000;
 pub const MAX_RESCAN_POLL_FAILURES: u32 = 5;
 
 /// `watchRescan`: read the status at once and then every `interval` until

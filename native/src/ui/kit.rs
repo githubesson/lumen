@@ -1,18 +1,18 @@
 //! Shared building blocks used across pages and overlays: the web app's
 //! scroll areas (with its styled scrollbar), `DialogShell`, menus
 //! (`.menu`, `.ctx-menu`), `.segmented`, `Switch`, `.toolbar-group`, and the
-//! status primitives (`EmptyState`, `LoadingState`, `ErrorBanner`,
-//! `PageHeader`).
+//! status primitives (`EmptyState`, `LoadingState`, `ErrorBanner`).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use rune::{Color, Cursor, El, Icon, Live, ScrollPos, Shadow, Side, col, el, row, text};
+use rune::{Color, Cursor, El, Icon, Live, ScrollPos, Shadow, col, el, row, text};
 
 use crate::app::App;
 use crate::theme::{Theme, color_mix};
-use crate::ui::{BtnState, font, ico, iconbtn, icons as i, line, motion, with_lh};
+use crate::ui::{BtnState, font, ico, iconbtn, icons as i, motion};
 use crate::ui::tooltip::TipExt;
+use crate::ui::ShadowMd;
 
 thread_local! {
     static THUMBS: RefCell<HashMap<String, Live<[f32; 4]>>> = RefCell::new(HashMap::new());
@@ -58,18 +58,14 @@ fn thumb_live(key: &str) -> Live<[f32; 4]> {
     THUMBS.with(|m| m.borrow_mut().entry(key.to_string()).or_insert_with(|| Live::new([0.0, 0.0, 0.0, 0.0])).clone())
 }
 
-/// A vertical scroll viewport with the web app's scrollbar (`base.css`):
-/// a 10 px gutter that is always reserved (`scrollbar-gutter: stable`, as
-/// `.content` has) holding a 6 px pill in `--border` (`--input` on hover),
-/// inset 2 px, shown while the content overflows. `content` is laid out
-/// 10 px narrower than the area. Grow or size the result like any box.
-pub fn scroll_area(t: &Theme, key: &str, content: El) -> El {
-    scroll_area_with(t, key, content, true)
-}
-
-/// [`scroll_area`] without the reserved gutter: the bar overlays the
-/// content's right edge (plain `overflow: auto`, which on Windows also
-/// takes 10 px, but only while overflowing).
+/// A vertical scroll viewport with the web app's scrollbar (`base.css`): a
+/// 6 px pill in `--border` (`--input` on hover), inset 2 px in a 10 px
+/// gutter, shown while the content overflows. With `stable_gutter` the
+/// gutter is always reserved (`scrollbar-gutter: stable`, as `.content`
+/// has) and `content` is laid out 10 px narrower than the area; without, the
+/// bar overlays the content's right edge (plain `overflow: auto`, which on
+/// Windows also takes 10 px, but only while overflowing). Grow or size the
+/// result like any box.
 pub fn scroll_area_with(t: &Theme, key: &str, content: El, stable_gutter: bool) -> El {
     scroll_area_fit(t, key, content, stable_gutter, None)
 }
@@ -81,7 +77,7 @@ pub fn scroll_area_fit(t: &Theme, key: &str, content: El, stable_gutter: bool, m
     scroll_area_impl(t, key, content, stable_gutter, max_h, None)
 }
 
-/// [`scroll_area`] whose viewport also clips to its own rounded `corners`
+/// [`scroll_area_with`] (its gutter reserved) whose viewport also clips to its own rounded `corners`
 /// (top left, top right, bottom right, bottom left): the padding-box radius
 /// CSS clips an `overflow: hidden` box's content to inside its border, for a
 /// viewport that sits in a rounded panel's corner. Without it the content
@@ -260,8 +256,7 @@ pub fn dialog_footer(t: &Theme, start: Option<El>, buttons: Vec<El>) -> El {
     for b in buttons {
         right = right.child(b);
     }
-    let mut bar = crate::ui::css_border(row(), 0.0, Color::TRANSPARENT, 0.0)
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert())
+    let mut bar = crate::ui::css_border_top(row(), 1.0, t.c.border)
         .px(16.0)
         .pt(11.0)
         .pb(10.0)
@@ -277,14 +272,12 @@ pub fn dialog_footer(t: &Theme, start: Option<El>, buttons: Vec<El>) -> El {
 /// `.menu` / `.ctx-menu`: the popover box menus and popovers share.
 pub fn menu_panel(t: &Theme, key: &str, width: Option<f32>) -> El {
     let r = t.radius_lg();
-    let a = t.c.shadow_md_alpha;
     let mut m = crate::ui::css_border(col(), 1.0, t.c.border, r)
         .key(key)
         .padding(5.0)
         .radius(r)
         .fill(t.c.popover)
-        .box_shadow(Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .shadow_md(t)
         .clip_rounded(r)
         .transition(rune::Transition::scale(0.96))
         .role("menu");
@@ -295,46 +288,9 @@ pub fn menu_panel(t: &Theme, key: &str, width: Option<f32>) -> El {
     m
 }
 
-/// `.ctx-item` / `.menu-item`: icon, label, and an optional trailing hint.
-pub fn menu_item(t: &Theme, key: &str, glyph: Option<&'static Icon>, label: &str, hint: Option<&str>, disabled: bool) -> El {
-    let mut it = row()
-        .key(key)
-        .w_full()
-        .min_h(28.0)
-        .px(6.0)
-        .py(4.0)
-        .gap(6.0)
-        .items_center()
-        .radius(t.radius_md())
-        .role("menuitem")
-        .label(label);
-    if let Some(g) = glyph {
-        it = it.child(ico(g, 14.0, t.c.popover_foreground).group_color(t.c.accent_foreground));
-    }
-    it = it.child(line(label, font(14.0, 400.0), t.c.popover_foreground).group_color(t.c.accent_foreground).grow(1.0));
-    if let Some(h) = hint {
-        it = it.child(text(h).font(font(12.0, 400.0)).color(t.c.muted_foreground));
-    }
-    if disabled {
-        it.opacity(0.5).disabled(true)
-    } else {
-        it.hover(t.c.accent).focus_highlight(t.c.accent).press_scale(0.98).focusable(true)
-    }
-}
-
 /// `.ctx-sep`.
 pub fn menu_sep(t: &Theme) -> El {
     el().h(1.0).mx(-4.0).my(4.0).fill(t.c.border)
-}
-
-/// `.ctx-heading`.
-pub fn menu_heading(t: &Theme, label: &str) -> El {
-    el().px(6.0).py(4.0).child(text(label).font(font(12.0, 500.0)).color(t.c.muted_foreground))
-}
-
-/// Anchor a popover to `anchor_key` (`El::anchored`), below it, start-aligned.
-pub fn anchored_below(e: El, anchor_key: &str, gap: f32) -> El {
-    e.anchored(anchor_key, Side::Bottom, rune::Align::Start, gap)
 }
 
 /// A `.segmented` group's metrics: its height, inset and label size.
@@ -403,24 +359,7 @@ pub fn segmented_counted<T: Copy + PartialEq + 'static>(
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| on_pick(app, v));
         if active {
-            // The travelling indicator: a `matched` pill flies to the new option.
-            let mut pill = el()
-                .key(format!("{key}-indicator"))
-                .matched(format!("{key}-indicator"))
-                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .radius(t.radius_md())
-                // 200 ms ease-in-out in CSS; a critically damped spring of the same length.
-                .motion(rune_motion::Spring::new(0.2, 0.0));
-            if t.dark() {
-                // A CSS border, painted over the pill's own fill.
-                pill = crate::ui::css_border(pill.fill(t.c.input_bg), 1.0, t.c.input, t.radius_md());
-            } else {
-                pill = pill
-                    .fill(t.c.background)
-                    .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 3.0, spread: 0.0, color: Color::BLACK.alpha(0.1), inset: false })
-                    .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 2.0, spread: -1.0, color: Color::BLACK.alpha(0.1), inset: false });
-            }
-            b = b.child(pill);
+            b = b.child(segment_indicator(t, &format!("{key}-indicator")));
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         b = b.child(text(*label).font(font(size.fs, 500.0)).color(ink).group_color(t.c.foreground));
@@ -433,6 +372,30 @@ pub fn segmented_counted<T: Copy + PartialEq + 'static>(
         group = group.child(b);
     }
     group
+}
+
+/// `.segmented-indicator`: the lit pill behind a group's active option, a
+/// child of its button. Keyed `key` and `matched` under it, so the pill
+/// flies to the next active option (200 ms ease-in-out in CSS; a critically
+/// damped spring of the same length).
+pub fn segment_indicator(t: &Theme, key: &str) -> El {
+    let pill = el().key(key).matched(key).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).motion(rune_motion::Spring::new(0.2, 0.0));
+    segment_lit(t, pill, t.radius_md())
+}
+
+/// The lit segment's look on `e` (`.segmented-indicator`, Replay's
+/// `.period-pill.active`): the background with a small shadow, or in the
+/// dark theme the input's background and its `--input` border (a CSS border,
+/// painted over the pill's own fill).
+pub fn segment_lit(t: &Theme, e: El, radius: f32) -> El {
+    let e = e.radius(radius);
+    if t.dark() {
+        crate::ui::css_border(e.fill(t.c.input_bg), 1.0, t.c.input, radius)
+    } else {
+        e.fill(t.c.background)
+            .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 3.0, spread: 0.0, color: Color::BLACK.alpha(0.1), inset: false })
+            .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 2.0, spread: -1.0, color: Color::BLACK.alpha(0.1), inset: false })
+    }
 }
 
 /// `Switch` (`.switch` in settings.css).
@@ -461,6 +424,12 @@ pub fn switch(t: &Theme, key: &str, checked: bool, disabled: bool, on_toggle: im
         s = s.cursor(Cursor::Pointer).focusable(true).on_press(on_toggle);
     }
     s
+}
+
+/// `.surface`: the card colour inside a hairline, the large radius, `pad`
+/// inside the 1 px border.
+pub fn surface(t: &Theme, pad: f32) -> El {
+    crate::ui::css_border(col(), 1.0, t.c.border, t.radius_xl()).padding(pad + 1.0).radius(t.radius_xl()).fill(t.c.card)
 }
 
 /// `.toolbar-group`: controls in one muted bar.
@@ -520,17 +489,6 @@ pub fn error_banner_in(t: &Theme, message: &str, width: Option<f32>) -> El {
         .fill(t.c.destructive_soft)
         .role("alert")
         .child(msg)
-}
-
-/// `PageHeader`: the 24 px title with an optional muted count after it,
-/// baseline-aligned (`.page-header`).
-pub fn page_header(t: &Theme, title: &str, count: Option<&str>) -> El {
-    let mut h = row().gap(16.0).items_end();
-    h = h.child(text(title).font(with_lh(font(24.0, 600.0), 34.8).tracking(-0.6)).color(t.c.foreground));
-    if let Some(c) = count {
-        h = h.child(text(c).font(font(14.0, 400.0)).color(t.c.muted_foreground).mb(4.0));
-    }
-    h
 }
 
 /// `.eyebrow`: a 12 px medium muted label.

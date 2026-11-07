@@ -27,6 +27,9 @@ use super::{DecoderCmd, EngineEvent, EventSink, OutFormat, VoiceState};
 
 /// Seconds of decoded audio a voice keeps ahead of the mixer.
 const BUFFER_SECONDS: usize = 4;
+/// How long a decoder with a full buffer sleeps before looking for room
+/// again (commands wake it at once). A sliver of the buffer.
+const ROOM_POLL: Duration = Duration::from_millis(100);
 
 pub struct Ctx {
     pub voice: Arc<VoiceState>,
@@ -183,14 +186,16 @@ impl Worker {
             let (rate, channels) = (chunk.rate, chunk.channels);
             if !pipe.as_ref().is_some_and(|p| p.matches(rate, channels, format)) {
                 if let Some(p) = &mut pipe {
-                    let tail = p.flush().to_vec();
-                    self.push(writer, &tail)?;
+                    let tail = p.flush();
+                    self.push(writer, tail)?;
                 }
                 pipe = Some(Pipeline::new(rate, channels, format));
             }
             decoded_frames += (chunk.samples.len() / channels.max(1)) as u64;
-            let out = pipe.as_mut().map(|p| p.process(&chunk.samples).to_vec()).unwrap_or_default();
-            self.push(writer, &out)?;
+            if let Some(p) = &mut pipe {
+                let out = p.process(chunk.samples);
+                self.push(writer, out)?;
+            }
             // A stream that doesn't say how long it is: estimate from the
             // bitrate so far, as browsers do for MP3s without a header.
             if !estimated
@@ -206,8 +211,8 @@ impl Worker {
             }
         }
         if let Some(p) = &mut pipe {
-            let tail = p.flush().to_vec();
-            self.push(writer, &tail)?;
+            let tail = p.flush();
+            self.push(writer, tail)?;
         }
         // The real length, once known.
         if media.from_start && media.exact_duration.is_none() && decoded_frames > 0 {
@@ -239,7 +244,7 @@ impl Worker {
             let room = writer.tx.slots() / ch * ch;
             let n = room.min(samples.len() - at);
             if n == 0 {
-                match self.ctx.ctl.recv_timeout(Duration::from_millis(10)) {
+                match self.ctx.ctl.recv_timeout(ROOM_POLL) {
                     Ok(cmd) => return Err(Interrupt::Cmd(cmd)),
                     Err(RecvTimeoutError::Timeout) if !self.ctx.voice.cancelled.load(Ordering::Relaxed) => continue,
                     Err(_) => return Err(Interrupt::Stop),
@@ -255,9 +260,10 @@ impl Worker {
     }
 }
 
-/// Decoded audio: interleaved samples at the source's rate.
-struct Chunk {
-    samples: Vec<f32>,
+/// Decoded audio: interleaved samples at the source's rate, in the codec's
+/// own buffer (good until the next chunk).
+struct Chunk<'a> {
+    samples: &'a [f32],
     rate: u32,
     channels: usize,
 }
@@ -372,7 +378,7 @@ impl Media {
     }
 
     /// The next decoded chunk, or None at the end.
-    fn next_chunk(&mut self) -> Result<Option<Chunk>, String> {
+    fn next_chunk(&mut self) -> Result<Option<Chunk<'_>>, String> {
         loop {
             let packet = match self.reader.next_packet() {
                 Ok(p) => p,
@@ -387,7 +393,8 @@ impl Media {
             if packet.track_id() != self.track {
                 continue;
             }
-            let (mut samples, rate, channels) = match &mut self.codec {
+            // Where the samples are in the codec's buffer.
+            let (mut range, rate, channels) = match &mut self.codec {
                 Codec::Sym(dec, buf) => match dec.decode(&packet) {
                     Ok(audio) => {
                         self.bad_packets = 0;
@@ -401,7 +408,7 @@ impl Media {
                         }
                         let b = buf.as_mut().expect("buffer");
                         b.copy_interleaved_ref(audio);
-                        (b.samples().to_vec(), spec.rate, spec.channels.count())
+                        (0..b.samples().len(), spec.rate, spec.channels.count())
                     }
                     // A damaged packet is skipped, as a browser does, unless they all are.
                     Err(SymError::DecodeError(e)) => {
@@ -415,23 +422,27 @@ impl Media {
                     Err(e) => return Err(describe("Decoder", e)),
                 },
                 Codec::Opus(o) => {
-                    let samples = o.decode(&packet.data)?;
-                    if samples.is_empty() {
+                    let range = o.decode(&packet.data)?;
+                    if range.is_empty() {
                         continue;
                     }
-                    (samples, 48_000, o.channels)
+                    (range, 48_000, o.channels)
                 }
             };
             self.rate = rate;
             if self.skip > 0 {
-                let frames = samples.len() / channels.max(1);
+                let frames = range.len() / channels.max(1);
                 let drop = (self.skip as usize).min(frames);
-                samples.drain(..drop * channels);
+                range.start += drop * channels;
                 self.skip -= drop as u64;
-                if samples.is_empty() {
+                if range.is_empty() {
                     continue;
                 }
             }
+            let samples = match &self.codec {
+                Codec::Sym(_, buf) => buf.as_ref().map_or(&[][..], |b| &b.samples()[range]),
+                Codec::Opus(o) => &o.buffer[range],
+            };
             return Ok(Some(Chunk { samples, rate, channels }));
         }
     }
@@ -603,16 +614,19 @@ impl Opus {
         })
     }
 
-    fn decode(&mut self, packet: &[u8]) -> Result<Vec<f32>, String> {
+    /// Decode `packet` into the buffer: where its samples are (empty for a
+    /// damaged packet, which is skipped).
+    fn decode(&mut self, packet: &[u8]) -> Result<std::ops::Range<usize>, String> {
         let frames = match self.decoder.decode(Some(packet), &mut self.buffer, false) {
             Ok(frames) => frames,
-            // A damaged packet is skipped.
-            Err(opuscule::Error::InvalidPacket) => return Ok(Vec::new()),
+            Err(opuscule::Error::InvalidPacket) => return Ok(0..0),
             Err(e) => return Err(format!("Decoder: Opus: {e}")),
         };
         let start = self.skip.min(frames);
         self.skip -= start;
+        let range = start * self.channels..frames * self.channels;
         let gain = self.gain;
-        Ok(self.buffer[start * self.channels..frames * self.channels].iter().map(|s| s * gain).collect())
+        self.buffer[range.clone()].iter_mut().for_each(|s| *s *= gain);
+        Ok(range)
     }
 }

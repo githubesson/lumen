@@ -5,17 +5,25 @@
 //! own. A TIDAL track's fields also come live from TIDAL. Admins link other
 //! library files of the same song from here.
 mod multi_select;
-pub mod rows;
 mod versions;
+
+use std::time::Duration;
 
 use rune::{Cx, El, TextEdit, col, el, row, text};
 
-use self::rows::{Row, Tidal, display_artists, display_text, track_info_rows};
 use crate::api::{TrackDetail, TrackListItem, TrackSource};
 use crate::app::App;
+use crate::core::tidal::track_info::{
+    TidalTrackInfoResult, TrackInfoRow, tidal_track_info_from, track_info_rows, track_info_tidal_id,
+};
+use crate::core::track::{display_artists, primary_artist_name};
+use crate::format::clean_text;
 use crate::theme::Theme;
 use crate::ui::kit::{Dialog, eyebrow, scroll_area_fit};
 use crate::ui::{cover_art, font, snug_lines, with_lh};
+
+/// `useTrackDetail` gives up after 15 s.
+const TRACK_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 pub struct State {
@@ -25,10 +33,8 @@ pub struct State {
     nonce: u64,
     pub track: Option<TrackDetail>,
     pub error: Option<String>,
-    /// TIDAL's details for a TIDAL track; None while they load.
-    pub tidal: Option<Tidal>,
-    /// Links and unlinks this opening has seen.
-    pub relinks: u32,
+    /// What came from TIDAL (`useTidalTrackInfo`); None while it loads.
+    pub tidal: Option<TidalTrackInfoResult>,
     // Versions
     pub picked: Option<Vec<usize>>,
     pub picker_open: bool,
@@ -49,38 +55,36 @@ pub fn open(app: &mut App, track_id: &str) {
     let Some(client) = app.client.clone() else { return };
     let id = track_id.to_string();
     app.net.run(
-        move || {
-            // `useTrackDetail` gives up after 15 s.
-            let started = std::time::Instant::now();
-            let r = crate::api::library::get_track(&client, &id);
-            (r, started.elapsed() > std::time::Duration::from_secs(15))
-        },
-        move |app, (result, timed_out)| {
+        move || crate::api::library::get_track(&client, &id),
+        move |app, result| {
             let s = &mut app.overlays.track_info;
-            if s.nonce != nonce {
+            // A later opening's, or this one already timed out.
+            if s.nonce != nonce || s.error.is_some() {
                 return;
             }
             match result {
-                _ if timed_out => s.error = Some("Track info request timed out.".into()),
                 Ok(t) => {
-                    let tidal = (t.source == TrackSource::Tidal).then(|| t.source_id.clone()).flatten();
+                    let tidal = track_info_tidal_id(Some(&t)).filter(|id| !id.is_empty());
                     s.track = Some(t);
                     match tidal {
                         Some(id) => load_tidal(app, id, nonce),
-                        None => app.overlays.track_info.tidal = Some(Tidal::default()),
+                        None => app.overlays.track_info.tidal = Some(TidalTrackInfoResult::default()),
                     }
                 }
                 Err(e) => s.error = Some(super::error_message(&e, "Failed to load track.")),
             }
         },
     );
+    // Queued after the request, so a headless run (both at once) answers first.
+    app.net.after(TRACK_TIMEOUT, move |app| {
+        let s = &mut app.overlays.track_info;
+        if s.nonce == nonce && s.track.is_none() && s.error.is_none() {
+            s.error = Some("Track info request timed out.".into());
+        }
+    });
 }
 
-/// [`open`] for a track row.
-pub fn open_track(app: &mut App, track: &TrackListItem) {
-    open(app, &track.id);
-}
-
+/// `useTidalTrackInfo`.
 fn load_tidal(app: &mut App, id: String, nonce: u64) {
     let Some(client) = app.client.clone() else { return };
     app.net.run(
@@ -90,18 +94,9 @@ fn load_tidal(app: &mut App, id: String, nonce: u64) {
         },
         move |app, (id, result)| {
             let s = &mut app.overlays.track_info;
-            if s.nonce != nonce {
-                return;
+            if s.nonce == nonce {
+                s.tidal = Some(tidal_track_info_from(Some(&id), &result));
             }
-            s.tidal = Some(match result {
-                Ok(info) if info.id == id => Tidal { info: Some(info), failed: false, refusal: None },
-                Ok(_) => Tidal { info: None, failed: true, refusal: None },
-                Err(e) => {
-                    // `tidalRefusalMessage`: TIDAL's own reason, always a 502.
-                    let refusal = (e.status == 502 && e.message.starts_with("TIDAL refused")).then(|| e.message.clone());
-                    Tidal { info: None, failed: true, refusal }
-                }
-            });
         },
     );
 }
@@ -126,7 +121,6 @@ fn escape(app: &mut App) {
     }
 }
 
-
 /// The left third: artwork and the lines a player shows.
 fn summary(app: &App, t: &Theme, track: Option<&TrackDetail>, w: f32) -> El {
     let size = (w - 41.0).max(0.0);
@@ -136,8 +130,8 @@ fn summary(app: &App, t: &Theme, track: Option<&TrackDetail>, w: f32) -> El {
             let art = crate::api::media::track_art(&tr.id, tr.album_id.as_deref(), tr.cover_url.as_deref(), Some(tr.has_cover), Some(512));
             c = c.child(cover_art(t, &app.images, art.as_deref(), &tr.title, size, size, t.radius_lg()));
             let artists = {
-                let a = display_artists(tr);
-                if a.is_empty() { super::share::primary_artist(tr, "Unknown artist") } else { a }
+                let a = display_artists(&tr.artists);
+                if a.is_empty() { primary_artist_name(&tr.artists, "Unknown artist") } else { a }
             };
             let mut heading = col()
                 .w_full()
@@ -145,7 +139,7 @@ fn summary(app: &App, t: &Theme, track: Option<&TrackDetail>, w: f32) -> El {
                 .child(
                     snug_lines(
                         "track-info-title",
-                        text(display_text(Some(&tr.title), "")).font(with_lh(font(20.0, 600.0), 25.0)).color(t.c.popover_foreground).wrap_anywhere(),
+                        text(clean_text(Some(&tr.title))).font(with_lh(font(20.0, 600.0), 25.0)).color(t.c.popover_foreground).wrap_anywhere(),
                         25.0,
                     )
                     .mb(2.0),
@@ -154,7 +148,7 @@ fn summary(app: &App, t: &Theme, track: Option<&TrackDetail>, w: f32) -> El {
             if let Some(al) = tr.album_title.as_deref().filter(|a| !a.is_empty()) {
                 heading = heading.child(snug_lines(
                     "track-info-album",
-                    text(display_text(Some(al), "")).font(with_lh(font(13.0, 400.0), 18.85)).color(t.c.muted_foreground).wrap_anywhere(),
+                    text(clean_text(Some(al))).font(with_lh(font(13.0, 400.0), 18.85)).color(t.c.muted_foreground).wrap_anywhere(),
                     18.85,
                 ));
             }
@@ -166,7 +160,7 @@ fn summary(app: &App, t: &Theme, track: Option<&TrackDetail>, w: f32) -> El {
 }
 
 /// One labelled value (`dt` over `dd`).
-fn field(t: &Theme, r: &Row, w: f32, key: &str) -> El {
+fn field(t: &Theme, r: &TrackInfoRow, w: f32, key: &str) -> El {
     col()
         .w(w)
         .min_w(0.0)
@@ -179,7 +173,7 @@ fn field(t: &Theme, r: &Row, w: f32, key: &str) -> El {
 
 /// `.track-info-fields`: `repeat(auto-fill, minmax(112px, 1fr))` with 12 × 16
 /// gaps, wide rows across the whole width.
-fn fields(t: &Theme, section: &str, list: &[Row], width: f32) -> El {
+fn fields(t: &Theme, section: &str, list: &[TrackInfoRow], width: f32) -> El {
     let cols = (((width + 16.0) / 128.0).floor() as usize).max(1);
     let col_w = (width - 16.0 * (cols as f32 - 1.0)) / cols as f32;
     let mut grid = col().w_full().gap(12.0);
@@ -224,12 +218,12 @@ fn details(app: &App, t: &Theme, width: f32) -> El {
     let (Some(track), Some(tidal)) = (&s.track, &s.tidal) else {
         return c.child(text("Loading…").font(font(14.0, 400.0)).color(t.c.muted_foreground));
     };
-    let view = track_info_rows(track, (track.source == TrackSource::Tidal).then_some(tidal));
+    let view = track_info_rows(track, Some(tidal), None);
     if let Some(n) = &view.note {
         c = c.child(note(t, n, "track-info-note"));
     }
     for sec in &view.sections {
-        let mut b = col().w_full().child(eyebrow(t, sec.label).h(17.4).mb(8.0).role("heading")).child(fields(t, sec.label, &sec.rows, inner));
+        let mut b = col().w_full().child(eyebrow(t, &sec.label).h(17.4).mb(8.0).role("heading")).child(fields(t, &sec.label, &sec.rows, inner));
         if let Some(n) = &sec.note {
             b = b.child(note(t, n, &format!("track-info-note-{}", sec.label)).mt(8.0));
         }

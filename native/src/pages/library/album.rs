@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rune::{Color, Cursor, Cx, El, Shadow, col, el, row, text};
+use rune::{Color, Cursor, Cx, El, col, el, row, text};
 
 use crate::api::TrackListItem;
 use crate::app::App;
@@ -14,8 +14,8 @@ use crate::ui::kit::{empty_state, error_banner};
 use crate::ui::{Btn, BtnState, font, ico, icons as i, iconbtn};
 
 use crate::ui::track_list::TrackList;
-use super::logic::{self, AlbumDownloadState, ArtistRelease, CreditFields, EntityTarget};
-use crate::api::{self, error_message};
+use super::logic::{self, AlbumDownloadState, ArtistRelease, EntityTarget};
+use crate::api::{self, Client, error_message};
 use super::sleeve::{self, Sleeve, SleeveAlbum};
 
 const LIBRARY_SAVED_HINT: &str = "The rest of the release plays from TIDAL";
@@ -37,43 +37,34 @@ pub fn enter_library(app: &mut App, id: &str) {
             s.detail.album = Some(a);
             s.detail.tracks = Some(t);
         }
-        super::refilter(app);
+        super::landed(app);
     }
     load_library(app, false);
 }
 
 /// Read the album and its tracks; `quiet` refreshes keep the page on failure.
 fn load_library(app: &mut App, quiet: bool) {
-    let Some(client) = app.client.clone() else { return };
-    let d = &mut app.pages.library.detail;
-    d.seq += 1;
-    let (seq, key, id) = (d.seq, d.key.clone(), d.id.clone());
-    app.net.run(
-        move || -> api::ApiResult<_> { Ok((api::library::get_album(&client, &id)?, api::library::list_album_tracks(&client, &id)?)) },
-        move |app, result| {
+    super::load_detail(
+        app,
+        quiet,
+        |c: &Client, id: &str| -> api::ApiResult<_> { Ok((api::library::get_album(c, id)?, api::library::list_album_tracks(c, id)?)) },
+        "Failed to load album.",
+        |app, (album, tracks)| {
             let s = &mut app.pages.library;
-            if s.detail.seq != seq || s.detail.key != key {
-                return;
+            s.cache.albums.insert(s.detail.id.clone(), (album.clone(), tracks.clone()));
+            let queued = album.queued_count.unwrap_or(0);
+            s.detail.album = Some(album);
+            s.detail.tracks = Some(tracks);
+            super::landed(app);
+            if queued > 0 {
+                arm_refresh(app);
             }
-            match result {
-                Ok((album, tracks)) => {
-                    s.cache.albums.insert(s.detail.id.clone(), (album.clone(), tracks.clone()));
-                    let queued = album.queued_count.unwrap_or(0);
-                    s.detail.album = Some(album);
-                    s.detail.tracks = Some(tracks);
-                    s.detail.error = None;
-                    super::refilter(app);
-                    if queued > 0 {
-                        arm_refresh(app);
-                    }
-                }
-                Err(_) if quiet => {}
-                Err(e) if e.status == 404 => {
-                    s.cache.albums.remove(&s.detail.id);
-                    s.detail.not_found = true;
-                }
-                Err(e) => s.detail.error = Some(error_message(&e, "Failed to load album.")),
-            }
+        },
+        |app| {
+            let s = &mut app.pages.library;
+            s.cache.albums.remove(&s.detail.id);
+            s.detail.not_found = true;
+            false
         },
     );
 }
@@ -83,56 +74,46 @@ pub fn enter_tidal(app: &mut App, id: &str, artist: Option<&str>) {
     if super::mount(app, format!("tidal-album:{id}"), id) {
         let s = &mut app.pages.library;
         s.detail.tidal_album = s.cache.tidal_albums.get(id).cloned();
-        super::refilter(app);
+        super::landed(app);
     }
     load_tidal(app, false);
     let artist = artist.map(str::to_string).or_else(|| app.pages.library.detail.tidal_album.as_ref().and_then(|a| a.artist_id.clone()));
-    if let Some(a) = artist {
-        ensure_versions(app, &a);
+    if let Some(a) = &artist {
+        ensure_versions(app, a);
     }
+    sync_versions(app, artist);
 }
 
 fn load_tidal(app: &mut App, quiet: bool) {
-    let Some(client) = app.client.clone() else { return };
-    let d = &mut app.pages.library.detail;
-    d.seq += 1;
-    let (seq, key, id) = (d.seq, d.key.clone(), d.id.clone());
-    app.net.run(
-        move || api::tidal::get_tidal_album(&client, &id),
-        move |app, result| {
+    super::load_detail(
+        app,
+        quiet,
+        |c: &Client, id: &str| api::tidal::get_tidal_album(c, id),
+        "Failed to load TIDAL album.",
+        |app, album| {
             let s = &mut app.pages.library;
-            if s.detail.seq != seq || s.detail.key != key {
-                return;
+            s.cache.tidal_albums.insert(s.detail.id.clone(), album.clone());
+            let queued = album.queued_count.unwrap_or(0);
+            let artist = album.artist_id.clone();
+            s.detail.tidal_album = Some(album);
+            super::landed(app);
+            if queued > 0 {
+                arm_refresh(app);
             }
-            match result {
-                Ok(album) => {
-                    s.cache.tidal_albums.insert(s.detail.id.clone(), album.clone());
-                    let queued = album.queued_count.unwrap_or(0);
-                    let artist = album.artist_id.clone();
-                    s.detail.tidal_album = Some(album);
-                    if quiet {
-                        s.detail.error = None;
-                    }
-                    super::refilter(app);
-                    if queued > 0 {
-                        arm_refresh(app);
-                    }
-                    let from_url = app.location().get("tidalArtist").is_some_and(|a| !a.is_empty());
-                    if let Some(a) = artist.filter(|_| !from_url) {
-                        ensure_versions(app, &a);
-                    }
-                }
-                Err(_) if quiet => {}
-                Err(e) => {
-                    // Gone from TIDAL: don't keep showing (or caching) the old copy.
-                    if e.status == 404 {
-                        s.cache.tidal_albums.remove(&s.detail.id);
-                        s.detail.tidal_album = None;
-                        super::refilter(app);
-                    }
-                    app.pages.library.detail.error = Some(error_message(&e, "Failed to load TIDAL album."));
-                }
+            let from_url = app.location().get("tidalArtist").is_some_and(|a| !a.is_empty());
+            if let Some(a) = artist.filter(|_| !from_url) {
+                ensure_versions(app, &a);
             }
+            sync_versions(app, versions_artist(app));
+        },
+        |app| {
+            // Gone from TIDAL: don't keep showing (or caching) the old copy.
+            let s = &mut app.pages.library;
+            s.cache.tidal_albums.remove(&s.detail.id);
+            s.detail.tidal_album = None;
+            super::landed(app);
+            sync_versions(app, versions_artist(app));
+            true
         },
     );
 }
@@ -156,14 +137,35 @@ fn ensure_versions(app: &mut App, artist_id: &str) {
             c.fetching.remove(&id);
             if let Ok(artist) = result {
                 c.tidal_artists.insert(id, artist);
+                if app.pages.library.detail.key.starts_with("tidal-album:") {
+                    sync_versions(app, versions_artist(app));
+                }
             }
         },
     );
 }
 
+/// The artist whose releases list the open TIDAL album's versions: the
+/// URL's `tidalArtist`, else the album's own.
+fn versions_artist(app: &App) -> Option<String> {
+    let from_url = app.location().get("tidalArtist").filter(|a| !a.is_empty()).map(str::to_string);
+    from_url.or_else(|| app.pages.library.detail.tidal_album.as_ref().and_then(|a| a.artist_id.clone()))
+}
+
+/// The album's versions among `artist_id`'s releases, if they're loaded.
 fn versions(app: &App, artist_id: &str, id: &str) -> Option<Vec<ArtistRelease>> {
     let artist = app.pages.library.cache.tidal_artists.get(artist_id)?;
     logic::release_versions_of(&logic::tidal_artist_releases(&artist.albums), id)
+}
+
+/// Work out the picker's versions for `artist` once, when the album or
+/// the artist's releases land, rather than each frame.
+fn sync_versions(app: &mut App, artist: Option<String>) {
+    let versions = artist.map(|a| {
+        let v = versions(app, &a, &app.pages.library.detail.id);
+        (a, v)
+    });
+    app.pages.library.detail.versions = versions;
 }
 
 /// While tracks are queued, refetch every 15 s so rows flip to their
@@ -249,14 +251,13 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         }
         return sleeve::view(app, t, cx, loading_sleeve("Album", "Loading album…", false, LOADING_FACTS));
     };
-    let credits = logic::album_credits(CreditFields::from(album));
     let nonce = (d.cover_nonce > 0).then(|| d.cover_nonce.to_string());
     let cover = crate::api::media::album_art(&album.id, Some(album.has_cover), None, None, None, nonce.as_deref());
     let mut list = Vec::new();
     if let Some(e) = d.error.as_ref().or(d.action_error.as_ref()) {
         list.push(error_banner(t, e));
     }
-    let names: Vec<String> = credits.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<String> = d.credits.iter().map(|c| c.name.clone()).collect();
     list.push(album_tracks(app, t, names));
     let actions = match album.tidal_album_id.as_deref().filter(|s| !s.is_empty()) {
         Some(tidal) if admin => download_control(app, t, tidal, tracks, album.queued_count.unwrap_or(0)),
@@ -271,8 +272,8 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
             album: Some(SleeveAlbum {
                 title: album.title.clone(),
                 cover,
-                credits,
-                facts: crate::core::entity_labels::library_album_facts(album, &logic::durations(tracks)),
+                credits: &d.credits,
+                facts: &d.facts,
                 saved_hint: LIBRARY_SAVED_HINT,
                 tracks,
             }),
@@ -309,9 +310,17 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
     let d = &app.pages.library.detail;
     let admin = is_admin(app);
     let versions_artist = artist_param.map(str::to_string).or_else(|| d.tidal_album.as_ref().and_then(|a| a.artist_id.clone()));
-    let picker = versions_artist
-        .as_deref()
-        .and_then(|artist| versions(app, artist, id).map(|v| version_picker(app, t, cx, &v, id, artist)));
+    // Worked out as the data landed; afresh only if the artist differs since.
+    let fresh;
+    let listed = match (&d.versions, versions_artist.as_deref()) {
+        (Some((a, v)), Some(artist)) if a == artist => v.as_deref(),
+        (_, Some(artist)) => {
+            fresh = versions(app, artist, id);
+            fresh.as_deref()
+        }
+        (_, None) => None,
+    };
+    let picker = listed.zip(versions_artist.as_deref()).map(|(v, artist)| version_picker(app, t, cx, v, id, artist));
     let Some(album) = &d.tidal_album else {
         if let Some(e) = &d.error {
             // The banner's text centres too (`text-align: center` on the box).
@@ -359,13 +368,12 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
         Vec::new()
     };
     let details_link = library_id.filter(|_| can_download || !admin).map(|lib| library_link(t, lib));
-    let credits = logic::album_credits(CreditFields::from(album));
     let cover = crate::api::media::album_art(&album.id, None, album.cover_url.as_deref(), Some(crate::api::TrackSource::Tidal), None, None);
     let mut list = Vec::new();
     if let Some(e) = d.error.as_ref().or(d.action_error.as_ref()) {
         list.push(error_banner(t, e));
     }
-    let names: Vec<String> = credits.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<String> = d.credits.iter().map(|c| c.name.clone()).collect();
     list.push(album_tracks(app, t, names));
     sleeve::view(
         app,
@@ -376,8 +384,8 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
             album: Some(SleeveAlbum {
                 title: album.title.clone(),
                 cover,
-                credits,
-                facts: crate::core::entity_labels::tidal_album_facts(album, &logic::durations(tracks)),
+                credits: &d.credits,
+                facts: &d.facts,
                 saved_hint: TIDAL_SAVED_HINT,
                 tracks,
             }),
@@ -471,7 +479,7 @@ fn version_picker(app: &App, t: &Theme, cx: &mut Cx<App>, versions: &[ArtistRele
     let options: Vec<(String, String, String)> = versions
         .iter()
         .zip(labels)
-        .map(|(v, l)| (logic::search_entity_id(&v.id, v.source, v.source_id.as_deref()), l.label, l.description))
+        .map(|(v, l)| (api::search::search_entity_id(&v.id, v.source, v.source_id.as_deref()), l.label, l.description))
         .collect();
     if options.len() > 3 {
         let opts: Vec<SelectOption> = options
@@ -511,21 +519,7 @@ fn version_picker(app: &App, t: &Theme, cx: &mut Cx<App>, versions: &[ArtistRele
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| super::open_version(app, &v, &artist));
         if active {
-            let mut pill = el()
-                .key("sleeve-versions-indicator")
-                .matched("sleeve-versions-indicator")
-                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .radius(t.radius_md())
-                .motion(rune_motion::Spring::new(0.2, 0.0));
-            if t.dark() {
-                pill = pill.fill(t.c.input_bg).border(1.0, t.c.input);
-            } else {
-                pill = pill
-                    .fill(t.c.background)
-                    .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 3.0, spread: 0.0, color: Color::BLACK.alpha(0.1), inset: false })
-                    .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 2.0, spread: -1.0, color: Color::BLACK.alpha(0.1), inset: false });
-            }
-            b = b.child(pill);
+            b = b.child(crate::ui::kit::segment_indicator(t, "sleeve-versions-indicator"));
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         b = b.child(text(label).font(label_style).color(ink).group_color(t.c.foreground));

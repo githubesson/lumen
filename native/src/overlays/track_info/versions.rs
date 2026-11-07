@@ -7,9 +7,10 @@
 use rune::{Color, Cursor, El, TextEdit, col, el, row, text};
 
 use super::multi_select::{self, Opt, badge, mark};
-use super::rows::{display_artists, display_text, format_bitrate, format_duration};
 use crate::api::{TrackDetail, TrackListItem, TrackSource};
 use crate::app::App;
+use crate::core::track::display_artists;
+use crate::format::{clean_text, fmt_duration_ms_or, format_bitrate};
 use crate::theme::Theme;
 use crate::ui::forms::search_input;
 use crate::ui::kit::{error_banner, eyebrow};
@@ -61,10 +62,10 @@ fn file_format(file_name: &str, format: Option<&str>) -> String {
 pub fn versions(track: &TrackDetail) -> Vec<Version> {
     let own_id = track.db_track_id.clone().unwrap_or_else(|| track.id.clone());
     let own = track.linked.iter().find(|l| l.id == own_id);
-    let own_audio = own.map(|o| (file_format(&o.file_name, o.format.as_deref()), format_bitrate(o.bitrate)));
+    let own_audio = own.map(|o| (file_format(&o.file_name, o.format.as_deref()), format_bitrate(o.bitrate.map(|b| b as f64))));
     let first = Version {
         title: track.title.clone(),
-        artists: display_artists(track),
+        artists: display_artists(&track.artists),
         album: track.album_title.clone().unwrap_or_default(),
         file: if track.metadata_edited == Some(true) {
             "Edited tags".into()
@@ -85,7 +86,7 @@ pub fn versions(track: &TrackDetail) -> Vec<Version> {
             album: l.album_title.clone().unwrap_or_default(),
             file: l.file_name.clone(),
             format: Some(file_format(&l.file_name, l.format.as_deref())),
-            bitrate: Some(format_bitrate(l.bitrate)),
+            bitrate: Some(format_bitrate(l.bitrate.map(|b| b as f64))),
             linked_id: Some(l.id.clone()),
             shown: l.shown.unwrap_or(false),
             plays: l.plays.unwrap_or(false),
@@ -190,7 +191,6 @@ fn relinked(app: &mut App, updated: TrackDetail) {
     s.unlinking = None;
     s.linking_id = None;
     s.picked = None;
-    s.relinks += 1;
     s.track = Some(updated);
     crate::pages::library_changed(app);
 }
@@ -218,7 +218,7 @@ fn unlink(app: &mut App, id: String) {
 
 /// The title without a trailing "(v2)" or "[Remix]", to find other versions by.
 fn searchable_title(title: &str) -> String {
-    let clean = display_text(Some(title), "");
+    let clean = clean_text(Some(title));
     let mut s = clean.trim_end().to_string();
     loop {
         let trimmed = s.trim_end();
@@ -265,29 +265,32 @@ fn search(app: &mut App) {
     if q.is_empty() {
         return;
     }
-    let Some(client) = app.client.clone() else { return };
-    let wait = !app.net.is_sync();
-    app.net.run(
-        move || {
-            if wait {
-                std::thread::sleep(std::time::Duration::from_millis(250));
-            }
-            (q.clone(), crate::api::library::list_tracks(&client, &crate::api::PageParams { limit: Some(20), q: Some(q.clone()), ..Default::default() }).map(|(t, _)| t))
-        },
-        move |app, (q, result)| {
-            let s = &mut app.overlays.track_info;
-            if s.search_gen != id {
-                return;
-            }
-            match result {
-                Ok(items) => s.results = Some((q, items)),
-                Err(e) => {
-                    s.results = Some((q, Vec::new()));
-                    s.linker_error = Some(crate::overlays::error_message(&e, "Couldn't search the library."));
+    app.net.after(std::time::Duration::from_millis(250), move |app| {
+        if app.overlays.track_info.search_gen != id {
+            return;
+        }
+        let Some(client) = app.client.clone() else { return };
+        app.net.run(
+            move || {
+                let params = crate::api::PageParams { limit: Some(20), q: Some(q.clone()), ..Default::default() };
+                let result = crate::api::library::list_tracks(&client, &params).map(|(t, _)| t);
+                (q, result)
+            },
+            move |app, (q, result)| {
+                let s = &mut app.overlays.track_info;
+                if s.search_gen != id {
+                    return;
                 }
-            }
-        },
-    );
+                match result {
+                    Ok(items) => s.results = Some((q, items)),
+                    Err(e) => {
+                        s.results = Some((q, Vec::new()));
+                        s.linker_error = Some(crate::overlays::error_message(&e, "Couldn't search the library."));
+                    }
+                }
+            },
+        );
+    });
 }
 
 fn link(app: &mut App, item: TrackListItem) {
@@ -355,9 +358,9 @@ fn linker(app: &App, t: &Theme, track: &TrackDetail) -> El {
             Some(v) => {
                 for item in v {
                     let meta = [
-                        display_text(item.artist.as_deref(), ""),
-                        display_text(item.album_title.as_deref(), ""),
-                        format_duration(item.duration_ms),
+                        clean_text(item.artist.as_deref()),
+                        clean_text(item.album_title.as_deref()),
+                        fmt_duration_ms_or(item.duration_ms, ""),
                     ]
                     .into_iter()
                     .filter(|x| !x.is_empty())
@@ -374,7 +377,7 @@ fn linker(app: &App, t: &Theme, track: &TrackDetail) -> El {
                         .radius(t.radius_md())
                         .role("button")
                         .label(item.title.clone())
-                        .child(text(display_text(Some(&item.title), "")).font(font(13.0, 500.0)).color(t.c.foreground).wrap_anywhere())
+                        .child(text(clean_text(Some(&item.title))).font(font(13.0, 500.0)).color(t.c.foreground).wrap_anywhere())
                         .child(text(meta).font(font(12.0, 400.0)).color(t.c.muted_foreground).wrap_anywhere());
                     if s.linking_id.as_deref() == Some(item.id.as_str()) {
                         b = b.child(text("Linking…").font(font(12.0, 400.0)).color(t.c.muted_foreground));

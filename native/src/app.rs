@@ -4,6 +4,7 @@
 use rune::{Color, Cx, El, KeyEvent, Tx, Waker, col};
 
 use crate::api::{self, Client, Me, Playlist};
+use crate::resource::Res;
 use crate::config::{Config, Tweaks};
 use crate::images::Images;
 use crate::net::{LateWaker, Net};
@@ -50,8 +51,10 @@ pub struct App {
     pub client: Option<Client>,
     pub session: Session,
     pub history: History,
-    /// `usePlaylists().data`: None until loaded.
-    pub playlists: Option<Vec<Playlist>>,
+    /// `usePlaylists()` (`context/Playlists.tsx`): the user's playlists,
+    /// None until loaded; [`App::load_playlists`] is its `reload`,
+    /// `pages::playlists::update_playlists` its `update`.
+    pub playlists: Res<Vec<Playlist>>,
     pub pending_invites: usize,
     pub ui: Ui,
     pub player: crate::player::Player,
@@ -81,7 +84,7 @@ impl App {
             client: None,
             session: Session::Loading,
             history: History::new(Location::parse("/")),
-            playlists: None,
+            playlists: Res::default(),
             pending_invites: 0,
             ui: Ui::default(),
             player: crate::player::Player::new(waker.clone(), config.audio_sink_id.clone()),
@@ -131,7 +134,7 @@ impl App {
         self.session = Session::SignedIn(me);
         if forced {
             // A forced reset loads nothing until the new password is set.
-            self.playlists = Some(Vec::new());
+            self.playlists.set(Vec::new());
             self.pending_invites = 0;
         } else {
             self.load_playlists();
@@ -161,39 +164,34 @@ impl App {
     /// `usePlaylists().reload()`: only the newest read commits, and none that
     /// an `update` overtook (`useApiResource`).
     pub fn load_playlists(&mut self) {
-        let Some(client) = self.client.clone() else { return };
-        let list = &mut self.pages.playlists.list;
-        list.seq += 1;
-        list.error = None;
-        let (seq, updates) = (list.seq, list.updates);
-        if self.me().is_some_and(|me| me.must_reset_password) {
-            self.playlists = Some(Vec::new());
+        self.load_playlists_then(|_| {});
+    }
+
+    /// [`App::load_playlists`], then `then` once the read settles.
+    pub fn load_playlists_then(&mut self, then: impl FnOnce(&mut App) + Send + 'static) {
+        if self.client.is_none() {
             return;
         }
-        self.net.run(
-            move || client.get::<Option<Vec<Playlist>>>("/api/playlists"),
-            move |app, result| {
-                let list = &mut app.pages.playlists.list;
-                if list.seq != seq || list.updates != updates {
-                    return;
-                }
-                match result {
-                    Ok(rows) => app.playlists = Some(rows.unwrap_or_default()),
-                    Err(e) => {
-                        list.error = Some(crate::pages::playlists::error_message(&e, "Could not load playlists."))
-                    }
-                }
-            },
+        if self.me().is_some_and(|me| me.must_reset_password) {
+            self.playlists.set(Vec::new());
+            return;
+        }
+        crate::resource::load(
+            self,
+            |app| Some(&mut app.playlists),
+            |c| api::playlists::list_playlists(c, None),
+            "Could not load playlists.",
+            then,
         );
     }
 
     fn load_pending_invites(&mut self) {
         let Some(client) = self.client.clone() else { return };
         self.net.run(
-            move || client.get::<Option<Vec<api::PendingInvite>>>("/api/playlists/invites"),
+            move || api::playlists::list_pending_invites(&client),
             |app, result| {
                 if let Ok(list) = result {
-                    app.pending_invites = list.map_or(0, |l| l.len());
+                    app.pending_invites = list.len();
                 }
             },
         );
@@ -224,14 +222,6 @@ impl App {
     pub fn back(&mut self) {
         self.instant_once.set(true);
         if self.history.back() {
-            let loc = self.location().clone();
-            crate::pages::enter(self, &loc);
-        }
-    }
-
-    pub fn forward(&mut self) {
-        self.instant_once.set(true);
-        if self.history.forward() {
             let loc = self.location().clone();
             crate::pages::enter(self, &loc);
         }
@@ -284,14 +274,30 @@ impl App {
             client.advance_auth_generation();
         }
         self.session = Session::SignedOut;
-        self.player.stop();
-        self.playlists = None;
-        self.pending_invites = 0;
-        self.pages = Default::default();
-        self.history = History::new(Location::parse("/login"));
+        self.forget_session("/login");
         crate::pages::enter(self, &Location::parse("/login"));
     }
 
+    /// Another server (Welcome, Settings): what Electron's `config:update`
+    /// does before reloading the window there. The old server's cookies go,
+    /// what its session showed goes, and the app connects to `url`.
+    pub fn switch_server(&mut self, url: &str) {
+        if let Some(old) = &self.client {
+            old.clear_cookies();
+        }
+        self.forget_session("/");
+        self.connect(url);
+    }
+
+    /// Drop what a session showed: the player's queue, the shell's data,
+    /// every page's state, and the history (which starts again at `at`).
+    fn forget_session(&mut self, at: &str) {
+        self.player.stop();
+        self.playlists = Res::default();
+        self.pending_invites = 0;
+        self.pages = Default::default();
+        self.history = History::new(Location::parse(at));
+    }
 
     /// Load everything a scene shows before its first frame (headless only).
     pub fn settle_sync(&mut self) {

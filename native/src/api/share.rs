@@ -1,13 +1,10 @@
 //! Snippet share links (`api-media.ts`): minting a link, reading a public
-//! share, the share-signed preview video, and story videos over an
-//! uploaded background. The trim window's math is `core::share_snippet`.
-
-use std::path::Path;
+//! share, and the share-signed preview video. The trim window's math is
+//! `core::share_snippet`.
 
 use serde::{Deserialize, Serialize};
 
-use super::client::{ApiResult, Behavior, Client, form_encode, seg};
-use super::upload::{Multipart, Part};
+use super::client::{ApiResult, Client, form_encode, seg};
 
 pub const MIN_SHARE_SNIPPET_DURATION_SEC: u32 = 5;
 pub const DEFAULT_SHARE_SNIPPET_DURATION_SEC: u32 = 30;
@@ -36,8 +33,9 @@ pub struct PublicTrackShare {
     pub start_sec: f64,
     #[serde(default)]
     pub duration_ms: u64,
+    /// Missing, the page assumes 30 s (`preview_duration_sec ?? 30`).
     #[serde(default)]
-    pub preview_duration_sec: f64,
+    pub preview_duration_sec: Option<f64>,
     #[serde(default)]
     pub preview_url: String,
     /// The preview's audio alone, as M4A. Missing from older backends.
@@ -143,52 +141,6 @@ pub fn get_public_track_share(
     duration_sec: Option<f64>,
 ) -> ApiResult<PublicTrackShare> {
     c.get(&public_track_share_path(track_id, start_sec, signature, duration_sec))
-}
-
-/// The crop of a story background, in the image's pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub struct StoryBackgroundCrop {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-/// `createTrackStoryBackgroundVideo`: render a story video over an
-/// uploaded background image. Like every upload it has no deadline. The
-/// video's bytes and content type.
-pub fn create_track_story_background_video(
-    c: &Client,
-    track_id: &str,
-    start_sec: f64,
-    background: &Path,
-    crop: StoryBackgroundCrop,
-    duration_sec: f64,
-) -> ApiResult<(Vec<u8>, String)> {
-    let (t, d) = clamp_window(start_sec, duration_sec);
-    let form = Multipart::new(vec![
-        Part::text("start_sec", t.to_string()),
-        Part::text("duration_sec", d.to_string()),
-        Part::text("crop_x", js_num(crop.x)),
-        Part::text("crop_y", js_num(crop.y)),
-        Part::text("crop_width", js_num(crop.width)),
-        Part::text("crop_height", js_num(crop.height)),
-        Part::file("file", background),
-    ]);
-    let body = form.into_body(None).map_err(|e| super::client::ApiError::local(0, e.to_string()))?;
-    let reply = c.request(
-        "POST",
-        &format!("/api/tracks/{}/story-background", seg(track_id)),
-        body,
-        &[],
-        &Behavior { timeout: None, ..Default::default() },
-    )?;
-    Ok((reply.body, reply.content_type))
-}
-
-/// `String(n)` for a number: whole numbers without a decimal point.
-fn js_num(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1e15 { format!("{}", n as i64) } else { format!("{n}") }
 }
 
 #[cfg(test)]

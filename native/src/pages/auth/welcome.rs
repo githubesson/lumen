@@ -4,15 +4,15 @@
 //! screen) is only the server step. Saving a new server reconnects the app
 //! to that server's sign-in page.
 
-use rune::{Align, Color, El, Shadow, TextEdit, Transition, col, el, row, text};
+use rune::{Align, Color, El, TextEdit, Transition, col, el, row, text};
 
 use super::login::text_link;
 use crate::app::App;
-use crate::route::{History, Location};
 use crate::theme::Theme;
-use crate::ui::forms::{field_in, setting_row_in};
+use crate::ui::forms::{Desc, field_in, setting_row_in};
 use crate::ui::kit::switch;
 use crate::ui::{Btn, brand_mark, css_border, css_text_h, font, ico, icons as i, input_with, tnum, with_lh};
+use crate::ui::ShadowMd;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Step {
@@ -109,7 +109,7 @@ fn connect(app: &mut App, change: bool) {
     s.error = None;
     let address = s.address.text.clone();
     app.net.run(
-        move || super::server::test_server(&address),
+        move || crate::desktop::test_server(&address),
         move |app, result| {
             let s = &mut app.pages.auth.welcome;
             match result {
@@ -132,40 +132,33 @@ fn connect(app: &mut App, change: bool) {
     );
 }
 
-/// `updateDesktopConfig`: write config.json; a different server drops the
-/// old one's cookies and reconnects, as the window's reload does.
+/// `save`: one `updateDesktopConfig` with the server (and, at the end of
+/// the first run, the preferences). A different server switches the app to
+/// it ([`App::switch_server`]), as the window's reload does.
 fn save(app: &mut App, url: String, with_prefs: bool) {
     let s = &mut app.pages.auth.welcome;
     s.busy = true;
     s.error = None;
-    if with_prefs {
-        // Saved and applied live (Discord presence, the window's
-        // always-on-top level), as `applyConfigPatch` does.
-        let patch = crate::desktop::ConfigPatch {
-            discord_enabled: Some(s.discord_enabled),
-            always_on_top: Some(s.always_on_top),
-            ..Default::default()
-        };
-        let _ = crate::desktop::update_config(app, patch);
+    let patch = crate::desktop::ConfigPatch {
+        backend_url: Some(url),
+        discord_enabled: with_prefs.then_some(s.discord_enabled),
+        always_on_top: with_prefs.then_some(s.always_on_top),
+        ..Default::default()
+    };
+    match crate::desktop::update_config(app, patch) {
+        Err(e) => {
+            let s = &mut app.pages.auth.welcome;
+            s.error = Some(e);
+            s.busy = false;
+        }
+        Ok(update) if !update.changed => {
+            // Same server as before: nothing reloads, so just step back out.
+            app.pages.auth.welcome.busy = false;
+            cancel(app);
+        }
+        // Otherwise the app is on the new server's sign-in page.
+        Ok(_) => {}
     }
-    let changed = backend_url(app).as_deref() != Some(url.as_str());
-    app.config.backend_url = Some(url.clone());
-    app.config.save();
-    if !changed {
-        // Same server as before: nothing reloads, so just step back out.
-        app.pages.auth.welcome.busy = false;
-        cancel(app);
-        return;
-    }
-    if let Some(old) = &app.client {
-        old.clear_cookies();
-    }
-    app.player.stop();
-    app.playlists = None;
-    app.pending_invites = 0;
-    app.pages = Default::default();
-    app.history = History::new(Location::parse("/"));
-    app.connect(&url);
 }
 
 /// `.welcome-step h1`.
@@ -360,7 +353,7 @@ fn pref_row(
     setting_row_in(
         t,
         label,
-        Some(description),
+        Some(Desc::Text(description.into())),
         // `.settings-row-control` is a line box (24.3 px) the inline-block
         // switch sits at the top of.
         Some(el().h(24.3).child(switch(t, key, checked, false, toggle))),
@@ -375,8 +368,7 @@ fn prefs_step(t: &Theme, s: &State) -> El {
     let host = s
         .server
         .as_deref()
-        .and_then(|u| super::server::parse_address(u).ok())
-        .map(|a| a.host)
+        .map(super::server::host_of)
         .unwrap_or_default();
     let small = font(13.0, 400.0);
     let connected = row()
@@ -480,7 +472,6 @@ fn css_border_y(e: El, c: Color) -> El {
 pub fn view(app: &App, t: &Theme, h: f32, change: bool) -> El {
     let s = &app.pages.auth.welcome;
     let r = t.radius_xl();
-    let a = t.c.shadow_md_alpha;
     let mut card = css_border(col(), 1.0, t.c.border, r)
         .key("welcome-card")
         .w_full()
@@ -488,22 +479,7 @@ pub fn view(app: &App, t: &Theme, h: f32, change: bool) -> El {
         .padding(29.0)
         .radius(r)
         .fill(t.c.card)
-        .box_shadow(Shadow {
-            x: 0.0,
-            y: 4.0,
-            blur: 6.0,
-            spread: -1.0,
-            color: Color::BLACK.alpha(a),
-            inset: false,
-        })
-        .box_shadow(Shadow {
-            x: 0.0,
-            y: 2.0,
-            blur: 4.0,
-            spread: -2.0,
-            color: Color::BLACK.alpha(a),
-            inset: false,
-        });
+        .shadow_md(t);
     let step = if s.step == Step::Preferences && s.server.is_none() {
         Step::Server
     } else {

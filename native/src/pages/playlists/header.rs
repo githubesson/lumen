@@ -24,7 +24,7 @@ fn title_style() -> TextStyle {
 fn art_url(p: &Playlist, first: Option<&TrackListItem>) -> Option<String> {
     match p.custom_cover.as_deref().filter(|v| !v.is_empty()) {
         Some(v) => Some(media::playlist_cover_path(&p.id, v, Some(400))),
-        None => first.map(|t| media::track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), None)),
+        None => first.map(|t| t.cover_at(None)),
     }
 }
 
@@ -82,15 +82,14 @@ fn kind(t: &Theme, p: &Playlist, perms: &Permissions) -> El {
 }
 
 /// `.detail-meta`: the count, the length and what's queued, dot-separated.
-fn meta(t: &Theme, tracks: Option<&[PlaylistTrackEntry]>, queued: Option<u32>) -> El {
+fn meta(t: &Theme, tracks: Option<&[PlaylistTrackEntry]>, total_ms: u64, queued: Option<u32>) -> El {
     let mut parts: Vec<String> = Vec::new();
     match tracks {
         None => parts.push("—".into()),
         Some(rows) => {
             parts.push(pluralize(rows.len(), "track"));
             if !rows.is_empty() {
-                let total: u64 = rows.iter().map(|r| r.duration_ms).sum();
-                parts.push(crate::format::fmt_total_ms(total));
+                parts.push(crate::format::fmt_total_ms(total_ms));
             }
         }
     }
@@ -105,7 +104,9 @@ pub struct Props<'a> {
     pub playlist: &'a Playlist,
     pub perms: Permissions,
     pub tracks: Option<&'a [PlaylistTrackEntry]>,
-    pub first_cover: Option<TrackListItem>,
+    /// The rows' total length ([`super::detail::Detail::total_ms`]).
+    pub total_ms: u64,
+    pub first_cover: Option<&'a TrackListItem>,
     pub queued: Option<u32>,
     pub saving_cover: bool,
 }
@@ -150,8 +151,8 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, h: Props) -> El {
             kind_el: Some(crate::ui::exact(kind(t, p, &h.perms), 20.08)),
             title_el: Some(title),
             description: description.as_deref(),
-            art: Some(art(app, t, p, h.first_cover.as_ref(), h.tracks.is_some(), h.perms.can_change_cover, h.saving_cover)),
-            meta: Some(meta(t, h.tracks, h.queued)),
+            art: Some(art(app, t, p, h.first_cover, h.tracks.is_some(), h.perms.can_change_cover, h.saving_cover)),
+            meta: Some(meta(t, h.tracks, h.total_ms, h.queued)),
             actions: Some(actions),
             ..Default::default()
         },

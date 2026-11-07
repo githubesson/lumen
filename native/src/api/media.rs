@@ -84,6 +84,14 @@ pub fn track_cover(id: &str, album_id: Option<&str>, cover_url: Option<&str>, si
     }
 }
 
+impl TrackListItem {
+    /// `trackCoverUrl(track, size)`: the track's cover at `size` px (the
+    /// server's full size without one).
+    pub fn cover_at(&self, size: Option<u32>) -> String {
+        track_cover(&self.id, self.album_id.as_deref(), self.cover_url.as_deref(), size)
+    }
+}
+
 /// `trackArtUrl`: None when the payload says there's no art.
 pub fn track_art(
     id: &str,
@@ -131,8 +139,7 @@ pub fn artist_image(artist_cover: Option<&str>, tracks: &[TrackListItem], size: 
     if let Some(u) = artist_cover.filter(|u| !u.is_empty()) {
         return Some(resolve_cover(u, size));
     }
-    let t = tracks.iter().find(|t| t.has_cover != Some(false))?;
-    Some(track_cover(&t.id, t.album_id.as_deref(), t.cover_url.as_deref(), size))
+    Some(tracks.iter().find(|t| t.has_cover != Some(false))?.cover_at(size))
 }
 
 /// A cover URL anyone can load until `expires_at` (Unix seconds), for
@@ -147,11 +154,6 @@ pub struct SignedCoverUrl {
 /// `signAlbumCoverUrl`.
 pub fn sign_album_cover(c: &Client, album_id: &str) -> ApiResult<SignedCoverUrl> {
     c.get(&format!("/api/covers/sign{}", query(&[("album_id", Some(album_id.to_string()))])))
-}
-
-/// The backend's proxy for a remote cover (`/api/covers/remote?url=…`).
-pub fn remote_cover_path(url: &str) -> String {
-    format!("/api/covers/remote{}", query(&[("url", Some(url.to_string()))]))
 }
 
 #[cfg(test)]

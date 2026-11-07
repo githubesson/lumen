@@ -6,7 +6,7 @@
 //! - [`palette::open`], [`palette::toggle`], [`palette::close`]
 //! - [`upload::open`], [`upload::close`]
 //! - [`confirm::ask`], [`confirm::ask_then`], [`confirm::ask_action`]
-//! - [`share::open`] (a track id), [`share::open_track`]
+//! - [`share::open`] (a track id)
 //! - [`track_info::open`] (a track id)
 //! - [`edit::open_track`], [`edit::open_album`], [`edit::open_move_to_album`]
 //!
@@ -68,16 +68,9 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
     .collect()
 }
 
-/// The window's size in points, as the shell lays it out.
-pub fn window_size(cx: &mut Cx<App>) -> [f32; 2] {
-    cx.layout_size("app").unwrap_or([1280.0, 820.0])
-}
+pub use crate::shell::window_size;
 
-/// `errorMessage(err, fallback)`: the server's message, else the fallback
-/// (a transport failure or an empty body).
-pub fn error_message(e: &crate::api::ApiError, fallback: &str) -> String {
-    if e.status == 0 || e.message.trim().is_empty() { fallback.to_string() } else { e.message.clone() }
-}
+pub use crate::api::error_message;
 
 /// Run `f` with a `Tx` on the next poll (a request's answer has none).
 pub fn later(app: &mut App, f: impl FnOnce(&mut App, &mut rune::Tx) + 'static) {
@@ -88,7 +81,7 @@ pub fn later(app: &mut App, f: impl FnOnce(&mut App, &mut rune::Tx) + 'static) {
 /// The app's poll: run what [`later`] queued. True when anything ran.
 pub fn poll(app: &mut App, tx: &mut rune::Tx) -> bool {
     toast::on_status(app);
-    let previewing = share::poll(app, tx);
+    let previewing = share::poll(app, tx) | settings::discord::poll(app, tx);
     let queued = std::mem::take(&mut app.overlays.later);
     let any = !queued.is_empty();
     for f in queued {

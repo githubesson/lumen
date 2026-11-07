@@ -139,42 +139,6 @@ pub fn upload_result_detail(r: &UploadResult) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct UploadSummary {
-    pub added: u64,
-    pub duplicate: u64,
-    pub skipped: u64,
-    pub failed: u64,
-}
-
-pub fn summarize_upload_results(results: &[UploadResult]) -> UploadSummary {
-    let mut s = UploadSummary::default();
-    for r in results {
-        match upload_result_status(r) {
-            UploadStatus::Added => s.added += 1,
-            UploadStatus::Duplicate => s.duplicate += 1,
-            UploadStatus::Skipped => s.skipped += 1,
-            UploadStatus::Failed => s.failed += 1,
-        }
-    }
-    s
-}
-
-/// "3 added · 1 already in library · 1 failed", leaving out what didn't happen.
-pub fn upload_summary_label(s: &UploadSummary) -> String {
-    let parts: Vec<String> = [
-        (s.added, "added"),
-        (s.duplicate, "already in library"),
-        (s.skipped, "skipped"),
-        (s.failed, "failed"),
-    ]
-    .iter()
-    .filter(|(n, _)| *n > 0)
-    .map(|(n, w)| format!("{n} {w}"))
-    .collect();
-    if parts.is_empty() { "No files uploaded".into() } else { parts.join(" · ") }
-}
-
 /// Whether the library changed: only inserts change it.
 pub fn upload_added_any(results: &[UploadResult]) -> bool {
     results.iter().any(|r| r.inserted)
@@ -225,24 +189,6 @@ mod tests {
         assert_eq!(upload_status_label(UploadStatus::Failed), "Failed");
         assert_eq!(upload_result_detail(&result(|r| r.error = Some("file too large".into()))), "file too large");
         assert_eq!(upload_result_detail(&result(|r| r.inserted = true)), "Added");
-    }
-
-    #[test]
-    fn summarizes_without_counting_twice() {
-        let summary = summarize_upload_results(&[
-            result(|r| r.inserted = true),
-            result(|r| r.inserted = true),
-            result(|r| r.dedup = Some(true)),
-            result(|r| r.skipped = Some(true)),
-            result(|r| {
-                r.error = Some("boom".into());
-                r.inserted = true;
-            }),
-        ]);
-        assert_eq!(summary, UploadSummary { added: 2, duplicate: 1, skipped: 1, failed: 1 });
-        assert_eq!(upload_summary_label(&summary), "2 added · 1 already in library · 1 skipped · 1 failed");
-        assert_eq!(upload_summary_label(&summarize_upload_results(&[result(|r| r.inserted = true)])), "1 added");
-        assert_eq!(upload_summary_label(&summarize_upload_results(&[])), "No files uploaded");
     }
 
     #[test]
@@ -309,9 +255,5 @@ mod tests {
         let refused = too_large_upload_result("huge.flac");
         assert_eq!(upload_result_status(&refused), UploadStatus::Failed);
         assert_eq!(upload_result_detail(&refused), "file too large");
-        assert_eq!(
-            summarize_upload_results(&[refused, result(|r| r.inserted = true)]),
-            UploadSummary { added: 1, duplicate: 0, skipped: 0, failed: 1 }
-        );
     }
 }

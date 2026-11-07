@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use rune::{Cx, El, col};
 
 use crate::api::TrackListItem;
+use crate::api::favorites::{favorite, list_favorites, unfavorite};
 use crate::app::App;
 use crate::route::Location;
 use crate::theme::Theme;
@@ -36,23 +37,6 @@ fn sync(app: &mut App) {
     app.pages.favorites.tracks = app.pages.favorites.rows.iter().filter(|t| ids.contains(&t.id)).cloned().collect();
 }
 
-/// `api.listFavorites`: every page of 500.
-fn fetch_all(client: &crate::api::Client) -> crate::api::ApiResult<Vec<TrackListItem>> {
-    let mut out = Vec::new();
-    let limit = 500;
-    let mut offset = 0;
-    loop {
-        let page: Option<Vec<TrackListItem>> = client.get(&format!("/api/favorites?limit={limit}&offset={offset}"))?;
-        let page = page.unwrap_or_default();
-        let n = page.len();
-        out.extend(page);
-        if n < limit {
-            return Ok(out);
-        }
-        offset += limit;
-    }
-}
-
 /// `refresh`: reload the list and the hearted ids (at sign-in, on each visit).
 pub fn refresh(app: &mut App) {
     let Some(client) = app.client.clone() else { return };
@@ -62,7 +46,7 @@ pub fn refresh(app: &mut App) {
     s.error = None;
     let serial = s.serial;
     app.net.run(
-        move || fetch_all(&client),
+        move || list_favorites(&client),
         move |app, result| {
             if app.pages.favorites.serial != serial {
                 return;
@@ -86,7 +70,7 @@ fn sync_rows(app: &mut App) {
     let Some(client) = app.client.clone() else { return };
     let serial = app.pages.favorites.serial;
     app.net.run(
-        move || fetch_all(&client),
+        move || list_favorites(&client),
         move |app, result| {
             if let Ok(rows) = result
                 && app.pages.favorites.serial == serial
@@ -112,10 +96,10 @@ pub fn toggle(app: &mut App, id: &str) {
         app.pages.favorite_ids.insert(id.to_string());
     }
     sync(app);
-    let path = format!("/api/tracks/{}/favorite", crate::api::seg(id));
     let id = id.to_string();
+    let track = id.clone();
     app.net.run(
-        move || if had { client.delete_void(&path) } else { client.post_void(&path, None) },
+        move || if had { unfavorite(&client, &track) } else { favorite(&client, &track) },
         move |app, result| {
             app.pages.favorites.pending.remove(&id);
             match result {

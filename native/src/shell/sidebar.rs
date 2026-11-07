@@ -8,6 +8,7 @@ use crate::route::Location;
 use crate::theme::{Layout, Theme, color_mix};
 use crate::ui::{self, BtnState, brand_mark, font, ico, icons as i, iconbtn, line, with_lh};
 use crate::ui::tooltip::{Side, TipExt};
+use crate::ui::ShadowMd;
 
 /// Which Browse entry a /library URL belongs to (`libraryViewOf`).
 fn library_view_of(loc: &Location) -> &'static str {
@@ -171,7 +172,7 @@ pub fn view(app: &App, t: &Theme, drawer: bool) -> El {
         .child(nav)
         .child(playlists(app, t));
     if drawer {
-        c = c.w_full().child(mobile_actions(app, t));
+        c = c.w_full().child(mobile_actions(t));
     } else {
         c = c.w(w);
     }
@@ -179,7 +180,7 @@ pub fn view(app: &App, t: &Theme, drawer: bool) -> El {
 }
 
 /// `MobileSidebarActions`: the top bar's secondary buttons, in the drawer.
-fn mobile_actions(app: &App, t: &Theme) -> El {
+fn mobile_actions(t: &Theme) -> El {
     let dark = t.dark();
     let action = |key: &str, glyph: &'static Icon, label: &str| {
         row()
@@ -197,15 +198,13 @@ fn mobile_actions(app: &App, t: &Theme) -> El {
             .child(ico(glyph, 16.0, t.c.sidebar_foreground))
             .child(line(label, font(14.0, 400.0), t.c.sidebar_foreground))
     };
-    let _ = app;
-    ui::css_border(col(), 0.0, Color::TRANSPARENT, 0.0)
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(t.c.border).inert())
+    ui::css_border_top(col(), 1.0, t.c.border)
         .padding(8.0)
         .pt(9.0)
         .gap(2.0)
         .child(action("mobile-add-music", &i::UPLOAD, "Add music").on_press(|app: &mut App| {
             app.ui.mobile_nav_open = false;
-            app.ui.upload_open = true;
+            crate::overlays::upload::open(app);
         }))
         .child(
             action("mobile-theme", if dark { &i::SUN } else { &i::MOON }, if dark { "Light mode" } else { "Dark mode" })
@@ -213,7 +212,7 @@ fn mobile_actions(app: &App, t: &Theme) -> El {
         )
         .child(action("mobile-settings", &i::SLIDERS_HORIZONTAL, "Settings").on_press(|app: &mut App| {
             app.ui.mobile_nav_open = false;
-            app.ui.settings_open = true;
+            crate::overlays::settings::open(app);
         }))
 }
 
@@ -224,7 +223,6 @@ pub fn drawer(app: &App, t: &Theme, window_w: f32) -> Option<El> {
         return None;
     }
     let w = 296.0f32.min(window_w - 48.0);
-    let a = t.c.shadow_md_alpha;
     let panel = ui::css_border(col(), 1.0, t.c.sidebar_border, t.radius_xl())
         .key("sidebar-drawer")
         .pin(Some(4.0), Some(4.0), None, Some(4.0))
@@ -233,8 +231,7 @@ pub fn drawer(app: &App, t: &Theme, window_w: f32) -> Option<El> {
         .radius(t.radius_xl())
         .fill(t.c.sidebar)
         .clip_rounded(t.radius_xl())
-        .box_shadow(rune::Shadow { x: 0.0, y: 4.0, blur: 6.0, spread: -1.0, color: Color::BLACK.alpha(a), inset: false })
-        .box_shadow(rune::Shadow { x: 0.0, y: 2.0, blur: 4.0, spread: -2.0, color: Color::BLACK.alpha(a), inset: false })
+        .shadow_md(t)
         .transition(rune::Transition::offset(-(w + 12.0), 0.0))
         .child(view(app, t, true));
     Some(el().key("mobile-nav")
@@ -268,7 +265,7 @@ fn playlists(app: &App, t: &Theme) -> El {
     let mut list = col().key("sidebar-playlists").px(8.0).pb(12.0);
     list = list.child(section_title(t, "Playlists", Some(add)));
     list = list.child(nav_item(t, "nav-playlists", &i::LIST_MUSIC, "All playlists", loc.is("/playlists"), None, "/playlists"));
-    if let Some(pls) = &app.playlists {
+    if let Some(pls) = &app.playlists.data {
         if pls.is_empty() && !compact(t) {
             list = list.child(
                 el().px(10.0)

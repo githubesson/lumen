@@ -6,7 +6,7 @@
 //! have gaps: the server numbers rows it leaves out of what it sends
 //! (other users' personal uploads, deleted tracks).
 
-use crate::api::{PlaylistTrackEntry, PlaylistTracks, TrackSource};
+use crate::api::{PlaylistTrackEntry, TrackSource};
 use crate::core::dates;
 
 /// While TIDAL tracks are queued, refetch so rows flip to their library copies.
@@ -30,19 +30,23 @@ impl Positioned for PlaylistTrackEntry {
 /// `playlistTidalQueued`: entries auto-download is saving, as the server
 /// counts them (failed downloads waiting out a backoff left out); servers
 /// without `tidal_queued` fall back to the rows still on TIDAL.
-pub fn playlist_tidal_queued(data: Option<&PlaylistTracks>) -> u32 {
-    let Some(d) = data else { return 0 };
-    d.tidal_queued.unwrap_or_else(|| d.tracks.iter().filter(|t| t.source == Some(TrackSource::Tidal)).count() as u32)
+pub fn playlist_tidal_queued(tracks: &[PlaylistTrackEntry], tidal_queued: Option<u32>) -> u32 {
+    tidal_queued.unwrap_or_else(|| tracks.iter().filter(|t| t.source == Some(TrackSource::Tidal)).count() as u32)
 }
 
 /// `playlistAutoDownloadRefetchMs`: every 20 s while entries are queued,
 /// otherwise once the next failed download's retry is due (never sooner
 /// than 20 s), otherwise not at all (`None`).
-pub fn playlist_auto_download_refetch_ms(data: Option<&PlaylistTracks>, now_ms: i64) -> Option<u64> {
-    if playlist_tidal_queued(data) > 0 {
+pub fn playlist_auto_download_refetch_ms(
+    tracks: &[PlaylistTrackEntry],
+    tidal_queued: Option<u32>,
+    tidal_retry_at: Option<&str>,
+    now_ms: i64,
+) -> Option<u64> {
+    if playlist_tidal_queued(tracks, tidal_queued) > 0 {
         return Some(PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS);
     }
-    let retry_at = dates::parse(data?.tidal_retry_at.as_deref()?)?;
+    let retry_at = dates::parse(tidal_retry_at?)?;
     Some(((retry_at - now_ms).max(0) as u64).max(PLAYLIST_AUTO_DOWNLOAD_REFRESH_MS))
 }
 
@@ -86,6 +90,7 @@ pub fn move_playlist_entry<T: Positioned>(entries: &[T], from: usize, to: usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::PlaylistTracks;
 
     #[derive(Clone, Debug, PartialEq)]
     struct Row {
@@ -148,29 +153,37 @@ mod tests {
 
     const T: Option<TrackSource> = Some(TrackSource::Tidal);
 
+    fn queued(d: &PlaylistTracks) -> u32 {
+        playlist_tidal_queued(&d.tracks, d.tidal_queued)
+    }
+
+    fn refetch(d: &PlaylistTracks, now: i64) -> Option<u64> {
+        playlist_auto_download_refetch_ms(&d.tracks, d.tidal_queued, d.tidal_retry_at.as_deref(), now)
+    }
+
     #[test]
     fn queued_counts() {
-        assert_eq!(playlist_tidal_queued(Some(&data(&[T, T], Some(1), None))), 1);
-        assert_eq!(playlist_tidal_queued(Some(&data(&[T, T], Some(0), None))), 0);
-        assert_eq!(playlist_tidal_queued(Some(&data(&[T, T], None, None))), 2);
-        assert_eq!(playlist_tidal_queued(Some(&data(&[T, Some(TrackSource::Local), None, T], None, None))), 2);
-        assert_eq!(playlist_tidal_queued(Some(&data(&[], None, None))), 0);
-        assert_eq!(playlist_tidal_queued(None), 0);
+        assert_eq!(queued(&data(&[T, T], Some(1), None)), 1);
+        assert_eq!(queued(&data(&[T, T], Some(0), None)), 0);
+        assert_eq!(queued(&data(&[T, T], None, None)), 2);
+        assert_eq!(queued(&data(&[T, Some(TrackSource::Local), None, T], None, None)), 2);
+        assert_eq!(queued(&data(&[], None, None)), 0);
+        assert_eq!(playlist_tidal_queued(&[], None), 0);
     }
 
     #[test]
     fn refetch_timing() {
         let now = dates::parse("2026-10-02T12:00:00Z").unwrap();
-        assert_eq!(playlist_auto_download_refetch_ms(Some(&data(&[], Some(3), None)), now), Some(20_000));
+        assert_eq!(refetch(&data(&[], Some(3), None), now), Some(20_000));
         assert_eq!(
-            playlist_auto_download_refetch_ms(Some(&data(&[], Some(0), Some("2026-10-02T13:00:00Z"))), now),
+            refetch(&data(&[], Some(0), Some("2026-10-02T13:00:00Z")), now),
             Some(3_600_000)
         );
         assert_eq!(
-            playlist_auto_download_refetch_ms(Some(&data(&[], Some(0), Some("2026-10-02T11:59:59Z"))), now),
+            refetch(&data(&[], Some(0), Some("2026-10-02T11:59:59Z")), now),
             Some(20_000)
         );
-        assert_eq!(playlist_auto_download_refetch_ms(Some(&data(&[], Some(0), None)), now), None);
-        assert_eq!(playlist_auto_download_refetch_ms(None, now), None);
+        assert_eq!(refetch(&data(&[], Some(0), None), now), None);
+        assert_eq!(playlist_auto_download_refetch_ms(&[], None, None, now), None);
     }
 }

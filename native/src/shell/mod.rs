@@ -35,10 +35,23 @@ impl Bp {
     }
 }
 
-/// The window's size in points (the root's laid-out size; the default size
-/// before the first layout).
-pub fn window_size(cx: &mut Cx<App>) -> [f32; 2] {
+/// The window's size in points (the root's laid-out size, in and out of the
+/// shell; the default size before the first layout).
+pub fn window_size(cx: &Cx<App>) -> [f32; 2] {
     cx.layout_size("root").unwrap_or([1280.0, 820.0])
+}
+
+/// The routed page's width before its first layout, from the window as the
+/// shell divides it: less the shell's padding, the sidebar and its gutter,
+/// an open lyrics column, the main pane's border and the content's
+/// scrollbar gutter. The page takes its own padding off.
+pub fn content_estimate(app: &App, t: &Theme, window_w: f32) -> f32 {
+    let narrow = Bp::of(window_w) == Bp::Narrow;
+    let mut w = window_w - if narrow { 8.0 } else { 16.0 + t.layout.sidebar_w() + 8.0 };
+    if app.ui.lyrics_open && !app.ui.player.mini.on && !narrow {
+        w -= 8.0 + player::lyrics::column_width(t);
+    }
+    w - 2.0 - 10.0
 }
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {

@@ -3,37 +3,35 @@
 //! `PinCreateForm.tsx` and `PinComponents.tsx` (the pins table, the status
 //! cell, the row actions and the download history).
 
+mod source;
+
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rune::{El, TextEdit, col, row, text};
 
-use super::requests::{self as rq, Pin, PinCreate, PinDownload, PinKind, is_valid_pin_id};
+use source::NewPin;
+pub use source::{Pin, PinDownload, PinKind};
 use super::table::{self, Action, Cell, Col, Empty, Line, Part};
 use super::{Section, call, format, library, parts, still_mounted};
+use crate::api::sources::{SourceDownloadStatus, is_valid_pin_id};
+use crate::api::{ApiResult, Client};
 use crate::app::App;
 use crate::overlays::confirm::{self, Art, ConfirmSpec, Subject};
+use crate::resource;
 use crate::theme::Theme;
-use crate::ui::forms::{SelectOption, SelectVariant, select};
+use crate::ui::forms::{SelectVariant, select};
+use crate::ui::tooltip::TipExt;
 use crate::ui::{Btn, font, icons as i, mono, tnum};
 
-/// One source's pins, their downloads and its create form.
-pub struct Kind {
-    pub pins: Option<Vec<Pin>>,
-    pub busy: HashSet<String>,
-    /// The pin whose download history is open.
-    pub history: Option<String>,
-    pub downloads: HashMap<String, Vec<PinDownload>>,
-    /// The follow-up reads after a scan, per pin.
-    timers: HashMap<String, Arc<AtomicBool>>,
+/// The create form's fields, kept apart from the pins so that clearing it
+/// after a submit is explicit.
+pub struct Form {
     /// The picked source folder ("" for the first root).
     pub root_path: String,
     pub dest: TextEdit,
     pub label: TextEdit,
     pub minutes: TextEdit,
-    pub adding: bool,
     pub tracker: TextEdit,
     pub tab: TextEdit,
     pub artist: TextEdit,
@@ -42,19 +40,13 @@ pub struct Kind {
     pub password: TextEdit,
 }
 
-impl Default for Kind {
+impl Default for Form {
     fn default() -> Self {
-        Kind {
-            pins: None,
-            busy: HashSet::new(),
-            history: None,
-            downloads: HashMap::new(),
-            timers: HashMap::new(),
+        Form {
             root_path: String::new(),
             dest: TextEdit::new(""),
             label: TextEdit::new(""),
             minutes: TextEdit::new("60"),
-            adding: false,
             tracker: TextEdit::new(""),
             tab: TextEdit::new(""),
             artist: TextEdit::new(""),
@@ -65,6 +57,22 @@ impl Default for Kind {
     }
 }
 
+/// One source's pins, their downloads and its create form.
+#[derive(Default)]
+pub struct Kind {
+    pub pins: Option<Vec<Pin>>,
+    /// The latest list load's ticket: an older reply is dropped.
+    loading: u64,
+    pub busy: HashSet<String>,
+    /// The pin whose download history is open.
+    pub history: Option<String>,
+    pub downloads: HashMap<String, Vec<PinDownload>>,
+    /// The follow-up reads after a scan, per pin: their ticket.
+    timers: HashMap<String, u64>,
+    pub form: Form,
+    pub adding: bool,
+}
+
 #[derive(Default)]
 pub struct State {
     pub kinds: [Kind; 3],
@@ -72,6 +80,10 @@ pub struct State {
 
 fn k(app: &mut App, kind: PinKind) -> &mut Kind {
     &mut app.pages.admin.pins.kinds[kind.index()]
+}
+
+fn form_of(app: &mut App, kind: PinKind) -> &mut Form {
+    &mut k(app, kind).form
 }
 
 /// What differs between the three sources.
@@ -158,31 +170,35 @@ fn missing_id(kind: PinKind) -> String {
     format!("This {} is missing its pin id. Refresh sources or restart the backend.", spec(kind).noun)
 }
 
+/// The section mounts: fresh state (its scan timers and loads out drop
+/// their replies), then the lists load.
 pub fn mount(app: &mut App) {
     for kind in PinKind::ALL {
-        let s = k(app, kind);
-        for (_, t) in s.timers.drain() {
-            t.store(false, Ordering::Relaxed);
-        }
-        *s = Kind::default();
+        *k(app, kind) = Kind::default();
         reload(app, kind, |_| {});
     }
 }
 
+/// `reload`: the list again. Only the latest load's reply lands, so a slow
+/// older one can't put back what a newer one dropped.
 fn reload(app: &mut App, kind: PinKind, then: impl FnOnce(&mut App) + Send + 'static) {
+    let ticket = resource::ticket();
+    k(app, kind).loading = ticket;
     call(
         app,
-        move |c| rq::list_pins(c, kind),
+        move |c| kind.list(c),
         move |app, r| {
-            match r {
-                Ok(next) => {
-                    let s = k(app, kind);
-                    if s.history.as_ref().is_some_and(|h| !next.iter().any(|p| &p.id == h)) {
-                        s.history = None;
+            if k(app, kind).loading == ticket {
+                match r {
+                    Ok(next) => {
+                        let s = k(app, kind);
+                        if s.history.as_ref().is_some_and(|h| !next.iter().any(|p| &p.id == h)) {
+                            s.history = None;
+                        }
+                        s.pins = Some(next);
                     }
-                    s.pins = Some(next);
+                    Err(e) => library::on_error(app, &super::error_message(&e, &format!("Failed to load {}s.", spec(kind).noun))),
                 }
-                Err(e) => library::on_error(app, &super::error_message(&e, &format!("Failed to load {}s.", spec(kind).noun))),
             }
             then(app);
         },
@@ -200,7 +216,7 @@ fn load_downloads(app: &mut App, kind: PinKind, id: String, report: bool) {
         app,
         {
             let id = id.clone();
-            move |c| rq::list_pin_downloads(c, kind, &id, 80)
+            move |c| kind.downloads(c, &id, 80)
         },
         move |app, r| match r {
             Ok(rows) => {
@@ -230,7 +246,7 @@ fn with_busy(
     app: &mut App,
     kind: PinKind,
     id: String,
-    work: impl FnOnce(&crate::api::Client) -> crate::api::ApiResult<()> + Send + 'static,
+    work: impl FnOnce(&Client) -> ApiResult<()> + Send + 'static,
     after: impl FnOnce(&mut App) + Send + 'static,
 ) {
     k(app, kind).busy.insert(id.clone());
@@ -255,7 +271,7 @@ fn toggle(app: &mut App, kind: PinKind, p: &Pin) {
     let Some(id) = require_id(app, kind, p) else { return };
     let enabled = !p.enabled;
     let i2 = id.clone();
-    with_busy(app, kind, id, move |c| rq::set_pin_enabled(c, kind, &i2, enabled), |_| {});
+    with_busy(app, kind, id, move |c| kind.set_enabled(c, &i2, enabled), |_| {});
 }
 
 fn remove(app: &mut App, kind: PinKind, p: &Pin) {
@@ -271,11 +287,9 @@ fn remove(app: &mut App, kind: PinKind, p: &Pin) {
         ConfirmSpec::new(format!("Remove this {}?", sp.noun), "It stops being scanned. Files it downloaded stay on disk and in the library.", "Remove").maybe_subject(Some(subject)).icon(&i::TRASH_2),
         move |app: &mut App| {
                 let (i2, i3) = (id.clone(), id.clone());
-                with_busy(app, kind, id.clone(), move |c| rq::delete_pin(c, kind, &i2), move |app| {
+                with_busy(app, kind, id.clone(), move |c| kind.delete(c, &i2), move |app| {
                     let s = k(app, kind);
-                    if let Some(t) = s.timers.remove(&i3) {
-                        t.store(false, Ordering::Relaxed);
-                    }
+                    s.timers.remove(&i3);
                     if s.history.as_deref() == Some(i3.as_str()) {
                         s.history = None;
                     }
@@ -288,26 +302,22 @@ fn scan(app: &mut App, kind: PinKind, p: &Pin) {
     let Some(id) = require_id(app, kind, p) else { return };
     let i2 = id.clone();
     let mount = app.pages.admin.mount_id;
-    with_busy(app, kind, id.clone(), move |c| rq::scan_pin(c, kind, &i2), move |app| {
+    with_busy(app, kind, id.clone(), move |c| kind.scan(c, &i2), move |app| {
         // The backend scans in the background: read again a couple of times
-        // so the row and its history catch up once files land.
-        let alive = Arc::new(AtomicBool::new(true));
-        if let Some(old) = k(app, kind).timers.insert(id.clone(), alive.clone()) {
-            old.store(false, Ordering::Relaxed);
-        }
+        // so the row and its history catch up once files land. A re-scan,
+        // a removal or a remount drops the earlier scan's timers.
+        let ticket = resource::ticket();
+        k(app, kind).timers.insert(id.clone(), ticket);
         for wait in [2500u64, 8000] {
-            let (flag, id) = (alive.clone(), id.clone());
-            app.net.run(
-                move || std::thread::sleep(Duration::from_millis(wait)),
-                move |app, ()| {
-                    if !flag.load(Ordering::Relaxed) || !still_mounted(app, Section::Library, mount) {
-                        return;
-                    }
-                    reload(app, kind, |_| {});
-                    load_downloads(app, kind, id, false);
-                    crate::pages::library_changed(app);
-                },
-            );
+            let id = id.clone();
+            app.net.after(Duration::from_millis(wait), move |app| {
+                if k(app, kind).timers.get(&id) != Some(&ticket) || !still_mounted(app, Section::Library, mount) {
+                    return;
+                }
+                reload(app, kind, |_| {});
+                load_downloads(app, kind, id, false);
+                crate::pages::library_changed(app);
+            });
         }
     });
 }
@@ -329,41 +339,35 @@ fn toggle_history(app: &mut App, kind: PinKind, id: String) {
 fn submit(app: &mut App, kind: PinKind) {
     let default_root = app.pages.admin.library.roots.data.as_ref().and_then(|r| r.first()).map(|r| r.path.clone()).unwrap_or_default();
     let s = k(app, kind);
-    let root = if s.root_path.is_empty() { default_root } else { s.root_path.clone() };
+    let f = &s.form;
+    let root = if f.root_path.is_empty() { default_root } else { f.root_path.clone() };
     let source = match kind {
-        PinKind::Filen => s.share_url.text.trim().to_string(),
-        _ => s.tracker.text.trim().to_string(),
+        PinKind::Filen => f.share_url.text.trim(),
+        _ => f.tracker.text.trim(),
     };
     if s.adding || source.is_empty() || root.is_empty() {
         return;
     }
-    let minutes = s.minutes.text.trim().parse::<i64>().ok().filter(|m| *m != 0).unwrap_or(60).max(5);
-    let input = PinCreate {
+    let minutes = f.minutes.text.trim().parse::<i64>().ok().filter(|m| *m != 0).unwrap_or(60).max(5);
+    let input = NewPin {
         root_path: root,
-        destination_subdir: s.dest.text.trim().into(),
-        label: s.label.text.trim().into(),
+        destination_subdir: f.dest.text.trim().into(),
+        label: f.label.text.trim().into(),
         scan_interval_seconds: minutes as u64 * 60,
-        tracker: s.tracker.text.trim().into(),
-        tab: s.tab.text.trim().into(),
-        primary_artist: s.artist.text.trim().into(),
-        api_base_url: s.api_base.text.trim().into(),
-        share_url: s.share_url.text.trim().into(),
-        password: s.password.text.clone(),
+        tracker: f.tracker.text.trim().into(),
+        tab: f.tab.text.trim().into(),
+        primary_artist: f.artist.text.trim().into(),
+        api_base_url: f.api_base.text.trim().into(),
+        share_url: f.share_url.text.trim().into(),
+        password: f.password.text.clone(),
     };
     s.adding = true;
     library::on_error(app, "");
-    call(app, move |c| rq::create_pin(c, kind, &input), move |app, r| match r {
+    call(app, move |c| kind.create(c, input), move |app, r| match r {
         Ok(()) => {
-            let s = k(app, kind);
-            let root = std::mem::take(&mut s.root_path);
-            let fresh = Kind { root_path: root, ..Kind::default() };
-            let keep = std::mem::replace(s, fresh);
-            s.pins = keep.pins;
-            s.busy = keep.busy;
-            s.history = keep.history;
-            s.downloads = keep.downloads;
-            s.timers = keep.timers;
-            s.adding = true;
+            // The form clears; the picked folder stays.
+            let f = form_of(app, kind);
+            *f = Form { root_path: std::mem::take(&mut f.root_path), ..Form::default() };
             reload(app, kind, move |app| k(app, kind).adding = false);
         }
         Err(e) => {
@@ -373,98 +377,12 @@ fn submit(app: &mut App, kind: PinKind) {
     });
 }
 
-type Lens = for<'a> fn(&'a mut App) -> &'a mut TextEdit;
+/// One of the form's text fields.
+type Field = for<'a> fn(&'a mut Form) -> &'a mut TextEdit;
 
-/// The form's field accessors and handlers for one source.
-struct Hooks {
-    dest: Lens,
-    label: Lens,
-    minutes: Lens,
-    tracker: Lens,
-    tab: Lens,
-    artist: Lens,
-    api_base: Lens,
-    share_url: Lens,
-    password: Lens,
-    submit: fn(&mut App),
-    set_root: fn(&mut App, &str),
-}
-
-fn kind_at<const K: usize>(app: &mut App) -> &mut Kind {
-    &mut app.pages.admin.pins.kinds[K]
-}
-fn dest<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).dest
-}
-fn label<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).label
-}
-fn minutes<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).minutes
-}
-fn tracker<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).tracker
-}
-fn tab<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).tab
-}
-fn artist<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).artist
-}
-fn api_base<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).api_base
-}
-fn share_url<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).share_url
-}
-fn password<const K: usize>(app: &mut App) -> &mut TextEdit {
-    &mut kind_at::<K>(app).password
-}
-fn submit_k<const K: usize>(app: &mut App) {
-    submit(app, PinKind::ALL[K]);
-}
-fn set_root_k<const K: usize>(app: &mut App, v: &str) {
-    kind_at::<K>(app).root_path = v.to_string();
-}
-
-impl Hooks {
-    fn of<const K: usize>() -> Hooks {
-        Hooks {
-            dest: dest::<K>,
-            label: label::<K>,
-            minutes: minutes::<K>,
-            tracker: tracker::<K>,
-            tab: tab::<K>,
-            artist: artist::<K>,
-            api_base: api_base::<K>,
-            share_url: share_url::<K>,
-            password: password::<K>,
-            submit: submit_k::<K>,
-            set_root: set_root_k::<K>,
-        }
-    }
-    fn for_kind(kind: PinKind) -> Hooks {
-        match kind {
-            PinKind::ApiTracker => Hooks::of::<0>(),
-            PinKind::ArtistGrid => Hooks::of::<1>(),
-            PinKind::Filen => Hooks::of::<2>(),
-        }
-    }
-}
-
-/// `repeat(auto-fit, minmax(min, 1fr))` of `items`, `gap` apart.
-fn grid(items: Vec<El>, width: f32, min: f32, gap: f32) -> El {
-    let (cols, w) = parts::fit_columns(width, min, gap, items.len());
-    let mut out = col().gap(gap);
-    let mut line = row().gap(gap);
-    for (n, item) in items.into_iter().enumerate() {
-        if n > 0 && n % cols == 0 {
-            out = out.child(line);
-            line = row().gap(gap);
-        }
-        line = line.child(item.w(w));
-    }
-    out.child(line)
+/// `setRootPath`, for the source's dropdown (which takes a plain fn).
+fn set_root<const K: usize>(app: &mut App, path: &str) {
+    form_of(app, PinKind::ALL[K]).root_path = path.to_string();
 }
 
 pub fn view(app: &App, t: &Theme, kind: PinKind, width: f32) -> El {
@@ -483,56 +401,58 @@ pub fn view(app: &App, t: &Theme, kind: PinKind, width: f32) -> El {
 fn form(app: &App, t: &Theme, kind: PinKind, width: f32) -> El {
     let sp = spec(kind);
     let s = &app.pages.admin.pins.kinds[kind.index()];
-    let h = Hooks::for_kind(kind);
-    let key = |f: &str| format!("admin-pin-{}-{f}", kind.index());
-    let input = |f: &str, edit: &TextEdit, ph: &str, lens: Lens| parts::text_field(t, &key(f), edit, ph, lens, Some(h.submit));
+    let f = &s.form;
+    let key = |name: &str| format!("admin-pin-{}-{name}", kind.index());
+    let input = |name: &str, edit: &TextEdit, ph: &str, field: Field| {
+        parts::text_field(t, &key(name), edit, ph, move |app| field(form_of(app, kind)), move |app: &mut App| submit(app, kind))
+    };
     let inner = width - 42.0;
 
     let roots = app.pages.admin.library.roots.data.as_deref().unwrap_or(&[]);
-    let options: Vec<SelectOption> = roots
-        .iter()
-        .map(|r| {
-            let label = if r.primary {
-                format!("Primary - {}", r.path)
-            } else {
-                format!("{} - {}", if r.label.is_empty() { "Source" } else { &r.label }, r.path)
-            };
-            SelectOption { disabled: !r.exists, ..SelectOption::new(r.path.clone(), label) }
-        })
-        .collect();
+    // Picked by path; only a missing folder can't take a pin.
+    let options = parts::root_options(roots, |r| r.path.clone(), false);
     let default_root = roots.first().map(|r| r.path.clone()).unwrap_or_default();
-    let root = if s.root_path.is_empty() { default_root } else { s.root_path.clone() };
+    let root = if f.root_path.is_empty() { default_root } else { f.root_path.clone() };
     let source = match kind {
-        PinKind::ApiTracker => parts::field(t, "Tracker URL or ID", input("tracker", &s.tracker, "Tracker API /v1/trackers/:id link or raw id", h.tracker)),
-        PinKind::ArtistGrid => parts::field(t, "Tracker URL or ID", input("tracker", &s.tracker, "ArtistGrid tracker link or raw tracker id", h.tracker)),
-        PinKind::Filen => parts::field(t, "Filen share URL", input("share", &s.share_url, "File or folder public link", h.share_url)),
+        PinKind::ApiTracker => {
+            parts::field(t, "Tracker URL or ID", input("tracker", &f.tracker, "Tracker API /v1/trackers/:id link or raw id", |f| &mut f.tracker))
+        }
+        PinKind::ArtistGrid => {
+            parts::field(t, "Tracker URL or ID", input("tracker", &f.tracker, "ArtistGrid tracker link or raw tracker id", |f| &mut f.tracker))
+        }
+        PinKind::Filen => parts::field(t, "Filen share URL", input("share", &f.share_url, "File or folder public link", |f| &mut f.share_url)),
+    };
+    let set_root: fn(&mut App, &str) = match kind {
+        PinKind::ApiTracker => set_root::<0>,
+        PinKind::ArtistGrid => set_root::<1>,
+        PinKind::Filen => set_root::<2>,
     };
     let folder = parts::field(
         t,
         "Source folder",
-        select(app, t, &key("root"), &options, &root, SelectVariant::Outlined, "Select source folder", options.is_empty(), h.set_root),
+        select(app, t, &key("root"), &options, &root, SelectVariant::Outlined, "Select source folder", options.is_empty(), set_root),
     );
-    let first = grid(vec![source, folder], inner, 240.0, 12.0);
+    let first = parts::auto_fit(vec![source, folder], inner, 240.0, 12.0, false);
 
     let mut fields = Vec::new();
     if kind == PinKind::ApiTracker {
-        fields.push(parts::field(t, "API base URL", input("api-base", &s.api_base, "Optional", h.api_base)));
+        fields.push(parts::field(t, "API base URL", input("api-base", &f.api_base, "Optional", |f| &mut f.api_base)));
     }
-    fields.push(parts::field(t, "Destination subfolder", input("dest", &s.dest, "Relative to source", h.dest)));
+    fields.push(parts::field(t, "Destination subfolder", input("dest", &f.dest, "Relative to source", |f| &mut f.dest)));
     match kind {
-        PinKind::Filen => fields.push(parts::field(t, "Password", input("password", &s.password, "Optional", h.password))),
+        PinKind::Filen => fields.push(parts::field(t, "Password", input("password", &f.password, "Optional", |f| &mut f.password))),
         _ => {
             let tab_ph = if kind == PinKind::ApiTracker { "Optional sheet name" } else { "Optional" };
-            fields.push(parts::field(t, "Tab", input("tab", &s.tab, tab_ph, h.tab)));
-            fields.push(parts::field(t, "Primary artist", input("artist", &s.artist, "Optional override", h.artist)));
+            fields.push(parts::field(t, "Tab", input("tab", &f.tab, tab_ph, |f| &mut f.tab)));
+            fields.push(parts::field(t, "Primary artist", input("artist", &f.artist, "Optional override", |f| &mut f.artist)));
         }
     }
-    fields.push(parts::field(t, "Every (minutes)", input("minutes", &s.minutes, "", h.minutes)));
-    let second = grid(fields, inner, sp.field_min, 12.0);
+    fields.push(parts::field(t, "Every (minutes)", input("minutes", &f.minutes, "", |f| &mut f.minutes)));
+    let second = parts::auto_fit(fields, inner, sp.field_min, 12.0, false);
 
     let has_source = match kind {
-        PinKind::Filen => !s.share_url.text.trim().is_empty(),
-        _ => !s.tracker.text.trim().is_empty(),
+        PinKind::Filen => !f.share_url.text.trim().is_empty(),
+        _ => !f.tracker.text.trim().is_empty(),
     };
     let enabled = !s.adding && has_source && !root.is_empty();
     let mut btn = Btn::new(key("submit"), if s.adding { "Pinning..." } else { sp.submit })
@@ -542,12 +462,12 @@ fn form(app: &App, t: &Theme, kind: PinKind, width: f32) -> El {
         .disabled(!enabled)
         .build(t);
     if enabled {
-        btn = btn.on_press(h.submit);
+        btn = btn.on_press(move |app: &mut App| submit(app, kind));
     }
     let third = row()
         .gap(12.0)
         .items_end()
-        .child(parts::field(t, "Label", input("label", &s.label, "Optional display name", h.label)).grow(1.0))
+        .child(parts::field(t, "Label", input("label", &f.label, "Optional display name", |f| &mut f.label)).grow(1.0))
         .child(btn);
     parts::surface(t, 20.0).gap(14.0).child(first).child(second).child(third)
 }
@@ -582,7 +502,7 @@ fn lead_cell(t: &Theme, kind: PinKind, p: &Pin) -> Cell {
 }
 
 /// `PinDestinationCell`: the folder, with "missing" when its root is gone.
-fn destination_cell(t: &Theme, p: &Pin) -> Cell {
+fn destination_cell(t: &Theme, kind: PinKind, p: &Pin) -> Cell {
     let path = Line::new(p.destination_path.clone(), mono(14.0, 400.0), t.c.muted_foreground).break_all();
     if p.root_exists {
         return Cell::text(path);
@@ -590,18 +510,23 @@ fn destination_cell(t: &Theme, p: &Pin) -> Cell {
     let style = font(12.0, 400.0);
     let w = table::advance("missing", style);
     let (min, max) = path.widths();
-    let missing = text("missing").font(style).color(t.c.warning).help("The pinned source root does not exist on the server").ml(8.0);
+    let missing = text("missing")
+        .font(style)
+        .color(t.c.warning)
+        .tip(&format!("admin-pin-{}-missing-{}", kind.index(), p.id), "The pinned source root does not exist on the server")
+        .ml(8.0);
     Cell::stack(vec![Part::Row(vec![(path.build(max), min, max), (missing, w + 8.0, w + 8.0)], 0.0)], 0.0)
 }
 
 /// `downloadCounts`: "3 new / 1 failed".
 fn download_counts(rows: Option<&Vec<PinDownload>>) -> Option<String> {
+    use SourceDownloadStatus as S;
     let rows = rows.filter(|r| !r.is_empty())?;
-    let count = |s: &str| rows.iter().filter(|r| r.status == s).count();
-    let parts: Vec<String> = [("downloaded", "new"), ("existing", "existing"), ("failed", "failed"), ("skipped", "skipped")]
+    let count = |s: S| rows.iter().filter(|r| r.status == s).count();
+    let parts: Vec<String> = [(S::Downloaded, "new"), (S::Existing, "existing"), (S::Failed, "failed"), (S::Skipped, "skipped")]
         .iter()
         .filter_map(|(s, word)| {
-            let n = count(s);
+            let n = count(*s);
             (n > 0).then(|| format!("{n} {word}"))
         })
         .collect();
@@ -664,8 +589,8 @@ fn pins_table(t: &Theme, kind: PinKind, s: &Kind, width: f32) -> El {
             key: format!("admin-pin-{}-row-{}", kind.index(), p.id),
             cells: vec![
                 lead_cell(t, kind, p),
-                destination_cell(t, p),
-                mono_cell(format::interval(p.scan_interval_seconds)),
+                destination_cell(t, kind, p),
+                mono_cell(format::interval(p.scan_interval_seconds as f64)),
                 mono_cell(format::short(p.last_scan_at.as_deref())),
                 status_cell,
                 acts,
@@ -683,11 +608,9 @@ fn pins_table(t: &Theme, kind: PinKind, s: &Kind, width: f32) -> El {
 
 /// `DownloadHistoryTable`: one pin's recent downloads.
 fn history(t: &Theme, kind: PinKind, title: &str, rows: Option<&Vec<PinDownload>>, id: String, width: f32) -> El {
-    let refresh = Btn::new(format!("admin-pin-{}-history-refresh", kind.index()), "Refresh")
-        .small()
-        .icon(&i::REFRESH_CW)
-        .build(t)
-        .on_press(move |app: &mut App| load_downloads(app, kind, id.clone(), true));
+    let refresh = Btn::new(format!("admin-pin-{}-history-refresh", kind.index()), "Refresh").small().icon(&i::REFRESH_CW);
+    let refresh_w = refresh.width();
+    let refresh = refresh.build(t).on_press(move |app: &mut App| load_downloads(app, kind, id.clone(), true));
     let head = row()
         .mb(10.0)
         .gap(12.0)
@@ -700,7 +623,6 @@ fn history(t: &Theme, kind: PinKind, title: &str, rows: Option<&Vec<PinDownload>
                 .child(parts::eyebrow(t, "Recent downloads"))
                 .child({
                     let style = font(14.0, 400.0);
-                    let refresh_w = 20.0 + 14.0 + 4.0 + table::advance("Refresh", font(13.0, 500.0));
                     let w = table::advance(title, style).ceil().min(width - 34.0 - refresh_w - 12.0);
                     parts::para(title, Vec::new(), style, t.c.muted_foreground, w)
                 }),
@@ -710,16 +632,12 @@ fn history(t: &Theme, kind: PinKind, title: &str, rows: Option<&Vec<PinDownload>
         .map(|rows| {
             rows.iter()
                 .map(|r| {
-                    let good = r.status == "downloaded" || r.status == "existing";
-                    let mut status = vec![table::inline_badge(t, &r.status, good)];
+                    let good = matches!(r.status, SourceDownloadStatus::Downloaded | SourceDownloadStatus::Existing);
+                    let mut status = vec![table::inline_badge(t, r.status.as_str(), good)];
                     if let Some(e) = r.error.as_deref().filter(|e| !e.is_empty()) {
                         status.push(Part::Line(Line::new(e, font(12.0, 400.0), t.c.destructive)));
                     }
-                    let source = match kind {
-                        PinKind::Filen => r.source_path.clone(),
-                        _ => r.source_url.clone(),
-                    }
-                    .unwrap_or_default();
+                    let source = r.source.clone();
                     let file = r.file_path.clone().filter(|f| !f.is_empty()).unwrap_or_else(|| "-".into());
                     table::Row {
                         key: format!("admin-pin-{}-dl-{}", kind.index(), r.id),
@@ -750,20 +668,19 @@ pub fn scene_history(app: &mut App) {
     if let Some(p) = s.pins.as_mut().and_then(|p| p.first_mut()) {
         p.id = id.clone();
     }
-    let row = |n: i64, file: Option<&str>, status: &str, error: Option<&str>, at: &str| PinDownload {
+    let row = |n: i64, file: Option<&str>, status: SourceDownloadStatus, error: Option<&str>, at: &str| PinDownload {
         id: n,
-        source_url: Some(format!("https://artistgrid.example.org/velvet-meridian/demo-{n}.flac")),
-        source_path: None,
+        source: format!("https://artistgrid.example.org/velvet-meridian/demo-{n}.flac"),
         file_path: file.map(str::to_string),
-        status: status.into(),
+        status,
         error: error.map(str::to_string),
         updated_at: at.into(),
     };
     s.downloads.insert(
         id.clone(),
         vec![
-            row(1, Some("/music/artistgrid/velvet-meridian/Demo 1.flac"), "downloaded", None, "2026-10-10T18:00:00Z"),
-            row(2, None, "failed", Some("HTTP 404 Not Found"), "2026-10-10T18:01:00Z"),
+            row(1, Some("/music/artistgrid/velvet-meridian/Demo 1.flac"), SourceDownloadStatus::Downloaded, None, "2026-10-10T18:00:00Z"),
+            row(2, None, SourceDownloadStatus::Failed, Some("HTTP 404 Not Found"), "2026-10-10T18:01:00Z"),
         ],
     );
     s.history = Some(id);
