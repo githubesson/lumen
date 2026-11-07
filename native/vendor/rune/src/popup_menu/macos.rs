@@ -15,6 +15,25 @@ use winit::window::Window;
 use super::{Entry, PopupMenu, Session, Show};
 use crate::runtime::Waker;
 
+pub(super) const SUPPORTED: bool = true;
+
+/// The menu while it tracks, to cancel it.
+pub(super) type Tracking = Option<Retained<NSMenu>>;
+
+/// Stops the menu tracking in `session`, if it is.
+pub(super) fn stop(session: &Session, _tracking: bool) {
+    if let Some(menu) = session.tracking.borrow_mut().take() {
+        // SAFETY: the host's (main) thread. The tracking loop ends once this handler returns.
+        unsafe { menu.cancelTrackingWithoutAnimation() };
+    }
+}
+
+/// An `NSMenu` takes its appearance from the view it pops up in.
+pub(super) fn scheme(_dark: bool) {}
+
+/// winit's run-loop observers keep running while a menu tracks, so nothing asks for turns.
+pub(super) fn start(_turn: Waker) {}
+
 /// Every item's id, by tag, and the one picked.
 struct Picks { ids: Vec<String>, picked: RefCell<Option<String>> }
 
@@ -55,7 +74,7 @@ pub(super) fn show(window: &Arc<Window>, show: Show, session: Rc<Session>, wake:
     unsafe { menu.setMinimumWidth(show.min_width.max(0.0) as f64) };
     let at = NSPoint::new(show.at.0 as f64, show.at.1 as f64);
     run_later(move || {
-        if session.cancelled.get() { return; }
+        if !session.begin() { return; }
         // A close or hide in the same turn as the request, after the host handed it over.
         let picked = if view.window().is_some_and(|w| w.isVisible()) {
             *session.tracking.borrow_mut() = Some(menu.clone());
@@ -70,9 +89,7 @@ pub(super) fn show(window: &Arc<Window>, show: Show, session: Rc<Session>, wake:
         } else { None };
         clear_targets(&menu);
         drop((menu, target));
-        if session.cancelled.get() { return; }
-        *session.answer.borrow_mut() = Some(picked);
-        if let Some(wake) = wake { wake(); }
+        if session.resolve(picked) && let Some(wake) = wake { wake(); }
     });
     true
 }

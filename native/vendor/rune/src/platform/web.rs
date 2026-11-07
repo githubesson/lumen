@@ -5,13 +5,26 @@ use wasm_bindgen::JsCast;
 use winit::{application::ApplicationHandler, event::WindowEvent, event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys, WindowExtWebSys}, window::{Window, WindowId}};
 use crate::{App, Runtime, Env, render::{Gpu, Renderer}, time::Instant};
+use super::web_math;
+
+/// The overscan a page's canvas carries above and below the window, in CSS points: the distance
+/// the browser's compositor can scroll before Rune has to draw a new band.
+const SKIRT: f32 = 256.0;
 mod input;
 mod page;
 pub(crate) mod platform;
 
-thread_local! { static INSETS: std::cell::Cell<[f32; 4]> = const { std::cell::Cell::new([0.0; 4]) }; }
+thread_local! {
+    static INSETS: std::cell::Cell<[f32; 4]> = const { std::cell::Cell::new([0.0; 4]) };
+    /// The largest viewport's height in CSS points (`100lvh`): a page's band is sized from it so
+    /// a phone's toolbar coming and going never changes the band.
+    static LARGE_VIEWPORT: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+}
 
 pub(crate) fn safe_area() -> [f32; 4] { INSETS.get() }
+
+/// The largest viewport's height in CSS points, or 0 before the browser has reported one.
+pub(crate) fn large_viewport() -> f32 { LARGE_VIEWPORT.get() }
 
 /// Open an HTTP(S) or mail link in a new browser tab. Call from a user input handler;
 /// browser popup policy applies. The new page receives no opener or referrer.
@@ -95,6 +108,8 @@ struct Running<S: 'static> {
     document: bool,
     /// The first frame is on screen.
     presented: bool,
+    /// Where the canvas was last put in the document (a page's band top), in points.
+    band: Option<f32>,
     cursor: crate::cursor::os::OsCursor,
     _menus: crate::native_menu::Guard<S>,
     shortcuts: crate::shortcuts::Guard,
@@ -113,18 +128,37 @@ impl<S: 'static> Running<S> {
     }
 
     pub(super) fn resize_surface(&mut self, window: &Window, size: winit::dpi::PhysicalSize<u32>, scale: f32) {
+        let max_dim = self.gpu.device.limits().max_texture_dimension_2d.max(1);
+        if self.document {
+            // The canvas covers a band of the page: size it before the box is measured.
+            let (view, band) = band_css(window, scale, max_dim);
+            set_band_height(window, band);
+            self.rt.set_band(band, view);
+        }
         let size = window.canvas().map_or(size, |c| canvas_physical(&c, size, scale));
         self.suspended = size.width == 0 || size.height == 0;
         if self.suspended { return; }
-        let max_dim = self.gpu.device.limits().max_texture_dimension_2d.max(1);
-        let width = size.width.min(max_dim);
-        let height = size.height.min(max_dim);
-        if self.config.width != width || self.config.height != height {
-            self.config.width = width;
-            self.config.height = height;
+        let next = (size.width.min(max_dim), size.height.min(max_dim));
+        let (kept, reconfigure) = web_math::should_reconfigure_surface((self.config.width, self.config.height), next, self.document);
+        if reconfigure {
+            self.config.width = kept.0;
+            self.config.height = kept.1;
             self.surface.configure(&self.gpu.device, &self.config);
         }
-        self.rt.set_viewport((width as f32 / scale, height as f32 / scale), scale);
+        self.rt.set_viewport((next.0 as f32 / scale, next.1 as f32 / scale), scale);
+    }
+
+    /// Puts a page's canvas where the band it just drew starts in the document. The browser's
+    /// compositor scrolls those pixels itself, at its own rate, until the window nears the band's
+    /// edge and the next frame draws a new one.
+    fn sync_band(&mut self, window: &Window) {
+        if !self.document { return; }
+        let top = self.rt.page_offset();
+        if self.band == Some(top) { return; }
+        self.band = Some(top);
+        if let Some(canvas) = window.canvas() {
+            let _ = canvas.style().set_property("transform", &format!("translate3d(0,{top}px,0)"));
+        }
     }
 
     pub(super) fn apply_frame_requests(&mut self, window: &Window) {
@@ -146,6 +180,29 @@ impl<S: 'static> Running<S> {
     }
 }
 
+/// A page's band in CSS points: `view`, how much of the document the window shows at once, and
+/// `band`, the canvas that covers it. The view height is the *largest* viewport (`100lvh`), so a
+/// phone's toolbar coming and going never changes the band. The skirt is clamped so the texture
+/// stays inside the device's limit; a viewport already at the limit has no skirt.
+fn band_css(window: &Window, scale: f32, max_dim: u32) -> (f32, f32) {
+    let scale = scale.max(1e-3);
+    let reported = large_viewport();
+    let view = if reported > 0.0 { reported } else { window.inner_size().height as f32 / scale };
+    let max = max_dim as f32 / scale;
+    let band = (view + 2.0 * SKIRT).min(max.max(view));
+    (view, band)
+}
+
+/// The canvas's CSS height is its band, in points.
+fn set_band_height(window: &Window, band: f32) {
+    if let Some(canvas) = window.canvas() {
+        let height = format!("{band}px");
+        if canvas.style().get_property_value("height").unwrap_or_default() != height {
+            let _ = canvas.style().set_property("height", &height);
+        }
+    }
+}
+
 /// The canvas's size in device pixels: its CSS box times `scale` when the browser's own
 /// `devicePixelContentBoxSize` (what winit reports) disagrees, as Chromium's emulated device
 /// scale does by reporting CSS pixels. Trusting it would lay out at a fraction of the box.
@@ -157,20 +214,23 @@ fn canvas_physical(canvas: &web_sys::HtmlCanvasElement, reported: winit::dpi::Ph
     winit::dpi::PhysicalSize::new(fix(reported.width, w), fix(reported.height, h))
 }
 
-fn error(message: &str, target: Option<&web_sys::HtmlCanvasElement>, embedded: bool) {
+/// Reports `message` to the console, and on screen unless the app is the page: a document's
+/// static HTML is a working page, and an opaque overlay would cover the page a reader can still
+/// read and scroll. Ending the app leaves that page as the browser found it.
+fn error(message: &str, target: Option<&web_sys::HtmlCanvasElement>, embedded: bool, document: bool) {
     web_sys::console::error_1(&message.into());
-    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
-        if let Ok(label) = document.create_element("pre") {
-            label.set_text_content(Some(message));
-            if embedded && let Some(canvas) = target && let Some(parent) = canvas.parent_element() {
-                let _ = label.set_attribute("style", "margin:0;padding:16px;white-space:pre-wrap;background:Canvas;color:CanvasText;border:1px solid #444;border-radius:8px");
-                let _ = parent.insert_before(&label, Some(canvas));
-                return;
-            }
-            if let Some(body) = document.body() {
-                let _ = label.set_attribute("style", "position:fixed;inset:0;z-index:1;padding:24px;white-space:pre-wrap;background:Canvas;color:CanvasText");
-                let _ = body.append_child(&label);
-            }
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
+    if document && doc.query_selector("[data-rune-static]").ok().flatten().is_some() { return; }
+    if let Ok(label) = doc.create_element("pre") {
+        label.set_text_content(Some(message));
+        if embedded && let Some(canvas) = target && let Some(parent) = canvas.parent_element() {
+            let _ = label.set_attribute("style", "margin:0;padding:16px;white-space:pre-wrap;background:Canvas;color:CanvasText;border:1px solid #444;border-radius:8px");
+            let _ = parent.insert_before(&label, Some(canvas));
+            return;
+        }
+        if let Some(body) = doc.body() {
+            let _ = label.set_attribute("style", "position:fixed;inset:0;z-index:1;padding:24px;white-space:pre-wrap;background:Canvas;color:CanvasText");
+            let _ = body.append_child(&label);
         }
     }
 }
@@ -221,17 +281,19 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() { return; }
         let app = self.app.as_ref().expect("app before canvas");
+        self.document = app.web_document;
+        self.embedded = app.web_inline() && !self.document;
         let existing = match &app.canvas_id {
             Some(id) => {
                 let Some(el) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id(id)) else {
-                    error(&format!("canvas #{id} not found in document"), None, true);
+                    error(&format!("canvas #{id} not found in document"), None, true, self.document);
                     self.end(event_loop);
                     return;
                 };
                 match el.dyn_into::<web_sys::HtmlCanvasElement>() {
                     Ok(canvas) => Some(canvas),
                     Err(_) => {
-                        error(&format!("element #{id} is not a <canvas>"), None, true);
+                        error(&format!("element #{id} is not a <canvas>"), None, true, self.document);
                         self.end(event_loop);
                         return;
                     }
@@ -240,8 +302,6 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             None => None,
         };
         self.owns_canvas = existing.is_none();
-        self.document = app.web_document;
-        self.embedded = app.web_inline() && !self.document;
         if let Some(canvas) = &existing { self.borrowed.canvas(canvas); }
         // Not `active`: winit would focus the canvas before it's styled, and a browser scrolls a
         // focused element into view, so a page landed at its foot. The bridge focuses a
@@ -253,17 +313,19 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
         };
         let window = match event_loop.create_window(attrs) {
             Ok(window) => Arc::new(window),
-            Err(e) => { error(&e.to_string(), existing.as_ref(), self.embedded); self.end(event_loop); return; }
+            Err(e) => { error(&e.to_string(), existing.as_ref(), self.embedded, self.document); self.end(event_loop); return; }
         };
         let canvas = window.canvas().expect("winit web canvas");
         if !canvas.has_attribute("tabindex") {
             let _ = canvas.set_attribute("tabindex", "0");
         }
         if self.document {
-            // The browser scrolls the page under a canvas fixed to the layout viewport, which
-            // draws the band in view; vertical pans and pinches stay the browser's.
+            // The browser scrolls the page over a canvas that is part of the document, not fixed
+            // to the screen: the compositor moves the pixels Rune drew at the display's own rate,
+            // and a frame is only drawn when the window nears the band's edge. Rune puts it in a
+            // clipper as tall as the page (the bridge) and translates it to `page.top`.
             let _ = canvas.set_attribute("tabindex", "-1");
-            canvas.style().set_css_text("position:fixed;left:0;top:0;width:100%;height:100%;display:block;touch-action:pan-y pinch-zoom;outline:none;user-select:none;-webkit-user-select:none");
+            canvas.style().set_css_text("position:absolute;left:0;top:0;width:100%;display:block;transform:translate3d(0,0,0);will-change:transform;pointer-events:auto;touch-action:pan-y pinch-zoom;outline:none;user-select:none;-webkit-user-select:none");
             if let Some(document) = web_sys::window().and_then(|w| w.document()) {
                 self.borrowed.viewport(&document);
                 document.set_title(app.spec.title);
@@ -321,7 +383,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
                 Ok(gpu) => gpu,
                 Err(e) => {
                     if let Some(app) = &self.app { *app.shared.window_error.lock().unwrap() = Some(e.clone()); }
-                    error(&e, window.canvas().as_ref(), self.embedded); self.end(event_loop); return;
+                    error(&e, window.canvas().as_ref(), self.embedded, self.document); self.end(event_loop); return;
                 }
             };
             let mut app = self.app.take().expect("one canvas initialization");
@@ -333,30 +395,33 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             let playground = app.playground.take();
             let (spec, state, shared) = app.into_parts(None);
             let scale = window.scale_factor() as f32;
-            let mut size = window.inner_size();
-            if size.width > 0 && let Some(c) = window.canvas() {
-                size.width = canvas_physical(&c, size, scale).width;
-            }
-            if size.width == 0 {
-                if let Some(c) = window.canvas() {
-                    let cw = c.client_width().max(1) as f32;
-                    size.width = (cw * scale).round().max(1.0) as u32;
-                } else {
-                    size.width = (spec.size.0 * scale).round().max(1.0) as u32;
-                }
-            }
-            if size.height == 0 {
-                size.height = (spec.size.1 * scale).round().max(1.0) as u32;
-            }
+            let document = self.document;
+            // A page's canvas is its band: the visible height plus a skirt of overscan, sized
+            // before the box is measured so the first frame is that tall.
+            let band = if document {
+                let max_dim = gpu.device.limits().max_texture_dimension_2d.max(1);
+                let (view, band) = band_css(window, scale, max_dim);
+                set_band_height(window, band);
+                Some((view, band))
+            } else {
+                None
+            };
+            // Both sides from the canvas's own box: a browser that reports the box in CSS pixels
+            // (Chromium's emulated device scale) would otherwise leave the height at the CSS
+            // height, which its style stretches back over the screen: a 2× vertical stretch.
+            let inner = window.inner_size();
+            let css = window.canvas().map_or((0.0, 0.0), |c| (c.client_width().max(0) as f32, c.client_height().max(0) as f32));
+            let fixed = web_math::fix_canvas_size(css, (inner.width, inner.height), spec.size, scale, fit_height);
+            let mut size = winit::dpi::PhysicalSize::new(fixed.0, fixed.1);
             let dark = web_sys::window().and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten()).is_some_and(|q| q.matches());
             let proxy = self.proxy.clone();
             let wake: crate::Waker = Arc::new(move || { let _ = proxy.send_event(Wake::App); });
             let mut rt = crate::tooling::runtime_for(&spec, state, (size.width as f32 / scale, size.height as f32 / scale), Env::new(dark, scale), wake.clone());
             crate::playground::attach(&mut rt, playground, &spec, None, None, true);
-            let document = self.document;
-            if document {
+            if let Some((view, band)) = band {
                 rt.page_mode();
-                rt.set_viewport((size.width as f32 / scale, size.height as f32 / scale), scale);
+                rt.set_band(band, view);
+                rt.set_viewport((size.width as f32 / scale, band), scale);
             } else if fit_height {
                 rt.fit_height = true;
                 let w = (size.width as f32 / scale).max(1.0);
@@ -385,7 +450,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             shared.visible.store(true, Ordering::Release);
             let max_dim = gpu.device.limits().max_texture_dimension_2d.max(1);
             let Some(mut config) = surface.get_default_config(&gpu.adapter, size.width.clamp(1, max_dim), size.height.clamp(1, max_dim)) else {
-                error("WebGPU canvas has no supported configuration", window.canvas().as_ref(), self.embedded); self.end(event_loop); return;
+                error("WebGPU canvas has no supported configuration", window.canvas().as_ref(), self.embedded, self.document); self.end(event_loop); return;
             };
             config.present_mode = wgpu::PresentMode::Fifo;
             let caps = surface.get_capabilities(&gpu.adapter);
@@ -406,7 +471,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
                 input::Mode { embedded: self.embedded, fit_height, document });
             *self.running.borrow_mut() = Some(Running { gpu, surface, config, renderer, rt, shared, input, clipboard,
                 clock: crate::frame::clock::FrameClock::new(now), compositor, suspended: false, embedded: self.embedded,
-                document, presented: false,
+                document, presented: false, band: None,
                 cursor, _menus: menus, shortcuts });
         }
         if let Some(r) = &mut *self.running.borrow_mut() {
@@ -454,7 +519,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
                 r.sync_input(false);
                 r.cursor.apply(window, r.rt.cursor(), r.rt.pointer().is_some());
                 if !r.rt.surfaces.is_empty() {
-                    error("native video surfaces are unsupported on web", window.canvas().as_ref(), r.embedded); self.end(event_loop); return;
+                    error("native video surfaces are unsupported on web", window.canvas().as_ref(), r.embedded, r.document); self.end(event_loop); return;
                 }
                 if r.gpu.adapter.get_info().backend != wgpu::Backend::Gl && r.renderer.srgb_blend() != r.rt.srgb_blend() {
                     let format = if r.rt.srgb_blend() { r.config.format.remove_srgb_suffix() } else { r.config.format.add_srgb_suffix() };
@@ -466,7 +531,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
                 }
                 let frame = match r.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-                    _ => { error("WebGPU canvas acquisition failed", window.canvas().as_ref(), r.embedded); self.end(event_loop); return; }
+                    _ => { error("WebGPU canvas acquisition failed", window.canvas().as_ref(), r.embedded, r.document); self.end(event_loop); return; }
                 };
                 let target = frame.texture.create_view(&wgpu::TextureViewDescriptor {
                     format: Some(r.renderer.format()), ..Default::default()
@@ -483,6 +548,8 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
                 }
                 r.renderer.submit(&r.gpu.queue, encoder);
                 window.pre_present_notify();
+                // In the same commit as the frame: the canvas moves to where this frame drew it.
+                r.sync_band(window);
                 r.gpu.queue.present(frame);
                 if !r.presented {
                     r.presented = true;
@@ -525,6 +592,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
         if let Some(window) = self.window.take() && self.owns_canvas && let Some(canvas) = window.canvas() { canvas.remove(); }
         std::mem::take(&mut self.borrowed).give_back();
         INSETS.set([0.0; 4]);
+        LARGE_VIEWPORT.set(0.0);
         page::vacate();
     }
 }

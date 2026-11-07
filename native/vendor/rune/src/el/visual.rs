@@ -19,6 +19,8 @@ pub struct VisualCold {
     pub(crate) surface_place: crate::native_surface::place::SurfacePlace,
     /// Bottom colour of a vertical border gradient whose top is `border` (`El::border_gradient`).
     pub border_bottom: Option<Color>,
+    /// Per-side border widths `[top, right, bottom, left]` in points (`El::border_sides`).
+    pub(crate) border_sides: Option<[f32; 4]>,
     /// Dash and gap lengths of a dashed border, in points (`El::border_dash`).
     pub border_dash: Option<[f32; 2]>,
     /// Points into the dash pattern where it starts (`El::border_dash_phase`).
@@ -32,7 +34,13 @@ pub struct VisualCold {
     pub clip_radius: Option<f32>,
     /// Per-corner clip radii override (`[tl, tr, br, bl]`, in points).
     pub(crate) clip_corners: Option<[f32; 4]>,
+    /// A round hole through this element and its subtree (`El::cutout_circle`): centre x and y
+    /// from the element's top-left, and the radii it's clear within and whole from, in points.
+    pub(crate) cutout: Option<[f32; 4]>,
     pub icon: Option<(&'static Icon, Color)>,
+    /// The icon's colour came from `El::color`; without it the icon takes the window's
+    /// foreground (`Cx::foreground`) when the view sets one.
+    pub(crate) icon_inked: bool,
     /// Vertical linear gradient (top, bottom) painted over the fill, under hover/press overlays.
     pub gradient: Option<Box<[Color; 2]>>,
     /// Radial or angled linear gradient painted over the fill, under hover/press overlays.
@@ -59,6 +67,8 @@ pub struct VisualCold {
     /// `El::hover_alone`: while the pointer is on this element, the hover tracks of the
     /// elements it sits inside stay off.
     pub hover_alone: bool,
+    /// `El::hover_group_shared`: the key of the elements whose hover this group shares.
+    pub(crate) hover_share: Option<Rc<str>>,
     /// `El::icon_rotation`: the icon's turn in radians, clockwise.
     pub(crate) icon_turn: f32,
     /// Optional app-supplied key mixed into the cached subtree's signature (`El::cache_key`).
@@ -82,6 +92,8 @@ pub struct VisualCold {
     /// A scroll area's wrapper (`El::wrap_scroll_area`): rectangular clips and fades set on it
     /// go to its first child, the viewport, so what it draws beside that stays whole.
     pub(crate) clip_to_content: bool,
+    /// `El::matched_crop`: a matched flight keeps the content at its own size, cropped.
+    pub(crate) flight_crop: bool,
 }
 
 impl Empty for VisualCold {
@@ -89,6 +101,7 @@ impl Empty for VisualCold {
         surface: None,
         surface_place: crate::native_surface::place::SurfacePlace::CENTRED,
         border_bottom: None,
+        border_sides: None,
         border_dash: None,
         border_dash_phase: 0.0,
         shadows: Vec::new(),
@@ -96,7 +109,9 @@ impl Empty for VisualCold {
         clip: None,
         clip_radius: None,
         clip_corners: None,
+        cutout: None,
         icon: None,
+        icon_inked: false,
         gradient: None,
         radial: None,
         outline: None,
@@ -110,6 +125,7 @@ impl Empty for VisualCold {
         group_opacity: None,
         group_color: None,
         hover_alone: false,
+        hover_share: None,
         icon_turn: 0.0,
         cache_key: None,
         offset_motion: None,
@@ -121,6 +137,7 @@ impl Empty for VisualCold {
         motion_intent: crate::el::motion::MotionIntent::NONE,
         instant_motion: false,
         clip_to_content: false,
+        flight_crop: false,
     };
 }
 
@@ -137,6 +154,8 @@ pub struct Visual {
     pub opacity: f32,
     /// Static alpha of this element's own paint; never inherited or isolated.
     pub paint_alpha: f32,
+    /// `El::layer_opacity`: static alpha its whole subtree composites at, as one layer.
+    pub(crate) layer_opacity: f32,
     pub blur: f32,
     /// `El::rotate`, in radians clockwise.
     pub(crate) rotate: f32,
@@ -188,6 +207,7 @@ impl Default for Visual {
             border_width: 0.0,
             opacity: 1.0,
             paint_alpha: 1.0,
+            layer_opacity: 1.0,
             blur: 0.0,
             rotate: 0.0,
             mark: 0,

@@ -3,14 +3,15 @@
 ## `rune/`: Rune's core crate, patched
 
 [Rune](https://github.com/anomalyco/rune) (MIT, `rune/LICENSE`) at upstream rev
-`4ca683561a100e16b1ce32f3576f4ade61bd2924` (`crates/rune`), the rev `Cargo.toml` pins. Our
+`59f0326b8a12f360736e5ca29a09fad29ad73d71` (`crates/rune`, `dev` on 2026-11-07), the rev
+`Cargo.toml` pins. Our
 `rune` git dependency is routed here by `[patch."https://github.com/anomalyco/rune"]` in
 `native/Cargo.toml`; Rune's other crates (`rune-motion`, `rune-staging`, `rune-taffy`,
 `procwatch`) still come from git at the same rev, so our own `rune-motion` dependency unifies
 with the one vendored Rune uses.
 
 Docs: upstream's `crates/rune/README.md` (also in the cargo checkout,
-`~/.cargo/git/checkouts/rune-*/4ca6835/crates/rune/README.md`).
+`~/.cargo/git/checkouts/rune-*/59f0326/crates/rune/README.md`).
 
 ### What was copied, and what was left out
 
@@ -37,12 +38,25 @@ nothing else changes; `cargo test` in `native/` doesn't run Rune's own tests.
 
 ### Bumping Rune
 
-1. Copy the new rev's `crates/rune` as above (same exclusions), redo the `Cargo.toml`
-   changes, and set the rev in `vendor/rune/Cargo.toml` and `native/Cargo.toml`.
-2. Re-apply each patch below (they're new files plus small, commented hooks; the commits that
-   added them are in `git log -- native/vendor`).
+1. In a clone of Rune, check out the old rev, copy over it every file of `vendor/rune/src`
+   that differs or is new (the test files left out stay upstream's), and commit: that commit is
+   our patches. Cherry-pick it onto the new rev; git merges the hooks, and a conflict is
+   usually upstream moving the code a hook sits in (in `59f0326`, `Host::try_create` moved
+   from `src/window.rs` to `src/window/create.rs`).
+2. Copy the result's `crates/rune` as above (same exclusions, no empty folders), merge the
+   `Cargo.toml` changes into the new manifest (`git merge-file` with the old upstream manifest
+   as the base), and set the rev in `vendor/rune/Cargo.toml` and `native/Cargo.toml`
+   (`rune`, `rune-motion`). Keep `rust-toolchain.toml` in step with Rune's.
 3. Check: `cargo build`, `cargo test`, `cargo build --release --target x86_64-pc-windows-gnu`,
-   and `--snap` renders on Linux unchanged against the previous build.
+   and every reference scene's `--snap` render against the previous build's (`tools/sweep.mjs`);
+   explain each change from upstream's changelog (`changelog/unreleased/`).
+
+The bump to `59f0326` (from `4ca6835`) brought DirectWrite text on Windows, which the app now
+uses (it had forced CoreText-style smoothing there to approach Chromium's weight), and borders
+drawn over the fill and snapped to device pixels. On Linux, text with smoothing off now raises
+glyph coverage to an exponent keyed to the text's luminance, as Chromium's grayscale text does
+on Windows: light text on dark draws heavier. Against the Linux Chromium reference shots that
+cost the dark scenes about 0.07 points of pixels past 32/255 on average (light scenes ±0.01).
 
 ### Patches
 
@@ -64,8 +78,8 @@ to 2; paused or idle stays at 0.
 
 Hooks in upstream files (all `#[cfg(target_os = "windows")]`):
 
-- `src/window/win.rs`: `Win::steady_input` replaces `Win::steady_frame`; `src/window.rs`
-  initialises it.
+- `src/window/win.rs`: `Win::steady_input` replaces `Win::steady_frame`;
+  `src/window/create.rs` initialises it.
 - `src/window/events.rs`: `handle_window_event` sets it for input events.
 - `src/window/draw.rs`: the `steady` block starts the hold from it, and the hold's redraw no
   longer marks a held frame.
@@ -147,8 +161,8 @@ Hooks in upstream files:
 - `src/render.rs`: `pub(crate) mod partial`.
 - `src/render/pass.rs`: `ActivePass::bounded`; `set_scissor`, `scissor` and the pass a
   backdrop split re-opens stay inside the damage.
-- `src/window/win.rs`, `src/window.rs`: `Win::partial`, created with the window (the GPU
-  device lives and dies with it).
+- `src/window/win.rs`, `src/window/create.rs`: `Win::partial`, created with the window (the
+  GPU device lives and dies with it).
 - `src/window/draw.rs`: the image atlas rows a frame rewrites are taken before
   `upload_images`; the non-compositor branch draws through `Partial::draw`, falling back to
   `Renderer::draw`; the compositor branch invalidates the canvas.

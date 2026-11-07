@@ -9,6 +9,9 @@ pub struct TextSpec {
     pub content: String,
     pub style: TextStyle,
     pub color: Color,
+    /// `color` came from [`El::color`](crate::El::color); without it the text takes the
+    /// window's foreground ([`Cx::foreground`](crate::Cx::foreground)) when the view sets one.
+    pub(crate) inked: bool,
     pub align: Align,
     pub spans: Vec<Span>,
     /// Wrap at the element's width (its height follows the text).
@@ -64,6 +67,8 @@ pub struct TextSpec {
     pub(crate) redacted: bool,
     pub(crate) secure_revealed: bool,
     pub(crate) wrap_anywhere: bool,
+    /// See [`El::exact_lines`](crate::El::exact_lines): the height is its lines' own, unrounded.
+    pub(crate) exact_lines: bool,
     /// The scale's bits and [`crate::text::shape_key`] at it, once the content is final (see
     /// [`TextSpec::key_shape`]).
     pub(crate) shape: Option<(u32, u64)>,

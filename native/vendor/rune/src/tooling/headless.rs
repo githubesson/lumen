@@ -56,7 +56,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     if let Some(secs) = std::env::var("RUNE_HEADLESS_WAIT").ok().and_then(|s| s.parse::<f64>().ok()) {
         std::thread::sleep(std::time::Duration::from_secs_f64(secs));
     }
-    let chrome = app.chrome;
+    let (chrome, titlebar) = (app.chrome, app.titlebar);
     let launched = Instant::now();
     if args.list_scenes {
         for (n, _) in app.spec.scenes {
@@ -73,6 +73,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     let (srgb_blend, font_smoothing) = (app.srgb_blend, app.font_smoothing);
     let (on_focus, on_ime) = (app.on_focus, app.on_ime);
     let on_reopen = app.on_reopen;
+    let mut reports = crate::frame::encoded::FrameReports::<S>::new(app.on_frame_encoded.take(), Some("main"));
     let source = read_script(&args);
     let script = source.as_ref().map(load_script).unwrap_or_default();
     let timeline = Timeline::of(&args, &script).unwrap_or_else(|e| die(&e));
@@ -105,7 +106,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     let state_ms = launched.elapsed().as_secs_f64() * 1000.0;
     let mut rt = runtime_for(&spec, state, size, Env::new(dark, scale), std::sync::Arc::new(|| {}));
     crate::playground::attach(&mut rt, playground, &spec, args.playground.clone(), args.variant.clone(), false);
-    rt.set_titlebar_inset(if app_options.borderless { 0.0 } else { chrome.titlebar_inset() });
+    let chrome = rt.headless_chrome(chrome, titlebar, app_options.borderless);
     rt.on_focus = on_focus;
     rt.app_ime.hook = on_ime;
     rt.transparent = transparent;
@@ -130,6 +131,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     rt.set_window_origin((opened[0], opened[1]));
     let mut placed = None;
     let Timeline { fps, dt, start_frame, frames, snap_frame, last_frame } = timeline;
+    reports.set_refresh(Some(fps));
 
     let t0 = Instant::now();
     let features = comp.as_ref().map_or(wgpu::Features::empty(), |c| c.features());
@@ -367,6 +369,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
             readback.copy(&mut enc, &target, shot);
         }
         renderer.submit(&gpu.queue, enc);
+        reports.drawn(reports.stamp(), None, frame_start, update_ms);
         rt.interaction_presented(Instant::now(), None);
         if want_pixels { readback.submitted(); }
         let ms = frame_start.elapsed().as_secs_f64() * 1000.0;

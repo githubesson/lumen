@@ -27,6 +27,7 @@ use crate::tok::{Family, OpticalSize, TextStyle};
 
 mod atlas;
 mod case;
+mod color_icon;
 mod cursor;
 mod decorations;
 mod families;
@@ -52,22 +53,24 @@ mod icon;
 mod layout_cache;
 mod macos;
 pub use macos::smoothing::ApplePipeline;
+mod windows;
 mod measure;
 mod pill_chips;
 mod rich_layout;
 mod run;
-pub(crate) use pill_chips::pill_chips;
+pub(crate) use pill_chips::{bare_icons, pill_chips};
 mod svg_path;
 mod trak;
 mod underline;
 mod line_metrics;
 pub use line_metrics::{last_line_fill, layout_height, stream_height_lag};
+pub(crate) use line_metrics::spec_height;
 pub(crate) use underline::underline_edges;
 pub use case::TextCase;
 pub use hash::text_hash;
 pub(crate) use hash::{elide_key, shape_key};
 pub(crate) use families::choose_families;
-pub use measure::{FamiliesGuard, TextInk, advance, font_epoch, ink, measure, measure_with, with_families};
+pub use measure::{FamiliesGuard, TextInk, advance, content_widths, font_epoch, ink, measure, measure_with, with_families};
 pub use rich_layout::RichLayoutOptions;
 pub use run::{Run, RunLayout};
 pub(crate) use case::Source as CaseSource;
@@ -89,7 +92,11 @@ pub(crate) use cursor::{cursor_from_point, cursor_geometry, line_edge, move_line
 pub use decorations::Deco;
 pub(crate) use decorations::PaintedDeco;
 pub use span::{Ink, Link, LinkPaint, Span, TextHighlight};
-pub(crate) use span::{PillChip, PillMetrics, flatten_spans};
+pub(crate) use span::{BareIcon, PillChip, PillMetrics, flatten_spans};
+
+/// Coverage exponents for black and for white text with font smoothing off: the curve Skia's
+/// text gamma (sRGB, contrast 1) draws grayscale text with, for outlines rasterised elsewhere.
+const TEXT_GAMMA: [f32; 2] = [1.12, 0.45];
 
 use decorations::Decoration;
 use atlas::{AtlasGlyph, COLOR_GLYPH_BUDGET, ColorGlyph, GlyphKey, GlyphMap, Rasterized};
@@ -167,6 +174,7 @@ pub struct TextSystem {
     color_glyphs: GlyphMap<ColorGlyph>,
     color_pixels: Vec<crate::pixels::Pixels>,
     color_bytes: usize,
+    color_icons: color_icon::ColorIcons,
     /// Layouts shaped, a running count (shaping work counter for perf gates).
     pub shaped: u32,
     /// Layouts re-broken at a new width from an earlier shaping, a running count.
@@ -182,6 +190,8 @@ pub struct TextSystem {
     primary_axes: FxHashMap<(Family, u32, bool), Rc<[parley::FontVariation]>>,
     /// CoreGraphics' glyph pipeline for `smoothing`, and its per-ink state.
     apple: macos::smoothing::Smoothing,
+    /// DirectWrite for `FontSmoothing::DirectWrite`, and its per-ink state.
+    windows: windows::Rasterizer,
     pub(crate) glyph_cache: glyph_cache::GlyphCache,
     /// Device px `[x, y]` the next glyphs glide from their resting pixel ([`Self::set_glide`]).
     glide: [f32; 2],
@@ -297,6 +307,7 @@ impl TextSystem {
             color_glyphs: GlyphMap::default(),
             color_pixels: Vec::new(),
             color_bytes: 0,
+            color_icons: color_icon::ColorIcons::default(),
             shaped: 0,
             rebroken: 0,
             cluster_scratch: Vec::new(),
@@ -306,6 +317,7 @@ impl TextSystem {
             primary_traks: Default::default(),
             primary_axes: Default::default(),
             apple: Default::default(),
+            windows: Default::default(),
             glyph_cache: Default::default(),
             glide: [0.0; 2],
         }
@@ -376,11 +388,36 @@ impl TextSystem {
     }
 
     /// The colours the next glyphs draw in (`spans` by `Ink`). On macOS they choose each
-    /// glyph's dilation, so glyphs in light and dark inks rasterize separately.
-    pub fn set_glyph_inks(&mut self, element: Color, spans: &[Span]) { self.apple.set_inks(element, spans); }
+    /// glyph's dilation and on Windows its gamma table, so glyphs in light and dark inks
+    /// rasterize separately.
+    pub fn set_glyph_inks(&mut self, element: Color, spans: &[Span]) {
+        self.apple.set_inks(element, spans);
+        self.windows.set_inks(element, spans);
+    }
+
+    /// Whether glyphs rasterise with DirectWrite: `FontSmoothing::DirectWrite` where it exists.
+    pub(crate) fn direct_write(&mut self) -> bool {
+        self.smoothing == FontSmoothing::DirectWrite && self.windows.available()
+    }
 
     /// How glyphs rasterise and place ([`FontSmoothing`]).
     pub fn font_smoothing(&self) -> FontSmoothing { self.smoothing }
+
+    /// The exponent a glyph's coverage is raised to when drawn in premultiplied `fill`. With
+    /// smoothing off (the default on Linux and the web) it stands in for the text gamma a browser's
+    /// grayscale antialiasing applies there: light text on a dark page draws heavier and dark
+    /// text on a light one a little lighter than coverage blended as is, keyed by the text's
+    /// luminance. With smoothing on, CoreText's dilation does that job, and with DirectWrite Skia's
+    /// gamma tables do; coverage is drawn as is.
+    pub fn coverage_exponent(&self, fill: [f32; 4]) -> f32 {
+        // DirectWrite masks already carry Skia's gamma for their text's luminance.
+        let direct_write = self.smoothing == FontSmoothing::DirectWrite && cfg!(target_os = "windows");
+        if self.smoothing == FontSmoothing::On || direct_write || fill[3] <= 0.0 {
+            return 1.0;
+        }
+        let luma = (0.2126 * fill[0] + 0.7152 * fill[1] + 0.0722 * fill[2]) / fill[3];
+        TEXT_GAMMA[0] + (TEXT_GAMMA[1] - TEXT_GAMMA[0]) * luma.clamp(0.0, 1.0)
+    }
 
     /// Rasterise and place glyphs in `mode` from the next placement on, with its CoreGraphics
     /// stages ([`FontSmoothing::pipeline`]). Glyphs already rasterised in another mode stay
@@ -423,6 +460,7 @@ impl TextSystem {
             }
         }
         for c in self.color_glyphs.values_mut() { c.used = false; }
+        self.color_icons.begin_frame();
     }
 
     /// `shape` is [`shape_key`] of the same text when the caller already has it.
@@ -464,7 +502,11 @@ impl TextSystem {
             .enumerate()
             .map(|(i, p)| {
                 let r = (p.start as usize).min(text.len())..(p.end as usize).min(text.len());
-                (i, r, (pm.lead(p.icon.is_some()) * scale).round() as u32, (pm.trail() * scale).round() as u32)
+                let (lead, trail) = match &p.bare {
+                    Some(b) => (b.size + b.gap, 0.0),
+                    None => (pm.lead(p.icon.is_some()), pm.trail()),
+                };
+                (i, r, (lead * scale).round() as u32, (trail * scale).round() as u32)
             })
             .filter(|(_, r, ..)| {
                 !r.is_empty() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end) && !text.as_bytes()[r.clone()].contains(&b'\n')

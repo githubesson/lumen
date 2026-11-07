@@ -419,9 +419,14 @@ fn round(v: f32) -> f32 {
 pub(super) fn snap(r: [f32; 4], motion: [f32; 4], rigid: [f32; 2], parent: Option<Rest>, mut ease: impl FnMut(usize, f32) -> f32) -> ([f32; 4], Rest) {
     let mut out = r;
     let mut rest = Rest { exact: [0.0; 4], at: [0.0; 4] };
+    // A scaled layer's edges and its scaled rigid translation each land a little off the 1/64 px
+    // grid, so their difference wobbles by up to 1/128 px frame to frame even while the content
+    // holds still against the scroll. Back on the grid it holds, and an edge resting on a half
+    // pixel rounds the same way every frame instead of flickering a pixel.
+    let grid = |v: f32| (v * 64.0).round() / 64.0;
     for axis in 0..2 {
         let (a, b) = (axis, axis + 2);
-        let (rest_a, rest_b) = (r[a] - motion[a] - rigid[axis], r[b] - motion[b] - rigid[axis]);
+        let (rest_a, rest_b) = (grid(r[a] - motion[a] - rigid[axis]), grid(r[b] - motion[b] - rigid[axis]));
         (rest.exact[a], rest.exact[b]) = (rest_a, rest_b);
         (rest.at[a], rest.at[b]) = (rest_a, rest_b);
         if rest_b - rest_a < 0.5 {
@@ -440,6 +445,18 @@ pub(super) fn snap(r: [f32; 4], motion: [f32; 4], rigid: [f32; 2], parent: Optio
         }
     }
     (out, rest)
+}
+
+/// A border's or outline's width, or an outline's offset, `w` device px, snapped as Chromium
+/// snaps CSS border and outline widths: under a pixel it draws one whole pixel, above that it
+/// floors to whole pixels. So 0.5 pt is one crisp pixel at 1×, 1.25× and 1.5×, and 1 pt is one
+/// pixel at 1.25× and 1.5×. Zero stays zero; the sign stays.
+pub(super) fn line_width(w: f32) -> f32 {
+    if w == 0.0 || !w.is_finite() {
+        return w;
+    }
+    // Scene values sit on a 1/64 px grid, so 2.99 px is 3.
+    (w.abs() + 1.0 / 64.0).floor().max(1.0).copysign(w)
 }
 
 /// Whether a box paints something its children's gaps show against. Elsewhere centring would

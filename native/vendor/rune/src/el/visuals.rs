@@ -26,33 +26,60 @@ impl El {
         self.vis.radius = r;
         self
     }
-    /// A ring `width` points wide just inside the border box, following the corner radii. It
-    /// takes no layout space and replaces the fill under it rather than drawing over it, so a
-    /// translucent ring shows what's behind the element. For a stroke over the fill (SwiftUI's
-    /// `strokeBorder`), put the border on an unfilled child the same size.
+    /// A ring `width` points wide just inside the border box, following the corner radii, as a
+    /// CSS `border` draws with `box-sizing: border-box`. It takes no layout space and draws over
+    /// the fill, which runs under it to the outer edge, so a translucent border on a filled box
+    /// shows the fill through it, as in CSS. Inset [`Self::box_shadow`]s draw between the two,
+    /// inside the ring. The width snaps to device pixels as a CSS border's does: under one pixel
+    /// it draws one, above that it floors to whole pixels. For a ring at its exact fractional
+    /// width, as CSS `box-shadow: inset 0 0 0 0.5px` draws, use an inset [`Self::box_shadow`]
+    /// with that spread.
     pub fn border(mut self, width: f32, c: Color) -> Self {
         self.vis.border_width = width;
         self.vis.border = c;
         if let Some(cold) = self.vis.cold.get_mut_if_some() {
             cold.border_bottom = None;
+            cold.border_sides = None;
+        }
+        self
+    }
+    /// A border with its own width on each side, `[top, right, bottom, left]` points, in one
+    /// colour, as CSS `border-top`, `border-right`, `border-bottom` and `border-left` draw: a
+    /// zero side draws nothing, and the ring follows the corner radii, narrowing round a corner
+    /// from one side's width to the other's. Drawn like [`Self::border`], over the fill and
+    /// taking no layout space, with each width snapped to device pixels the same way. So a
+    /// `border-bottom: 0.5px` hairline is `.border_sides([0.0, 0.0, 0.5, 0.0], c)`, its one
+    /// device pixel the box's last row. Dashes and gradients draw the widest side all round.
+    /// Replaces any `border`, and `border` replaces it.
+    pub fn border_sides(mut self, widths: [f32; 4], c: Color) -> Self {
+        let widths = widths.map(|w| if w.is_finite() { w.max(0.0) } else { 0.0 });
+        self.vis.border_width = widths.into_iter().fold(0.0, f32::max);
+        self.vis.border = c;
+        let uniform = widths.iter().all(|&w| w == widths[0]);
+        if !uniform || self.vis.cold.get_mut_if_some().is_some() {
+            let cold = self.vis.cold_mut();
+            cold.border_bottom = None;
+            cold.border_sides = (!uniform).then_some(widths);
         }
         self
     }
     /// A border whose colour runs from `top` at the top edge to `bottom` at the bottom edge,
-    /// e.g. a top-lit hairline rim. Drawn like [`El::border`], inside the box in place of the
-    /// fill. Replaces any `border`, and `border` replaces it.
+    /// e.g. a top-lit hairline rim. Drawn like [`El::border`], inside the box over the fill.
+    /// Replaces any `border`, and `border` replaces it.
     pub fn border_gradient(mut self, width: f32, top: Color, bottom: Color) -> Self {
         self.vis.border_width = width;
         self.vis.border = top;
-        self.vis.cold_mut().border_bottom = Some(bottom);
+        let cold = self.vis.cold_mut();
+        cold.border_bottom = Some(bottom);
+        cold.border_sides = None;
         self
     }
     /// Dashes the border (`border` or `border_gradient`): `dash` points on, `gap` points off,
     /// with butt ends, along the ring's centre line, round the corners too. The pattern starts
     /// with a dash where the top edge leaves the top-left corner and runs clockwise. The period
     /// stretches or shrinks a little so a whole number of dashes fits, and the last gap meets the
-    /// first dash cleanly. Unlike a solid border, the fill shows through the gaps and the dashes
-    /// draw over it. A zero `dash` or `gap` keeps the border solid.
+    /// first dash cleanly. The fill shows through the gaps, and the dashes draw over it as a
+    /// solid border does. A zero `dash` or `gap` keeps the border solid.
     pub fn border_dash(mut self, dash: f32, gap: f32) -> Self {
         let valid = dash.is_finite() && gap.is_finite() && dash > 0.0 && gap > 0.0;
         let v = valid.then_some([dash, gap]);
@@ -163,7 +190,8 @@ impl El {
         cold.pixels_fit = Some(fit);
         self
     }
-    /// A ring `offset` points outside the border box (CSS `outline` + `outline-offset`).
+    /// A ring `offset` points outside the border box (CSS `outline` + `outline-offset`). Width
+    /// and offset snap to device pixels as [`Self::border`]'s width does.
     pub fn outline(mut self, width: f32, offset: f32, color: Color) -> Self {
         self.vis.cold_mut().outline = Some(Outline { width, offset, color });
         self
@@ -196,6 +224,16 @@ impl El {
             for child in &mut e.children { apply(child, alpha); }
         }
         apply(&mut self, alpha.clamp(0.0, 1.0));
+        self
+    }
+    /// Fade the whole subtree as one composited layer, like CSS `opacity`: a label over its
+    /// button's fill shows the fill as it is, not faded through, and overlapping children don't
+    /// show through each other. Static, as [`Self::dim`] is: a change lands at once, and
+    /// animation and hit-test opacity still belong to `opacity` / `live_opacity`. Only an
+    /// element below 1 whose paint overlaps (children, or more than one paint of its own) draws
+    /// offscreen; anything else just takes the alpha. Repeated calls multiply.
+    pub fn layer_opacity(mut self, alpha: f32) -> Self {
+        self.vis.layer_opacity *= alpha.clamp(0.0, 1.0);
         self
     }
     /// Add children's premultiplied colours while a direct child is between opacity 0 and 1.
@@ -350,6 +388,18 @@ impl El {
         cold.clip_radius = Some(clamped.into_iter().fold(0.0, f32::max));
         self
     }
+    /// Punch a round hole through this element and everything it and its descendants draw: clear
+    /// within `inner` points of `center` (points from the element's top-left, which may lie
+    /// outside it), whole from `outer` points, and ramping linearly between, as CSS
+    /// `mask-image: radial-gradient(circle at x y, transparent inner, black outer)` does. Equal
+    /// radii cut an anti-aliased edge. Room for a badge over an avatar's corner:
+    /// `.cutout_circle([16.0, 0.0], 4.0, 5.0)` under a 6 point dot at the corner. The subtree
+    /// draws in an isolated layer, whose composite cuts the hole; hit testing ignores it.
+    pub fn cutout_circle(mut self, center: [f32; 2], inner: f32, outer: f32) -> Self {
+        let inner = inner.max(0.0);
+        self.vis.cold_mut().cutout = Some([center[0], center[1], inner, outer.max(inner)]);
+        self
+    }
     /// Soft clip with a fade width per side (left, top, right, bottom).
     pub fn clip_fade(mut self, left: f32, top: f32, right: f32, bottom: f32) -> Self {
         self.set_clip([left, top, right, bottom].map(|w| w.max(0.0)));
@@ -365,6 +415,14 @@ impl El {
     /// Track hover for descendants' `group_*` styles (see [`Visual::hover_group`]).
     pub fn hover_group(mut self) -> Self {
         self.vis.hover_group = true;
+        self
+    }
+    /// [`Self::hover_group`], shared by every element on screen with the same `key`: the pointer
+    /// over any of them hovers them all, so one group can span elements that don't nest, such as
+    /// a reply's text and the footer under it in separate rows of a virtual list.
+    pub fn hover_group_shared(mut self, key: impl Into<Rc<str>>) -> Self {
+        self.vis.hover_group = true;
+        self.vis.cold_mut().hover_share = Some(key.into());
         self
     }
     /// Curves for this element's hover track: `enter` when the pointer arrives, `exit` when it

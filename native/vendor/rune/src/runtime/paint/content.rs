@@ -15,6 +15,8 @@ pub(super) struct LeafBox {
     pub loop_value: Option<f32>,
     pub cover: Option<(f32, [f32; 2])>,
     pub scale_motion: ScaleMotion,
+    /// The scale of the nearest still ancestor, which moving text rasterizes at.
+    pub rest: f32,
     pub gliding: bool,
     pub caret: Option<[f32; 4]>,
 }
@@ -44,6 +46,7 @@ impl<S: 'static> Runtime<S> {
             loop_value,
             cover,
             scale_motion,
+            rest,
             gliding,
             caret: input_caret,
         } = b;
@@ -106,7 +109,7 @@ impl<S: 'static> Runtime<S> {
                 self.scene.get(n.id, P_ICON_TURN).unwrap_or(n.vis.icon_turn)
             } else { n.vis.icon_turn };
             let tk = if cover.is_some() { 1.0 } else { sc };
-            let raster = if cover.is_some() { 1.0 } else { scale_motion.raster(sc) };
+            let raster = if cover.is_some() { 1.0 } else { scale_motion.raster(sc, rest) };
             if cover.is_none() && scale_motion == ScaleMotion::Live {
                 self.static_scale_settling = true;
             }
@@ -125,7 +128,22 @@ impl<S: 'static> Runtime<S> {
                 (drawn / zoom.max(1e-4)).round().max(1.0) as u32
             };
             let pos = [(r[0] + r[2] - drawn) * 0.5, (r[1] + r[3] - drawn) * 0.5];
-            if drawn > 1e-4 && let Some(q) = self.text.icon_quad(ic, px, pos) {
+            // An icon that paints its own colours draws as its image, upright, faded only by the
+            // element's opacity and its colour's alpha.
+            if drawn > 1e-4 && let Some(pixels) = self.text.color_icon(ic, px, color) {
+                if let Some(image) = self.images.place(pixels, [drawn, drawn]) {
+                    self.instances.push(Instance {
+                        rect: [pos[0], pos[1], drawn, drawn],
+                        radii: [0.0; 4],
+                        fill: [0.0, 0.0, 0.0, premul(color, o, srgb)[3]],
+                        border: [0.0; 4],
+                        params: [image.page as f32, KIND_IMAGE, image.premultiplied as u8 as f32, 1.0],
+                        uv: image.rect.map(|v| v as f32),
+                        clip,
+                        fade: crate::render::pack_fade(fade, clip, clip),
+                    });
+                }
+            } else if drawn > 1e-4 && let Some(q) = self.text.icon_quad(ic, px, pos) {
                 self.push_icon(icon_inst(&q, pos, drawn, turn, premul(color, o, srgb), clip, fade));
             }
         } else if let (Some(spec), Some(layout)) = (&n.text, &n.text_layout) {
@@ -142,7 +160,7 @@ impl<S: 'static> Runtime<S> {
             // `press_scale`, transitions): `tk` about the text's origin. It rasterizes at
             // `raster` and draws filtered by the rest, `tk / raster`.
             let tk = if cover.is_some() { 1.0 } else { sc };
-            let raster = if cover.is_some() { 1.0 } else { scale_motion.raster(sc) };
+            let raster = if cover.is_some() { 1.0 } else { scale_motion.raster(sc, rest) };
             if cover.is_none() && scale_motion == ScaleMotion::Live {
                 self.static_scale_settling = true;
             }
@@ -197,7 +215,10 @@ impl<S: 'static> Runtime<S> {
                     let pl_indent = spec.blocks.first().map_or(0.0, |b| (b.indent_pt(spec.style.size) * s).round() * tk);
                     let pl_origin = [rest_origin[0] + pl_indent, rest_origin[1]];
                     let pl_r_origin = if scale_motion == ScaleMotion::Still { pl_origin } else { [0.0, 0.0] };
-                    let pl = self.text.layout_rich(&inp.placeholder, &[], spec.style, s, Some((w - pl_indent).max(1.0) / tk.max(1e-4)));
+                    // A one-line field's placeholder stays on its line, cut by the field's clip, as its
+                    // text does; a multi-line field's wraps at its width.
+                    let wrap = (!inp.single_line).then(|| (w - pl_indent).max(1.0) / tk.max(1e-4));
+                    let pl = self.text.layout_rich(&inp.placeholder, &[], spec.style, s, wrap);
                     self.glyph_scratch.clear();
                     self.text.set_glyph_inks(inp.placeholder_color, &[]);
                     self.text.set_glide(glide);
@@ -284,6 +305,8 @@ impl<S: 'static> Runtime<S> {
                 if let Some((rc, rw)) = d.ring {
                     inst.border = premul(rc, o * alpha, srgb);
                     inst.params[0] = rw;
+                    // The opacity the colours carry, so the ring hides the chip's fill by its own alpha.
+                    inst.params[3] = o * alpha;
                 }
                 self.instances.push(inst);
             }
@@ -298,6 +321,47 @@ impl<S: 'static> Runtime<S> {
                 let px_r = (px as f32 * raster).round().max(1.0) as u32;
                 if let Some(q) = self.text.icon_quad(icon, px_r, at) {
                     let inst = icon_inst(&q, at, drawn, 0.0, premul(pill_fg, o, srgb), clip, fade);
+                    if self.paint_rank.is_some() && inst.uv[2] > 0.0 { self.icon_aprons.push(apron_key(&inst)); }
+                    self.instances.push(inst);
+                }
+            }
+            let mut bare = Vec::new();
+            crate::text::bare_icons(layout, &spec.pills, s, d_origin, &mut bare);
+            for (k, at, px) in bare {
+                let pill = &spec.pills[k];
+                let Some(b) = pill.bare.as_deref() else { continue };
+                let at = [
+                    rest_origin[0] + (at[0] - d_origin[0]) * tk + glide[0],
+                    rest_origin[1] + (at[1] - d_origin[1]) * tk + glide[1],
+                ];
+                let drawn = px * tk;
+                // An image fits the square, keeping its shape; a glyph takes the text's colour.
+                if let Some(pixels) = &b.image
+                    && let (w, h) = pixels.size()
+                    && w > 0
+                    && h > 0
+                {
+                    let (w, h) = (w as f32, h as f32);
+                    let k = drawn / w.max(h);
+                    let rect = [at[0] + (drawn - w * k) * 0.5, at[1] + (drawn - h * k) * 0.5, w * k, h * k];
+                    if let Some(image) = self.images.place(pixels, [rect[2], rect[3]]) {
+                        self.instances.push(Instance {
+                            rect,
+                            radii: [(b.radius * s * tk).min(rect[2].min(rect[3]) * 0.5); 4],
+                            fill: [0.0, 0.0, 0.0, o],
+                            border: [0.0; 4],
+                            params: [image.page as f32, KIND_IMAGE, image.premultiplied as u8 as f32, 1.0],
+                            uv: image.rect.map(|v| v as f32),
+                            clip,
+                            fade: crate::render::pack_fade(fade, clip, clip),
+                        });
+                    }
+                    continue;
+                }
+                let Some(icon) = pill.icon else { continue };
+                let px_r = (px * raster).round().max(1.0) as u32;
+                if let Some(q) = self.text.icon_quad(icon, px_r, at) {
+                    let inst = icon_inst(&q, at, drawn, 0.0, premul(pill.fg.unwrap_or(color), o, srgb), clip, fade);
                     if self.paint_rank.is_some() && inst.uv[2] > 0.0 { self.icon_aprons.push(apron_key(&inst)); }
                     self.instances.push(inst);
                 }

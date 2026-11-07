@@ -136,7 +136,7 @@ impl<S: 'static> Host<S> {
                 self.shell(event_loop);
             }
             WakeEvent::A11y(_) => self.a11y_receive(),
-            WakeEvent::Reopen => {}
+            WakeEvent::Reopen | WakeEvent::Turn => {}
         }
     }
 
@@ -218,8 +218,12 @@ impl<S: 'static> Host<S> {
                 }
                 #[cfg(target_os = "macos")]
                 if let Some(l) = self.win.as_ref().filter(|l| l.native.full_screen.take()) {
-                    self.rt.set_titlebar_inset(place_chrome(&l.window, self.chrome));
+                    sync_chrome(&mut self.rt, l, self.chrome, self.titlebar);
                 }
+                // The window procedure asks for this paint when a caption button's hover or
+                // press changes.
+                #[cfg(target_os = "windows")]
+                if let Some(l) = &self.win { sync_chrome(&mut self.rt, l, self.chrome, self.titlebar); }
                 self.redraw();
                 self.shell(event_loop);
                 return;
@@ -237,7 +241,7 @@ impl<S: 'static> Host<S> {
         let (Some(l), Some((gpu, ..))) = (self.win.as_mut(), self.gpu.as_ref()) else { return };
         let rt = &mut self.rt;
         let scale = l.window.scale_factor() as f32;
-        let chrome = self.chrome;
+        let (chrome, titlebar) = (self.chrome, self.titlebar);
         // A finger presses through `WindowEvent::Touch`; the mouse events a system makes up
         // from it (Windows promotes touches) would press a second time.
         if matches!(event, WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } | WindowEvent::MouseInput { .. })
@@ -252,13 +256,13 @@ impl<S: 'static> Host<S> {
                     if size.width > 0 && size.height > 0 {
                         l.resize_surface(&gpu.device, size);
                         rt.set_viewport((size.width as f32 / scale, size.height as f32 / scale), scale);
-                        rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                        sync_chrome(rt, l, chrome, titlebar);
                         l.window.request_redraw();
                     }
                 }
             }
             WindowEvent::Resized(size) => {
-                rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                sync_chrome(rt, l, chrome, titlebar);
                 let was_live = rt.live_visible();
                 rt.set_live_visible(l.visible && !l.occluded && size.width > 0 && size.height > 0 && !l.minimized());
                 // Restored where no occlusion event says so (Windows): as uncovering does, the
@@ -272,7 +276,7 @@ impl<S: 'static> Host<S> {
                     rt.cancel_timer_frame();
                     self.idle = true; return;
                 }
-                let origin_moved = screen_origin(&l.window).is_some_and(|o| rt.set_window_origin(o));
+                let origin_moved = sync_screen_origin(rt, &l.window);
                 // A frame Rune moved itself has its drawable and viewport already.
                 let resized = l.resize_surface(&gpu.device, size);
                 let viewport = (size.width as f32 / scale, size.height as f32 / scale);
@@ -287,6 +291,15 @@ impl<S: 'static> Host<S> {
                 #[cfg(target_os = "macos")]
                 if crate::platform::macos::in_live_resize(&l.window) {
                     if self.frame_anim.take().is_some() { l.present_with_transaction(false); }
+                    self.draw(true);
+                    self.shell(event_loop);
+                    return;
+                }
+                // Windows sizes the window in its own loop and shows the new size at once: the
+                // swap chain just took it, so a frame drawn later would leave the old pixels
+                // stretched over it until then.
+                #[cfg(target_os = "windows")]
+                if crate::platform::win32::in_size_move(&l.window) {
                     self.draw(true);
                     self.shell(event_loop);
                     return;
@@ -309,7 +322,7 @@ impl<S: 'static> Host<S> {
                     let viewport = (size.width as f32 / scale, size.height as f32 / scale);
                     if resized || viewport != rt.viewport || scale != rt.env.scale {
                         rt.set_viewport(viewport, scale);
-                        rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                        sync_chrome(rt, l, chrome, titlebar);
                         l.window.request_redraw();
                     }
                 }
@@ -331,7 +344,7 @@ impl<S: 'static> Host<S> {
                     rt.cancel_timer_frame();
                     self.idle = true; return;
                 }
-                rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                sync_chrome(rt, l, chrome, titlebar);
                 // A window opened while the displays slept has no display link yet.
                 #[cfg(target_os = "macos")]
                 if l.native.pacing.is_none() { l.native.pacing = crate::platform::display_link::DisplayLink::new(&l.window, self.frame_wake.clone()); }
@@ -360,7 +373,7 @@ impl<S: 'static> Host<S> {
                 rt.set_full_keyboard_access(crate::platform::preferences::full_keyboard_access());
                 rt.set_system_scroll_bars_state(crate::platform::scroll_bars::reread().with_override(self.args.scroll_bars));
                 self.secure_input.set(focused && l.visible && !l.occluded && rt.has_secure_focus());
-                rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                sync_chrome(rt, l, chrome, titlebar);
                 if !focused {
                     rt.cancel_composition();
                     l.window.set_ime_allowed(false);
@@ -389,17 +402,21 @@ impl<S: 'static> Host<S> {
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
                 let pressed = event.state == ElementState::Pressed;
                 // A release's logical key only matters to `on_key_up` handlers.
-                let logical = (pressed || rt.wants_key_up()).then(|| map_key(&event.logical_key, self.mods)).flatten();
+                let logical = (pressed || rt.wants_key_up()).then(|| map_key_event(&event, self.mods)).flatten();
                 let mut redraw = false;
-                // A menu item handing Rune its key: it acts after, if no handler takes it.
-                let unhandled = crate::native_menu::take_unhandled(logical.as_ref().filter(|_| pressed));
+                // A menu item handing Rune its key: it acts after, if no handler takes it. So does
+                // the window menu's Alt+Space, posted rather than run inside the key's message.
+                let unhandled = crate::native_menu::take_unhandled(logical.as_ref().filter(|_| pressed)).or_else(|| {
+                    logical.as_ref().filter(|ev| pressed && ev.is_window_menu_chord() && chrome::has_window_menu(&l.window))
+                        .map(|_| crate::runtime::Unhandled::WindowMenu)
+                });
                 if let winit::keyboard::PhysicalKey::Code(key) = event.physical_key {
                     redraw = rt.physical_then(crate::PhysicalInput::Key {
                         key, mods: map_mods(self.mods), pressed, repeat: event.repeat,
                     }, logical, key_base(&event), unhandled);
                 } else if let Some(ev) = logical {
                     if !pressed { redraw = rt.key_up(ev); }
-                    else if ev.key == Key::Command('v') && rt.accepts_paste() { self.clipboard.read(rt); }
+                    else if ev.edit_command() == Some('v') && rt.accepts_paste() { self.clipboard.read(rt); }
                     else if event.repeat { rt.repeat_key(ev); }
                     else { rt.key(ev); }
                     redraw |= pressed;
@@ -505,7 +522,11 @@ impl<S: 'static> Host<S> {
                 if let Some((x, y)) = rt.pointer() {
                     match state {
                         ElementState::Pressed => rt.secondary_down(x, y),
-                        ElementState::Released => rt.secondary_up(x, y),
+                        ElementState::Released => {
+                            rt.secondary_up(x, y);
+                            // At the pointer, while it's still where the click was.
+                            if let Some(menu) = rt.take_window_menu() { chrome::window_menu(&l.window, menu); }
+                        }
                     }
                 }
                 l.window.request_redraw();

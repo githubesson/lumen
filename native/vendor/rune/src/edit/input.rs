@@ -82,9 +82,12 @@ impl TextEdit {
             };
             return self.key(&KeyEvent { key, mods: Mods { shift: m.shift, cmd: line, ..Mods::default() } }, layout);
         }
-        if ev.is_command_chord() { return out; }
+        if ev.is_command_chord() || ev.is_window_menu_chord() { return out; }
         if !matches!(&ev.key, Key::Text(s) if !s.contains(['\r', '\n'])) { self.break_history_group(); }
+        // ⌘ moves to a line's edge on macOS. Elsewhere Ctrl, which also sets `cmd`, moves by
+        // word as Option does on macOS; `cmd` with no Ctrl (a script) keeps the line edge.
         let word = m.alt || (m.ctrl && !cfg!(target_os = "macos"));
+        let line = m.cmd && (cfg!(target_os = "macos") || !m.ctrl);
         match &ev.key {
             Key::Text(s) => {
                 if s.chars().any(|c| !c.is_control() || (!self.is_single_line() && matches!(c, '\n' | '\r' | '\t'))) {
@@ -168,7 +171,7 @@ impl TextEdit {
                     let line_range = self.line_range(line_idx);
                     let blk = self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph);
                     let is_soft = self.soft_breaks.binary_search(&(line_idx as u32)).is_ok();
-                    if !m.cmd && !word && a == line_range.start && !is_soft && blk != Block::Paragraph {
+                    if !line && !word && a == line_range.start && !is_soft && blk != Block::Paragraph {
                         match blk {
                             Block::Bullet(lvl) | Block::Numbered(lvl) => {
                                 if lvl > 0 {
@@ -188,7 +191,7 @@ impl TextEdit {
                             Block::Paragraph => unreachable!(),
                         }
                     } else if a > 0 {
-                        let from = if m.cmd {
+                        let from = if line {
                             if self.secure && !self.revealed { 0 } else { self.text[..a].rfind('\n').map_or(0, |i| i + 1) }
                         } else if word {
                             self.prev_word(a)
@@ -209,24 +212,26 @@ impl TextEdit {
                 }
             }
             Key::Left => {
-                let i = if m.cmd { self.line_edge(layout, false) } else if word { self.prev_word(self.focus) } else { prev_char(&self.text, self.focus) };
+                let i = if line { self.line_edge(layout, false) } else if word { self.prev_word(self.focus) } else { prev_char(&self.text, self.focus) };
                 self.move_h(i, m.shift);
             }
             Key::Right if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Down if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Right => {
-                let i = if m.cmd { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { next_char(&self.text, self.focus) };
+                let i = if line { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { next_char(&self.text, self.focus) };
                 self.move_h(i, m.shift);
             }
-            Key::Home => self.set(0, m.shift),
-            Key::End => {
-                let n = self.text.len();
-                self.set(n, m.shift)
+            // Home and End go to the text's ends on macOS. Elsewhere they go to the line's
+            // edge, and with Ctrl to the text's ends.
+            Key::Home | Key::End => {
+                let end = ev.key == Key::End;
+                let i = if cfg!(target_os = "macos") || m.ctrl { if end { self.text.len() } else { 0 } } else { self.line_edge(layout, end) };
+                self.set(i, m.shift)
             }
             Key::Up | Key::Down => {
                 let down = ev.key == Key::Down;
                 let n = self.text.len();
-                let i = if m.cmd || (self.secure && !self.revealed) {
+                let i = if line || (self.secure && !self.revealed) {
                     if down { n } else { 0 }
                 } else if let Some(l) = layout {
                     match crate::text::move_line(l, self.display_index(self.focus), down) {
@@ -250,21 +255,23 @@ impl TextEdit {
                     self.set_caret(i);
                 }
             }
-            Key::Command(c) => match c {
-                'z' if m.shift => self.redo(),
-                'z' => self.undo(),
-                'a' => {
+            // Only the plain chord: with another modifier it's the app's (Ctrl+Alt+Z).
+            Key::Command(_) => match ev.edit_command() {
+                Some('z') if m.shift => self.redo(),
+                Some('z') => self.undo(),
+                Some('y') if !cfg!(target_os = "macos") => self.redo(),
+                Some('a') => {
                     self.anchor = 0;
                     self.focus = self.text.len();
                     self.pending = None;
                 }
-                'b' | 'i' | 'u' => {
+                Some('b' | 'i' | 'u') => {
                     if let Some(mark) = self.format_chord(ev) {
                         self.toggle_mark(mark);
                     }
                 }
-                'c' if !self.secure => out.copy = Some(self.selected().to_owned()),
-                'x' if !self.secure => {
+                Some('c') if !self.secure => out.copy = Some(self.selected().to_owned()),
+                Some('x') if !self.secure => {
                     out.copy = Some(self.selected().to_owned());
                     self.insert("");
                 }

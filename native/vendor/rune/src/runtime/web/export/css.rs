@@ -158,6 +158,10 @@ pub(super) fn paint(v: &Visual, size: (f32, f32), d: &mut Decls) {
         if laid_out_border {
             d.push(("border-style", "solid".into()));
             d.push(("border-color", color(v.border)));
+        } else if let Some([t, r, b, l]) = v.cold.border_sides {
+            for (x, y, w) in [(0.0, t, t), (-r, 0.0, r), (0.0, -b, b), (l, 0.0, l)] {
+                if w > 0.0 { shadows.push(format!("inset {} {} 0 0 {}", px(x), px(y), color(v.border))); }
+            }
         } else {
             shadows.push(format!("inset 0 0 0 {} {}", px(v.border_width), color(v.border)));
         }
@@ -167,7 +171,8 @@ pub(super) fn paint(v: &Visual, size: (f32, f32), d: &mut Decls) {
         shadows.push(format!("{inset}{} {} {} {} {}", px(s.x), px(s.y), px(s.blur), px(s.spread), color(s.color)));
     }
     if !shadows.is_empty() { d.push(("box-shadow", shadows.join(","))); }
-    if v.opacity < 0.999 { d.push(("opacity", num(v.opacity))); }
+    let opacity = v.opacity * v.layer_opacity;
+    if opacity < 0.999 { d.push(("opacity", num(opacity))); }
     if v.cold.clip.is_some() || v.cold.clip_radius.is_some() {
         if !d.iter().any(|(p, _)| p.starts_with("overflow")) { d.push(("overflow", "hidden".into())); }
     }

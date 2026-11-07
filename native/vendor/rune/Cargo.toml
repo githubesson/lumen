@@ -55,12 +55,12 @@ baseline-taffy = ["rune-taffy/baseline-taffy"]
 [dependencies]
 # The accessibility tree's types; the platform adapters below come with `accessibility`.
 accesskit = "0.25.2"
-procwatch = { git = "https://github.com/anomalyco/rune", rev = "4ca683561a100e16b1ce32f3576f4ade61bd2924", optional = true }
+procwatch = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71", optional = true }
 subsecond = { version = "=0.7.10", optional = true }
 dioxus-devtools = { version = "=0.7.10", optional = true }
-rune-motion = { git = "https://github.com/anomalyco/rune", rev = "4ca683561a100e16b1ce32f3576f4ade61bd2924" }
-rune-staging = { git = "https://github.com/anomalyco/rune", rev = "4ca683561a100e16b1ce32f3576f4ade61bd2924" }
-rune-taffy = { git = "https://github.com/anomalyco/rune", rev = "4ca683561a100e16b1ce32f3576f4ade61bd2924" }
+rune-motion = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71" }
+rune-staging = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71" }
+rune-taffy = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71" }
 # Allow backend patch fixes; headless pixel equivalence guards the precompiled Metal path.
 wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "wgsl"] }
 # Keep Wayland client-side frames/buttons without the title font's ab_glyph/ttf-parser.
@@ -153,8 +153,10 @@ x11rb = { version = "0.13", features = ["shape", "xinput", "randr", "allow-unsaf
 xkbcommon = "0.9"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# D3D12 shared textures for `NativeSurface` (`native_surface::windows`), on wgpu-hal's version.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Direct3D12", "Win32_Graphics_DirectWrite", "Win32_Graphics_Dxgi_Common", "Win32_Security"] }
 accesskit_windows = { version = "0.35.2", optional = true }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Performance", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_System_DataExchange", "Win32_System_Memory"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Performance", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # AT-SPI over D-Bus on its own async-io thread, started only when the desktop's accessibility bus is on.

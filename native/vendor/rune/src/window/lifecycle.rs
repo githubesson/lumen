@@ -183,6 +183,21 @@ impl<S: 'static> Host<S> {
     /// opens the pop-up menu it asked for, if the window is still there to open it over.
     pub(super) fn shell(&mut self, event_loop: &ActiveEventLoop) {
         self.show_title();
+        if self.rt.take_toggle_maximized() && let Some(w) = self.win.as_ref().filter(|w| w.visible) {
+            chrome::toggle_maximized(&w.window);
+        }
+        if self.rt.take_toggle_full_screen() && let Some(w) = self.win.as_ref().filter(|w| w.visible) {
+            chrome::toggle_full_screen(&w.window);
+        }
+        if let Some(menu) = self.rt.take_window_menu() && let Some(w) = self.win.as_ref().filter(|w| w.visible) {
+            chrome::window_menu(&w.window, menu);
+        }
+        // A new `Cx::set_titlebar` or `Cx::titlebar_height` resizes the caption buttons and the band
+        // the frame hit-tests, and moves the traffic lights.
+        if self.rt.take_titlebar_changed() && let Some(w) = &self.win {
+            sync_chrome(&mut self.rt, w, self.chrome, self.titlebar);
+            if self.rt.stale() { w.window.request_redraw(); }
+        }
         for _ in 0..8 {
             let minimize = std::mem::take(&mut self.rt.minimize_request);
             match self.rt.shell_request.take() {

@@ -14,10 +14,17 @@ pub(super) struct Measurement<'a, S: 'static> {
     pub(super) fit_height: bool,
     pub(super) system_reduced_motion: bool,
     pub(super) titlebar_inset: f32,
+    pub(super) chrome: crate::ChromeInsets,
+    /// Caption buttons drawn over the view's root.
+    pub(super) caption: Option<crate::titlebar::Caption>,
     pub(super) system_accent: crate::SystemAccent,
     pub(super) system_scroll_bars: crate::platform::scroll_bars::SystemScrollBars,
     pub(super) reduced_motion: bool,
     pub(super) time_scale: f32,
+    /// `Cx::foreground` and `Cx::focus_ring`: the last view's, then this one's once it returns.
+    pub(super) defaults: cx::ViewDefaults,
+    /// `Cx::set_titlebar` and `Cx::titlebar_height`, as the view sets them.
+    pub(super) titlebar: crate::titlebar::TitlebarSet,
     pub(super) commits: u64,
     /// The last commit's nodes. A pass that commits drops the text layouts of the ones it keeps.
     pub(super) nodes: &'a mut [Node],
@@ -56,6 +63,8 @@ pub(super) struct Measured {
     pub(super) nodes: Vec<Node>,
     pub(super) reduced_motion: bool,
     pub(super) time_scale: f32,
+    pub(super) defaults: cx::ViewDefaults,
+    pub(super) titlebar: crate::titlebar::TitlebarSet,
     pub(super) caret_read: bool,
     pub(super) layout_reads: layout_read::LayoutReads,
     pub(super) memo_flattened: Option<Vec<memo_reuse::PendingFlat>>,

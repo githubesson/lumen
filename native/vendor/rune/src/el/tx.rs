@@ -43,6 +43,8 @@ pub struct Tx {
     pub(crate) text_flights: Vec<(String, String)>,
     /// `Tx::launch`: (source, destination).
     pub(crate) launches: Vec<(String, String)>,
+    /// `Tx::unclipped_flights`.
+    pub(crate) unclipped_flights: bool,
     /// Rows to reveal or centre (`Tx::scroll_into_view` and `Tx::scroll_center`).
     pub(crate) scroll_to: Vec<crate::runtime::ScrollReveal>,
     /// Scroll viewports to send to their bottom: (key, animated).
@@ -56,6 +58,12 @@ pub struct Tx {
     pub(crate) wakes: Vec<std::time::Duration>,
     pub(crate) shell: Option<Shell>,
     pub(crate) minimize: bool,
+    /// `Tx::toggle_maximized`.
+    pub(crate) toggle_maximized: bool,
+    /// `Tx::toggle_full_screen`.
+    pub(crate) toggle_full_screen: bool,
+    /// `Tx::send_key`, in order.
+    pub(crate) keys: Vec<crate::KeyEvent>,
     /// `Tx::drop_point`.
     pub(crate) drop_point: Option<PointerEvent>,
     pub(crate) title: Option<String>,
@@ -85,6 +93,8 @@ pub struct Tx {
     pub(crate) live_only: bool,
     /// `Tx::open_playground` and kin, and the playground's own controls.
     pub(crate) playground: Vec<crate::playground::Request>,
+    /// `Tx::invalidate_memos_by_prefix`.
+    pub(crate) evict_memos: Vec<String>,
 }
 
 /// A change to the text selection a handler asked for, carried out after its commit.
@@ -144,6 +154,13 @@ impl Tx {
         self.pick_reads.push(PickRead { within, x, y, pick, f: Rc::new(std::cell::Cell::new(Some(f))) });
     }
 
+    /// [`Runtime::invalidate_memos_by_prefix`](crate::Runtime::invalidate_memos_by_prefix) on
+    /// this window, from a handler or `poll`: e.g. a plugin host evicting the subtrees an
+    /// unloading library built.
+    pub fn invalidate_memos_by_prefix(&mut self, prefix: impl Into<String>) {
+        self.evict_memos.push(prefix.into());
+    }
+
     /// Whether this runtime has an attached motion or tooling trace.
     pub fn tracing(&self) -> bool { self.trace.is_some() }
 
@@ -199,6 +216,28 @@ impl Tx {
     /// A close or quit asked in the same change wins.
     pub fn minimize(&mut self) {
         self.minimize = true;
+    }
+
+    /// Maximize this window after this handler, or restore it when it is maximized, as its
+    /// maximize button would (macOS zooms). Does nothing for overlays and headless runs.
+    pub fn toggle_maximized(&mut self) {
+        self.toggle_maximized = true;
+    }
+
+    /// Take this window full screen after this handler, or bring it back, as macOS's green
+    /// button and Electron's `setFullScreen` do: on Windows and Linux a borderless window over
+    /// its display, which hides a custom titlebar's caption buttons (`Cx::chrome_insets`).
+    /// Does nothing for overlays and headless runs.
+    pub fn toggle_full_screen(&mut self) {
+        self.toggle_full_screen = true;
+    }
+
+    /// Deliver `ev` once this handler is done, as if it were typed: to the focused field, then
+    /// the key handlers, as the keyboard routes it. For a menu the app draws itself, whose Edit
+    /// items send Ctrl+C (⌘C) and the rest to the field that has focus, as AppKit's standard
+    /// Edit items do. Keys sent in one handler arrive in order.
+    pub fn send_key(&mut self, ev: crate::KeyEvent) {
+        self.keys.push(ev);
     }
 
     /// Set this window's title after this handler, in its title bar and the Window menu. The

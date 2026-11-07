@@ -47,6 +47,8 @@ pub(crate) struct NodeCold {
     pub(super) help: Option<String>,
     /// `El::help_when_truncated`.
     pub(super) help_cut: bool,
+    /// `El::help_above`.
+    pub(super) help_above: bool,
     #[cfg(debug_assertions)]
     pub(super) scroll_source: Option<&'static std::panic::Location<'static>>,
 }
@@ -67,7 +69,7 @@ impl crate::cold::Empty for NodeCold {
         above: None,
         scroll: None,
         scroll_axes: crate::el::ScrollAxes::Y,
-        scroll_edges: crate::el::ScrollEdges { fade: 0.0, margin: 0.0, anchor: false },
+        scroll_edges: crate::el::ScrollEdges { fade: 0.0, fade_style: crate::el::FadeStyle::SMOOTH, margin: 0.0, anchor: false },
         sticky: None,
         growth: None,
         glide: None,
@@ -77,6 +79,7 @@ impl crate::cold::Empty for NodeCold {
         material: None,
         help: None,
         help_cut: false,
+        help_above: false,
         #[cfg(debug_assertions)]
         scroll_source: None,
     };
@@ -129,7 +132,7 @@ pub(crate) struct Node {
     pub(super) virtual_mount: bool,
     /// `El::selection_group`.
     pub(super) selection_group: bool,
-    pub(super) window_drag: bool,
+    pub(super) window_drag: crate::el::WindowDrag,
     pub(super) ime_cursor: bool,
     /// Placeholder left in `self.nodes` after `try_reuse_memo` moves a node into the new pass.
     pub(super) moved_stub: bool,
@@ -192,7 +195,7 @@ impl Node {
             group_fade: old.group_fade,
             virtual_mount: false,
             selection_group: false,
-            window_drag: false,
+            window_drag: crate::el::WindowDrag::None,
             ime_cursor: false,
             moved_stub: true,
         }
@@ -308,11 +311,14 @@ pub(super) enum ScaleMotion {
 
 impl ScaleMotion {
     /// The scale text under `sc` rasterizes at. It draws at `sc`, filtered, when they differ.
-    pub(super) fn raster(self, sc: f32) -> f32 {
+    /// Moving text rasterizes at `rest`, the scale of its nearest still ancestor (an app's zoom,
+    /// say), so text that moves inside a zoomed window stays as crisp as at rest and doesn't
+    /// sharpen when the motion ends.
+    pub(super) fn raster(self, sc: f32, rest: f32) -> f32 {
         let k = match self {
             ScaleMotion::Still => sc,
             ScaleMotion::Live => 2.0f32.powf((sc.max(1e-4).log2() * 4.0).round() * 0.25),
-            ScaleMotion::Moving => 1.0,
+            ScaleMotion::Moving => rest,
         };
         // A tiny or huge raster isn't worth its atlas space; sample the rest size instead.
         if (1.0 / 16.0..=4.0).contains(&k) { k } else { 1.0 }

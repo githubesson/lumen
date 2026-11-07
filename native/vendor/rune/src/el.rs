@@ -78,6 +78,10 @@ pub struct Drag {
     /// view selects by words on 2 and lines on 3, and extends by them as the drag moves.
     pub clicks: u32,
     pub(crate) cancelled: bool,
+    /// The pointer in window points.
+    pub(crate) window: [f32; 2],
+    /// The pointer in desktop pixels, when a native window hosts the view.
+    pub(crate) screen: Option<(i32, i32)>,
 }
 
 impl Drag {
@@ -86,6 +90,32 @@ impl Drag {
     pub fn cancelled(&self) -> bool {
         self.cancelled
     }
+
+    /// The pointer in window points from the window's top-left, whatever scale the element
+    /// draws at.
+    pub fn window_point(&self) -> [f32; 2] {
+        self.window
+    }
+
+    /// The pointer in physical desktop pixels, the space `WindowOptions::position` and
+    /// `WindowHandle::set_position` take: for opening a window under the pointer, as a tab
+    /// dragged out of its strip does. `None` without a native window (headless runs, the web)
+    /// and where the system hides window positions (Wayland).
+    pub fn screen_point(&self) -> Option<(i32, i32)> {
+        self.screen
+    }
+}
+
+/// What a press on an element does to the window (`El::window_drag`, `El::no_window_drag`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WindowDrag {
+    /// Nothing of its own: a press goes to what's under it.
+    #[default]
+    None,
+    /// A press moves the window, and a double press zooms it.
+    Drag,
+    /// A press stays here, inside a `Drag` element, and does nothing to the window.
+    NoDrag,
 }
 
 pub(crate) type PressFn = Rc<dyn Fn(crate::states::States<'_>, &mut Tx)>;
@@ -168,7 +198,7 @@ impl Default for GrowthSpec {
 }
 
 /// The selection highlight until [`El::selection_color`] or [`El::caret`] sets one.
-const DEFAULT_SELECTION: Color = Color { r: 1.0, g: 1.0, b: 1.0, a: 0.2 };
+pub(crate) const DEFAULT_SELECTION: Color = Color { r: 1.0, g: 1.0, b: 1.0, a: 0.2 };
 
 /// A text field bound to a [`TextEdit`] in app state.
 #[derive(Clone)]
@@ -182,6 +212,10 @@ pub struct InputSpec {
     pub selection: Color,
     /// One unwrapped line that scrolls sideways to keep the caret visible, like `<input>`.
     pub single_line: bool,
+    /// `placeholder_color`, and `caret` with `selection`, came from [`El::placeholder`] and
+    /// [`El::caret`]; the others follow the window's foreground ([`Cx::foreground`](crate::Cx::foreground)).
+    pub(crate) placeholder_inked: bool,
+    pub(crate) caret_inked: bool,
     pub(crate) revealed_override: Option<bool>,
     pub(crate) decorations: Vec<Span>,
     pub(crate) rich_style: crate::edit::RichStyle,
@@ -311,6 +345,8 @@ pub enum Align {
 }
 
 pub use crate::el::anchor::{Anchor, Side, anchor_rect};
+pub(crate) use crate::el::scroll::FadeStyle;
+pub use crate::el::scroll::ScrollFade;
 pub use crate::el::text_spec::TextSpec;
 pub(crate) use crate::el::text_spec::Elide;
 
@@ -347,6 +383,7 @@ pub(crate) struct PasteFn {
 pub(crate) type PillIconFn = Rc<dyn Fn(&str) -> Option<&'static crate::Icon>>;
 /// A pill's look by its id; see [`El::pill_style`].
 pub(crate) type PillStyleFn = Rc<dyn Fn(&str) -> PillStyle>;
+pub use pills::InlineIcon;
 
 /// How one [`Mark::Pill`](crate::Mark::Pill) chip looks: any part left unset falls back to
 /// [`El::pill_colors`] and [`El::pill_icon`], then the field's defaults. Build one with
@@ -407,6 +444,8 @@ pub(crate) type SelectionChangeFn = Rc<dyn Fn(crate::states::States<'_>, &crate:
 pub(crate) struct ScrollEdges {
     /// Fade width (points) for the top and bottom edges; 0 for none.
     pub(crate) fade: f32,
+    /// How the fade follows the content hidden under each edge (`El::scroll_fade`).
+    pub(crate) fade_style: scroll::FadeStyle,
     /// Space `Tx::scroll_into_view` leaves between a revealed row and the viewport's edge.
     pub(crate) margin: f32,
     /// The viewport keeps its top row where it is when content above it changes.
@@ -488,7 +527,7 @@ pub struct El {
     pub(crate) whole: bool,
     pub(crate) glide: Option<crate::growth::FoldGlide>,
     pub(crate) input: Option<Box<InputSpec>>,
-    pub(crate) window_drag: bool,
+    pub(crate) window_drag: WindowDrag,
     /// `El::ime_cursor`.
     pub(crate) ime_cursor: bool,
     pub(crate) scale: f32,
@@ -496,6 +535,8 @@ pub struct El {
     pub(crate) help: Option<String>,
     /// `El::help_when_truncated`: the tooltip shows only while the text is cut short.
     pub(crate) help_cut: bool,
+    /// `El::help_above`: the tooltip shows above the element.
+    pub(crate) help_above: bool,
     pub(crate) material: Option<crate::SystemMaterial>,
     /// `El::aspect_fit`'s width over height; 0 when unset.
     pub(crate) aspect_fit: f32,
@@ -554,12 +595,13 @@ fn base(dir: FlexDirection) -> El {
         whole: false,
         glide: None,
         input: None,
-        window_drag: false,
+        window_drag: WindowDrag::None,
         ime_cursor: false,
         scale: 1.0,
         time_scale: 1.0,
         help: None,
         help_cut: false,
+        help_above: false,
         material: None,
         aspect_fit: 0.0,
         selection_group: false,
@@ -598,6 +640,7 @@ pub fn text(content: impl Into<String>) -> El {
         content: content.into(),
         style: crate::tok::type_::BODY,
         color: Color::WHITE,
+        inked: false,
         align: Align::Start,
         spans: Vec::new(),
         wrap: false,
@@ -629,6 +672,7 @@ pub fn text(content: impl Into<String>) -> El {
         redacted: false,
         secure_revealed: false,
         wrap_anywhere: false,
+        exact_lines: false,
         shape: None,
     }));
     e
@@ -646,6 +690,14 @@ pub fn rich(content: impl Into<String>, spans: Vec<Span>) -> El {
         t.wrap = true;
     }
     e
+}
+
+/// Parts a help text from each of its [`El::help_keys`] keycaps.
+pub(crate) const HELP_KEY: char = '\u{1f}';
+
+/// A help text as words: its keycaps after it, a space apart.
+pub(crate) fn help_words(help: &str) -> std::borrow::Cow<'_, str> {
+    if help.contains(HELP_KEY) { help.replace(HELP_KEY, " ").into() } else { help.into() }
 }
 
 /// An SVG icon from a catalog, `size` points square, tinted with `.color()`.
@@ -691,6 +743,8 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         caret: Color::WHITE,
         selection: DEFAULT_SELECTION,
         single_line: false,
+        placeholder_inked: false,
+        caret_inked: false,
         revealed_override: None,
         decorations: Vec::new(),
         rich_style: crate::edit::RichStyle::default(),
@@ -1075,6 +1129,17 @@ impl El {
     /// control with no ring of its own draws the default one (see [`El::no_focus_ring`]).
     pub fn focus_ring(mut self, width: f32, offset: f32, color: Color) -> Self {
         self.focus.ring = Some(Outline { width, offset, color });
+        self.focus.within = false;
+        self.focus.ring_off = false;
+        self
+    }
+    /// A ring drawn while focus is on this element or anywhere inside it, whether the pointer or
+    /// the keyboard put it there, as CSS `:focus-within` draws a text field's box: e.g.
+    /// `focus_within_ring(1.0, -1.0, c)` for `outline: 1px solid; outline-offset: -1px`, a ring
+    /// just inside the border box. It isn't a Tab stop by itself.
+    pub fn focus_within_ring(mut self, width: f32, offset: f32, color: Color) -> Self {
+        self.focus.ring = Some(Outline { width, offset, color });
+        self.focus.within = true;
         self.focus.ring_off = false;
         self
     }
@@ -1082,14 +1147,16 @@ impl El {
     /// that shows focus its own way (a fill, an outline it animates) sets it on itself or on
     /// the child that would draw the ring.
     ///
-    /// Without it, a `focusable` element focused from the keyboard draws AppKit's ring when
-    /// neither it nor a child (short of another focusable) sets `focus_ring`: 3 points wide
-    /// in [`Cx::focus_color`](crate::Cx::focus_color), just outside its border box, following
+    /// Without it, a `focusable` element focused from the keyboard draws the default ring when
+    /// neither it nor a child (short of another focusable) sets `focus_ring`: the view's
+    /// [`Cx::focus_ring`](crate::Cx::focus_ring), else AppKit's, 3 points wide in
+    /// [`Cx::focus_color`](crate::Cx::focus_color), just outside its border box, following
     /// its corner radii. Text fields, focused links, `focus_highlight` rows and the items of a `menu`,
     /// `listbox`, `list`, `tree` or `grid` group draw none, as in AppKit: their caret,
     /// highlight or selection shows focus.
     pub fn no_focus_ring(mut self) -> Self {
         self.focus.ring = None;
+        self.focus.within = false;
         self.focus.ring_off = true;
         self
     }
@@ -1179,6 +1246,25 @@ impl El {
         e.help_cut = true;
         e
     }
+    /// Keycaps drawn after this element's [`El::help`] text, as a web tooltip shows its
+    /// command's keybind: `.help("Toggle review").help_keys(["Ctrl", "Shift", "R"])`. Call it
+    /// after `help`, which replaces them. The element tree and assistive technology read them
+    /// after the text, a space apart.
+    pub fn help_keys<K: Into<String>>(mut self, keys: impl IntoIterator<Item = K>) -> Self {
+        if let Some(h) = &mut self.help {
+            for k in keys.into_iter().map(Into::into).filter(|k| !k.is_empty()) {
+                h.push(HELP_KEY);
+                h.push_str(&k);
+            }
+        }
+        self
+    }
+    /// Shows this element's [`El::help`] tooltip above it, 4 points clear, and below only when
+    /// there's no room above, as a web page's `placement="top"` tooltip sits over its button.
+    pub fn help_above(mut self) -> Self {
+        self.help_above = true;
+        self
+    }
     pub fn child(mut self, child: El) -> Self {
         self.memo_built = None;
         self.has_virtual |= child.has_virtual;
@@ -1197,9 +1283,11 @@ impl El {
     pub fn color(mut self, c: Color) -> Self {
         if let Some(t) = &mut self.text {
             t.color = c;
+            t.inked = true;
         }
         if let Some(cold) = self.vis.cold.get_mut_if_some() && let Some((_, ic)) = &mut cold.icon {
             *ic = c;
+            cold.icon_inked = true;
         }
         if self.input.is_some() {
             self.sync_input_rich();

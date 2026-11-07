@@ -11,6 +11,8 @@ extern "C" {
     fn sync_copy(handle: &JsValue, text: &str);
     #[wasm_bindgen(js_name = syncA11y)]
     fn sync_a11y(handle: &JsValue, json: &str);
+    #[wasm_bindgen(js_name = syncScrollX)]
+    fn sync_scroll_x(handle: &JsValue, path: &str, x: f32);
     fn activate(handle: &JsValue);
     #[wasm_bindgen(js_name = syncPage)]
     fn sync_page(handle: &JsValue, height: f32, focused: bool);
@@ -44,6 +46,8 @@ pub(super) struct Bridge {
     document: bool,
     /// The page height and control focus the page last heard.
     page: Option<(f32, bool)>,
+    /// The horizontal offsets the mirror's containers were last set to.
+    scroll_x: Vec<(String, f32)>,
 }
 
 impl Bridge {
@@ -58,8 +62,7 @@ impl Bridge {
                 // A DOM event fired synchronously by page JavaScript Rune called mid-frame (a
                 // same-tab router tearing the route down) is dropped rather than re-entering.
                 let Ok(mut running) = running.try_borrow_mut() else { return };
-                if let Some(r) = &mut *running { r.input_event(&mut event, &window); }
-                window.request_redraw();
+                if let Some(r) = &mut *running && r.input_event(&mut event, &window) { window.request_redraw(); }
             }
         });
         // A page's canvas is sized by its style and reports no safe area: the page lays out
@@ -68,7 +71,7 @@ impl Bridge {
         let handle = mount(canvas, callback.as_ref().unchecked_ref(), embedded, fit_height, document);
         Self { handle, _callback: callback, dispose_viewport, mods: ModifiersState::empty(),
             mirror: Default::default(), a11y: Default::default(),
-            copy_cache: String::new(), fit_height, document, page: None }
+            copy_cache: String::new(), fit_height, document, page: None, scroll_x: Vec::new() }
     }
 
     /// The first frame is on screen: a page swaps its static export for the live mirror.
@@ -101,16 +104,33 @@ impl<S: 'static> Running<S> {
                 self.input.page = Some(page);
                 sync_page(&self.input.handle, page.0, page.1);
             }
+            // A horizontal viewport Rune scrolled (a wheel or a key on desktop) moves the mirror's
+            // container to match; one the browser scrolled already says where it is.
+            let handle = &self.input.handle;
+            let next = self.rt.page_scroll_x();
+            for (path, x) in &next {
+                let known = self.input.scroll_x.iter().find(|(p, _)| p == path).map(|(_, x)| *x);
+                if known.is_none_or(|known| (known - x).abs() > 0.5) { sync_scroll_x(handle, path, *x); }
+            }
+            self.input.scroll_x = next;
         }
         if focus { activate(&self.input.handle); }
     }
 
-    pub(super) fn input_event(&mut self, event: &mut serde_json::Value, window: &Arc<Window>) {
+    /// Handles one DOM event. Returns whether a frame must be drawn: a page's scroll only draws
+    /// when it moves the band (the browser's compositor scrolls the pixels Rune already drew).
+    pub(super) fn input_event(&mut self, event: &mut serde_json::Value, window: &Arc<Window>) -> bool {
         let mut activate = false;
         match event["kind"].as_str() {
             Some("viewport") => {
                 let insets = std::array::from_fn(|i| event["insets"][i].as_f64().unwrap_or(0.0).max(0.0) as f32);
-                if INSETS.replace(insets) != insets { self.rt.invalidate(); }
+                let h = event["h"].as_f64().unwrap_or(0.0).max(0.0) as f32;
+                // A phone reports the visual viewport on every scroll frame as its toolbar moves;
+                // when neither the safe area nor the largest viewport moved, there's nothing to do.
+                let moved = LARGE_VIEWPORT.replace(h) != h;
+                if INSETS.replace(insets) == insets && !moved { return false; }
+                if moved { self.resize_surface(window, window.inner_size(), window.scale_factor() as f32); }
+                self.rt.invalidate();
             }
             Some("dpr") => {
                 let size = window.inner_size();
@@ -121,7 +141,7 @@ impl<S: 'static> Running<S> {
             Some("focus") => self.rt.window_focus(event["focused"].as_bool().unwrap_or(false)),
             Some("visibility") => {
                 self.shared.visible.store(event["visible"].as_bool().unwrap_or(false), Ordering::Release);
-                return;
+                return true;
             }
             Some("edit" | "selection" | "preedit") => self.rt.web_edit(event),
             Some("sync") => self.input.mirror.key.clear(), // Composition's final sync was deferred by the DOM.
@@ -142,18 +162,28 @@ impl<S: 'static> Running<S> {
             // The page scrolled: draw the band in view, and hover what is now under the pointer.
             // The redraw that follows the event draws it; nothing commits.
             Some("scroll") => {
-                if self.rt.set_page_scroll(event["y"].as_f64().unwrap_or(0.0) as f32)
-                    && let Some((x, y)) = self.rt.pointer().filter(|_| !self.rt.touching())
-                {
-                    self.rt.pointer_move(x, y);
+                let before = self.rt.page_scroll_y();
+                let moved = self.rt.set_page_scroll(event["y"].as_f64().unwrap_or(0.0) as f32);
+                // The pointer keeps its place on screen while the band moves under it.
+                let turned = self.rt.page_scroll_y() - before;
+                if turned != 0.0 && let Some((x, y)) = self.rt.pointer().filter(|_| !self.rt.touching()) {
+                    self.rt.pointer_move(x, y + turned);
                 }
-                return;
+                return moved;
+            }
+            // A page's horizontal viewport scrolled natively, by the browser's own compositor.
+            Some("scroll_x") => {
+                let path = event["path"].as_str().unwrap_or_default();
+                let x = event["x"].as_f64().unwrap_or(0.0) as f32;
+                return self.rt.set_page_scroll_x(path, x);
             }
             // The pointer is over mirrored text or a link, which takes it from the canvas.
             Some("hover") => {
+                if self.rt.touching() { return false; }
+                // The mirror's pointer is in window points; the canvas draws the band.
                 let (x, y) = (event["x"].as_f64().unwrap_or(0.0) as f32, event["y"].as_f64().unwrap_or(0.0) as f32);
-                if !self.rt.touching() { self.rt.pointer_move(x, y); }
-                return;
+                self.rt.pointer_move(x, y + self.rt.page_window().0);
+                return true;
             }
             _ => {}
         }
@@ -162,6 +192,7 @@ impl<S: 'static> Running<S> {
         self.apply_frame_requests(window);
         self.clipboard.flush(&mut self.rt);
         self.sync_input(activate);
+        true
     }
 
     pub(super) fn window_input(&mut self, event: &WindowEvent, window: &Arc<Window>) -> bool {
@@ -207,7 +238,7 @@ impl<S: 'static> Running<S> {
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
                 immediate = true;
                 let pressed = event.state == ElementState::Pressed;
-                let mut logical = (pressed || self.rt.wants_key_up()).then(|| crate::window::map_key(&event.logical_key, self.input.mods)).flatten();
+                let mut logical = (pressed || self.rt.wants_key_up()).then(|| crate::window::map_key_event(&event, self.input.mods)).flatten();
                 if let Some(key) = &mut logical {
                     key.mods = modifiers(self.input.mods);
                     if key.mods.cmd && let crate::Key::Text(text) = &key.key && text != " " && text.chars().count() == 1 {
@@ -226,8 +257,13 @@ impl<S: 'static> Running<S> {
             // touch; taps and horizontal drags stay Rune's.
             WindowEvent::Touch(touch) => {
                 crate::window::touch(&mut self.rt, touch, scale);
-                // A tap is a user activation: links, the clipboard and focus act before the handler returns.
-                if matches!(touch.phase, TouchPhase::Ended) { activate = true; immediate = true; }
+                // A tap is a user activation: links, the clipboard and focus act before the handler
+                // returns. In a page only a tap that left something focused needs it; anything else
+                // would focus the canvas and drop the reader's selection.
+                if matches!(touch.phase, TouchPhase::Ended) {
+                    activate = !self.input.document || self.rt.has_focus();
+                    immediate = true;
+                }
             }
             _ => return false,
         }

@@ -55,10 +55,14 @@ impl<S: 'static> Runtime<S> {
             fit_height: self.fit_height,
             system_reduced_motion: self.system_reduced_motion,
             titlebar_inset: self.titlebar_inset,
+            chrome: self.titlebar.insets,
+            caption: self.titlebar.caption,
             system_accent: self.system_accent,
             system_scroll_bars: self.scroll_bars.state,
             reduced_motion: self.reduced_motion,
             time_scale: self.time_scale,
+            defaults: self.defaults,
+            titlebar: self.titlebar_set(),
             caret: self.caret.clone(),
             caret_read: false,
             layout_seen: self.layout_seen.rects.clone(),
@@ -162,10 +166,21 @@ impl<S: 'static> Measurement<'_, S> {
     /// The app's view, or with the playground attached, the view it composes (the bar, or the
     /// playground around its stage).
     fn root_view(&self, cx: &mut Cx<S>) -> El {
-        match self.playground {
+        let root = match self.playground {
             Some(playground) => playground.view(self.state, self.view, cx, self.viewport),
             None => crate::playground::call(self.view, self.state, cx),
-        }
+        };
+        // The Windows caption buttons go over everything the view drew, in a frame around it.
+        let Some(caption) = &self.caption else { return root };
+        let symbol = cx.caption_color.unwrap_or(if self.env.system_dark { Color::WHITE } else { Color::BLACK });
+        crate::titlebar::frame(root, caption, symbol, self.env.scale, self.fit_height)
+    }
+
+    /// What a memo scope hashes of the window's controls (`Cx::titlebar_inset`,
+    /// `Cx::chrome_insets`), so memos that read them rebuild when they change.
+    pub(super) fn chrome_bits(&self) -> [u32; 4] {
+        let [leading, trailing, height] = self.chrome.bits();
+        [self.titlebar_inset.to_bits(), leading, trailing, height]
     }
 
     pub(super) fn finish(self, tx: &Tx) -> Measured {
@@ -199,6 +214,8 @@ impl<S: 'static> Measurement<'_, S> {
             nodes,
             reduced_motion: self.reduced_motion,
             time_scale: self.time_scale,
+            defaults: self.defaults,
+            titlebar: self.titlebar,
             caret_read: self.caret_read,
             layout_reads: self.layout_reads,
             memo_flattened: Some(memo_pending),
@@ -342,11 +359,15 @@ impl<S: 'static> Measurement<'_, S> {
         let fresh_cx = |this: &Self| Cx::<S> {
             env: this.env,
             titlebar_inset: this.titlebar_inset,
+            chrome: this.chrome,
+            caption_color: None,
+            titlebar: Default::default(),
             system_accent: this.system_accent,
             system_scroll_bars: this.system_scroll_bars,
             system_reduced_motion: this.system_reduced_motion,
             reduced_motion: this.system_reduced_motion,
             time_scale: this.time_scale,
+            defaults: Default::default(),
             caret: this.caret.clone(),
             caret_read: std::cell::Cell::new(false),
             layout: this.layout_seen.clone(),
@@ -356,7 +377,7 @@ impl<S: 'static> Measurement<'_, S> {
         let mut cx = fresh_cx(self);
         #[cfg(feature = "hot")]
         let emptied = self.memo.emptied();
-        let memo = crate::memo::enter(std::mem::take(self.memo), self.env, self.system_accent, self.system_reduced_motion, crate::theme::blends_srgb(), cx.caret.clone(), cx.layout.clone());
+        let memo = crate::memo::enter(std::mem::take(self.memo), self.env, self.system_accent, self.system_reduced_motion, crate::theme::blends_srgb(), self.chrome_bits(), cx.caret.clone(), cx.layout.clone());
         let view_time = crate::frame::profile::Scope::new(crate::frame::profile::Phase::View);
         #[cfg(not(feature = "hot"))]
         let mut root = { let root = self.root_view(&mut cx); self.build_tree(root, tx, force_all) };
@@ -377,7 +398,7 @@ impl<S: 'static> Measurement<'_, S> {
                     self.virtual_culled.clear();
                     self.virtual_inputs.clear();
                     cx = fresh_cx(self);
-                    let memo = crate::memo::enter(emptied, self.env, self.system_accent, self.system_reduced_motion, crate::theme::blends_srgb(), cx.caret.clone(), cx.layout.clone());
+                    let memo = crate::memo::enter(emptied, self.env, self.system_accent, self.system_reduced_motion, crate::theme::blends_srgb(), self.chrome_bits(), cx.caret.clone(), cx.layout.clone());
                     let root = crate::hot::original_only(|| self.root_view(&mut cx));
                     (crate::hot::original_only(|| self.build_tree(root, tx, force_all)), memo)
                 }
@@ -389,6 +410,8 @@ impl<S: 'static> Measurement<'_, S> {
         *self.memo = memo;
         self.reduced_motion = cx.reduced_motion;
         self.time_scale = cx.time_scale;
+        self.defaults = cx.defaults;
+        self.titlebar = cx.titlebar;
         // Reads made by memos this build reused count as made again.
         self.caret_read = cx.caret_read.get() || replayed.caret;
         self.layout_reads = cx.layout_reads.take();
@@ -423,6 +446,7 @@ impl<S: 'static> Measurement<'_, S> {
                 taken_paths,
                 path_ids: &mut *self.path_ids,
                 next_id: &mut *self.next_id,
+                foreground: self.defaults.foreground,
             };
             let (root_id, _) = flatten_with_buf(root, None, &mut path_buf, 0, motion::DEFAULT, RowLayout::Free, true, &mut taffy, &mut nodes, scale, &mut memo_ctx);
             let (pending, reused, taken_paths) = (memo_ctx.pending, memo_ctx.reused, memo_ctx.taken_paths);

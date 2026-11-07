@@ -23,13 +23,18 @@ pub use backdrop_blur::MAX_BACKDROP_BLURS;
 pub use first_use::precompiled_misses;
 pub use layers::LayerStats;
 
+/// Rounded rect in `fill` with a `params.x`-wide `border` ring drawn over it, as CSS paints a
+/// border over its background. `params.w` is the opacity the colours already carry (1 when not
+/// faded), so the ring hides the fill by `border.a / params.w`. Non-zero `uv` (with `uv.z >= 0`)
+/// gives per-side widths `[top, right, bottom, left]`; `params.x` is then the widest.
 pub const KIND_RECT: f32 = 0.0;
 pub const KIND_SHADOW: f32 = 1.0;
 pub const KIND_GLYPH: f32 = 2.0;
 /// Inset shadow inside a rounded rect: `params.x` spread, `params.z` sigma, `uv.xy` offset.
 pub const KIND_INSET: f32 = 3.0;
 /// Rounded rect with a vertical gradient: `fill` at the top, `uv` (premultiplied) at the bottom.
-/// With a border width in `params.x` it is a `KIND_RECT` whose ring runs from `border` to `uv`.
+/// With a border width in `params.x` it is a `KIND_RECT` whose ring runs from `border` to `uv`,
+/// over the fill, with the same `params.w`.
 pub const KIND_GRADIENT: f32 = 4.0;
 /// A stroke segment: `radii` = x0, y0, x1, y1; `params.x` half width, `params.z` 1 for round caps.
 pub const KIND_SEGMENT: f32 = 5.0;
@@ -116,6 +121,14 @@ impl Default for LayerSpec {
 /// rectangle, feathers and circular or continuous corners as the primitives around it. Prepend it
 /// to the shader source.
 pub const CLIP_WGSL: &str = include_str!("clip.wgsl");
+
+/// The uber shader's WGSL and the hash of its pipeline layout, as the precompiled DX12 bytecode
+/// records them; `examples/regen_dxbc.rs` regenerates that bytecode from them.
+#[cfg(target_os = "windows")]
+#[doc(hidden)]
+pub fn uber_shader_identity() -> (String, u64) {
+    (metallib::uber_wgsl(), metallib::uber_abi_hash())
+}
 
 /// Where a compositor is asked to draw an effect slot (`Renderer::draw_range_with`).
 pub struct EffectSite<'a> {
@@ -344,7 +357,8 @@ pub(crate) fn end_layer(instances: &mut Vec<Instance>, surfaces: &mut [crate::na
     let transfer_clip = scope.fade[3] == 0 && unmasked;
     // A lone effect slot keeps a faded scope: the compositor's paint can't take the opacity.
     let faded_effect = primitives == 1 && instances[start + 1].params[1] == KIND_EFFECT && scope.fill[3] != 1.0;
-    if !faded_effect && primitives + videos <= 1 && (primitives + videos == 0 || scope.border[1] == 0.0) && scope.params[0] == 0.0 && scope.params[2] == 0.0 && scope.params[3] == 0.0
+    // A layer's `radii` hold its hole (`El::cutout_circle`), which only its composite can cut.
+    if !faded_effect && primitives + videos <= 1 && (primitives + videos == 0 || (scope.border[1] == 0.0 && scope.radii == [0.0; 4])) && scope.params[0] == 0.0 && scope.params[2] == 0.0 && scope.params[3] == 0.0
         && (transfer_clip || (scope.clip == NO_CLIP && scope.fade == [0; 4])) {
         let opacity = scope.fill[3];
         if primitives == 1 {
@@ -353,6 +367,8 @@ pub(crate) fn end_layer(instances: &mut Vec<Instance>, surfaces: &mut [crate::na
             i.fill = i.fill.map(|v| v * opacity);
             i.border = i.border.map(|v| v * opacity);
             if i.params[1] == KIND_GRADIENT { i.uv = i.uv.map(|v| v * opacity); }
+            // A box's `params.w` is the opacity its colours carry (shader.wgsl `border_over`).
+            if i.params[1] == KIND_RECT || i.params[1] == KIND_GRADIENT { i.params[3] *= opacity; }
         }
         if videos == 1 {
             if transfer_clip { surfaces[surface_start].clip = scope.clip; surfaces[surface_start].fade = scope.fade; }
@@ -415,7 +431,10 @@ impl Gpu {
             _ => pick.adapter,
         };
         match Self::device_on(&adapter, wanted) {
-            Ok((device, queue)) => Ok(Gpu { instance, adapter, device, queue }),
+            Ok((device, queue)) => {
+                crate::native_surface::note_device(&device, surface.is_some() || presented);
+                Ok(Gpu { instance, adapter, device, queue })
+            }
             // A driver that can't make a device (a broken integrated GPU on a hybrid laptop)
             // leaves the window to the next adapter that presents to its surface.
             Err(error) => {
@@ -431,6 +450,7 @@ impl Gpu {
                 for other in others {
                     if let Ok((device, queue)) = Self::device_on(&other, wanted) {
                         eprintln!("rune: {} ({:?}) made no device ({error}); using {}", first.name, first.backend, other.get_info().name);
+                        crate::native_surface::note_device(&device, surface.is_some() || presented);
                         return Ok(Gpu { instance, adapter: other, device, queue });
                     }
                 }
@@ -520,8 +540,9 @@ impl Gpu {
     /// Vulkan instance loads every GPU's Vulkan driver, where a broken one (Intel's, on a hybrid
     /// laptop) crashed the process before its first window (Hex #662). Vulkan only when no DX12
     /// adapter exists.
-    /// Whether a DX12 adapter exists is asked once per process (`probe_gpu`): asking makes a
-    /// device on every adapter, over 100 ms.
+    /// The choice is made on the first GPU use in the process, not at launch, so a windowless
+    /// app (a tray app before it draws anything) touches no GPU: asking whether a DX12 adapter
+    /// exists makes a device on every adapter, over 100 ms.
     #[cfg(target_os = "windows")]
     fn wgpu_instance() -> wgpu::Instance {
         static DX12: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -668,7 +689,7 @@ mod prewarm {
 
 mod warmup;
 pub use warmup::{warm_gpu, warm_gpu_with};
-pub(crate) use warmup::{park_gpu, probe_gpu, surface_gpu};
+pub(crate) use warmup::{park_gpu, surface_gpu};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BatchBind {

@@ -61,7 +61,11 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn refresh_modal_index(&mut self) {
         self.modal_index = self.nodes.iter().enumerate().rev()
             .find(|(i, n)| n.handlers.get().is_some_and(|h| h.modal.is_some()) && !self.subtree_exiting(*i) && !self.subtree_unmounted(*i)).map(|(i, _)| i);
-        self.modal_members = (0..self.nodes.len()).map(|i| self.modal_index.is_none_or(|m| i >= m)).collect();
+        // The Windows caption buttons are the window's, not the view's: a modal in the view
+        // leaves them to the pointer and assistive technology, as the native ones are.
+        let caption = |n: &Node| n.key.as_deref() == Some(crate::titlebar::BUTTONS_KEY)
+            && n.parent.is_some_and(|p| self.nodes[p].key.as_deref() == Some(crate::titlebar::FRAME_KEY));
+        self.modal_members = self.nodes.iter().enumerate().map(|(i, n)| self.modal_index.is_none_or(|m| i >= m) || caption(n)).collect();
         // Portals are root siblings. Follow their anchor ownership, including chained
         // popovers, rather than requiring their layout parent to be the modal.
         loop {
@@ -137,6 +141,11 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn highlight_visible(&self, i: usize) -> bool {
         (self.keyboard_focus || self.hover_focus) && self.focused.as_deref() == Some(&self.nodes[i].path)
     }
+    /// Focus is on node `i` or inside it (CSS `:focus-within`), however it got there.
+    pub(super) fn focus_within(&self, i: usize) -> bool {
+        let path = self.nodes[i].path.as_str();
+        self.focused.as_deref().is_some_and(|f| f.strip_prefix(path).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')))
+    }
     pub(super) fn focus_ring_visible(&self, mut i: usize) -> bool {
         if !self.keyboard_focus { return false; }
         loop {
@@ -161,9 +170,10 @@ impl<S: 'static> Runtime<S> {
             .any(|(j, m)| (m.focus.ring.is_some() || m.focus.ring_off) && self.focus_ring_visible(j));
         (!own).then_some(i)
     }
-    /// AppKit's focus ring: 3 points just outside the border box.
+    /// The view's `Cx::focus_ring`, else AppKit's: 3 points just outside the border box.
     pub(super) fn default_focus_ring(&self) -> crate::el::Outline {
-        crate::el::Outline { width: 3.0, offset: 0.0, color: self.system_accent.focus(self.env.system_dark) }
+        self.defaults.focus_ring
+            .unwrap_or(crate::el::Outline { width: 3.0, offset: 0.0, color: self.system_accent.focus(self.env.system_dark) })
     }
     pub(super) fn set_focus(&mut self, path: Option<String>, keyboard: bool) -> bool {
         self.input_click.on_focus_change(path.as_deref());

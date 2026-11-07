@@ -104,7 +104,7 @@ pub(crate) use blend::{apron_key, glyph, icon_inst, premul};
 mod focus;
 #[path = "runtime/input/physical.rs"]
 mod physical_dispatch;
-#[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(unused_imports))]
 pub(crate) use physical_dispatch::Unhandled;
 #[path = "runtime/input/modifier_keys.rs"]
 mod modifier_keys;
@@ -134,6 +134,9 @@ pub(crate) mod selectable;
 mod input_click;
 #[path = "runtime/input/help.rs"]
 mod help;
+#[path = "runtime/input/help_look.rs"]
+mod help_look;
+pub use help_look::HelpLook;
 #[path = "runtime/scroll/edge.rs"]
 mod scroll_edge;
 #[path = "runtime/scroll/x.rs"]
@@ -195,6 +198,7 @@ mod press_clicks;
 mod press_repeat;
 #[path = "runtime/input/titlebar.rs"]
 mod titlebar;
+pub(crate) use titlebar::WindowMenu;
 #[path = "runtime/window_requests.rs"]
 mod window_requests;
 #[path = "runtime/paint/tracks.rs"]
@@ -204,6 +208,8 @@ mod action;
 use action::*;
 #[path = "runtime/paint/bands.rs"]
 mod bands;
+#[path = "runtime/paint/border.rs"]
+mod border_paint;
 #[path = "runtime/paint/slots.rs"]
 mod paint_slots;
 #[path = "runtime/paint/pixel_snap.rs"]
@@ -399,6 +405,9 @@ pub struct Runtime<S: 'static> {
     system_accent: crate::SystemAccent,
     scroll_bars: system_settings::ScrollBarHost,
     pub time_scale: f32,
+    /// The last view's `Cx::foreground` and `Cx::focus_ring`, for rows built after it and the
+    /// rings painted until the next.
+    defaults: cx::ViewDefaults,
     /// Called at the start of every frame with the clock; return true when state changed (new data).
     pub poll: Option<fn(&mut S, f64, &mut Tx) -> bool>,
     /// Seconds since the first frame, unscaled (virtual when headless).
@@ -504,6 +513,9 @@ pub struct Runtime<S: 'static> {
     /// bottom, then the node's own content box top and bottom (unscaled points), while
     /// `has_sticky`.
     sticky_frame: Vec<[f32; 8]>,
+    /// Sections whose rows fade under their stuck header this frame (`ScrollFade::below_sticky`),
+    /// with the paint clip top the header keeps.
+    sticky_bands: Vec<(usize, f32)>,
     /// `Tx::keep_on_screen` across the commit underway.
     keeps: Vec<sticky::Keep>,
     /// `Tx::scroll_into_view` requests that follow their target while growth/layout springs run.
@@ -634,6 +646,8 @@ pub struct Runtime<S: 'static> {
     visible_fired: HashMap<NodeId, bool>,
     /// The window's content top-left in global screen points, as its host last saw it.
     window_origin: (f32, f32),
+    /// The window's content top-left in desktop pixels, as its host last saw it (`Drag::screen_point`).
+    window_pixels: Option<(i32, i32)>,
     /// Commits in a row caused only by layout feedback (see `layout_read`).
     layout_echoes: u32,
     /// An edit ran this frame: keep the caret in its scroll viewport after the commit.
@@ -780,7 +794,8 @@ pub struct Runtime<S: 'static> {
     pub double_click_interval: f64,
     /// How long (seconds) the pointer rests on an `El::help` element before its tooltip shows:
     /// the system's hover time on Windows, 0.5 elsewhere and headless. macOS windows use
-    /// AppKit's own tooltips.
+    /// AppKit's own tooltips, unless the view sets its own look (`Cx::help_look`), whose delay
+    /// may replace this one.
     pub help_delay: f64,
     /// The host starts OS drags, so `drag_out` elements start one (headless tools act as one).
     os_drag: bool,
@@ -830,6 +845,7 @@ impl<S: 'static> Runtime<S> {
             system_accent: crate::SystemAccent::DEFAULT,
             scroll_bars: Default::default(),
             time_scale: 1.0,
+            defaults: Default::default(),
             poll: None,
             clock: 0.0,
             wake_deadlines: Vec::new(),
@@ -900,6 +916,7 @@ impl<S: 'static> Runtime<S> {
             has_sticky: false,
             stuck: Vec::new(),
             sticky_frame: Vec::new(),
+            sticky_bands: Vec::new(),
             keeps: Vec::new(),
             scroll_reveals: Vec::new(),
             has_raise: false,
@@ -976,6 +993,7 @@ impl<S: 'static> Runtime<S> {
             drawn_fired: HashMap::default(),
             visible_fired: HashMap::default(),
             window_origin: (0.0, 0.0),
+            window_pixels: None,
             layout_echoes: 0,
             caret_follow: false,
             links: Default::default(),

@@ -186,9 +186,11 @@ pub(super) fn merge(tx: &mut Tx, one: Tx) {
     tx.scroll_pages.extend(one.scroll_pages);
     tx.scroll_offsets.extend(one.scroll_offsets);
     tx.keep_on_screen.extend(one.keep_on_screen);
+    tx.evict_memos.extend(one.evict_memos);
     tx.wakes.extend(one.wakes);
     tx.text_flights.extend(one.text_flights);
     tx.launches.extend(one.launches);
+    tx.unclipped_flights |= one.unclipped_flights;
     tx.popups.extend(one.popups);
     tx.file_dialogs.extend(one.file_dialogs);
     if let Some(request) = one.window_frame { tx.window_frame = Some(tx.window_frame.unwrap_or_default().merge(request)); }
@@ -197,6 +199,9 @@ pub(super) fn merge(tx: &mut Tx, one: Tx) {
     if one.copy.is_some() { tx.copy = one.copy; }
     tx.shell = tx.shell.max(one.shell);
     tx.minimize |= one.minimize;
+    tx.toggle_maximized |= one.toggle_maximized;
+    tx.toggle_full_screen |= one.toggle_full_screen;
+    tx.keys.extend(one.keys);
     if one.title.is_some() { tx.title = one.title; }
     tx.playground.extend(one.playground);
     tx.open_urls.extend(one.open_urls);

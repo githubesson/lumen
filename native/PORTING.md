@@ -52,12 +52,14 @@ Electron app in `frontend/` with full feature parity, Windows first.
   `size-4` = 16. Filled variants (`PLAY_FILLED`, `HEART_FILLED`, …) match the CSS that fills
   them. Missing icons: add the name in `tools/gen-icons.mjs` and rerun
   `node tools/gen-icons.mjs ../frontend /home/esson/lumen/frontend/node_modules/lucide-react`.
-- **Borders**: Rune's `.border(w, c)` replaces the fill under the ring (a translucent ring
-  shows the *parent*), which is CSS with `background-clip: padding-box` (e.g. `.btn`). A plain
-  CSS `border` paints over the element's own background: use `ui::css_border(el, w, c, radius)`
-  (add the width to the element's padding, since CSS borders take layout space;
-  `box-sizing: border-box` is global in the web app). `ui::css_border_bottom` and
-  `ui::css_border_top` for hairlines.
+- **Borders**: Rune's `.border(w, c)` draws over the element's own fill, as CSS paints a
+  border over its background (since Rune `59f0326`; it used to replace the fill under the
+  ring), and snaps its width to device pixels as Chromium does. `ui::css_border(el, w, c,
+  radius)` draws the same ring as an inert child, which is how most of the port spells a CSS
+  border (add the width to the element's padding, since CSS borders take layout space;
+  `box-sizing: border-box` is global in the web app). For `background-clip: padding-box` (a
+  translucent ring that shows the *parent*), put the ring on an unfilled child the same size.
+  `ui::css_border_bottom` and `ui::css_border_top` for hairlines.
 - **Hover**: `.hover(colour)` draws an overlay over the fill while hovered. CSS that swaps
   `background` on hover needs the overlay that composites to the new colour:
   `ui::hover_overlay(base, target)`. Text/icon colour on hover: `.group_color(c)` on the child
@@ -149,15 +151,20 @@ interactions (hover states, menus, dialogs) in both the reference and the port.
 ## Rune
 
 Docs: `~/src/rune/crates/rune/README.md` (core) and `crates/rune-kit/README.md`; the pinned rev
-is checked out under `~/.cargo/git/checkouts/rune-*/4ca6835/`. Read the source when the README
-is thin. Rune is pre-release; work around gaps in this crate rather than patching Rune.
+is checked out under `~/.cargo/git/checkouts/rune-*/59f0326/`, and Rune itself builds from
+`vendor/rune` with our patches (`vendor/README.md`). Read the source when the README is thin.
+Rune is pre-release; work around gaps in this crate rather than patching Rune, unless a gap
+costs real performance (each patch is one more thing to carry on every bump).
 
 ## Building for Windows
 
 `tools/wine-snap.sh <scene>` renders a scene with the Windows `lumen.exe` under Wine (virtual
 X display, Vulkan on lavapipe, d3d12 off: Wine's HLSL compiler lacks the shader-model 5.1
-resource arrays Rune's blur layers use, which Windows' own FXC has). Its output should match
-the Linux build pixel for pixel; it did for home, library and login (2026-11-06).
+resource arrays Rune's blur layers use, which Windows' own FXC has). It draws text unsmoothed
+(`LUMEN_FONT_SMOOTHING=off`) rather than with the Windows default, DirectWrite, because Wine's
+DirectWrite ignores variable fonts' weight axis (every Geist weight would draw at 400). Layout
+then matches the Linux build; text edges differ slightly, as Rune's Windows glyph path keys
+coverage by luminance bucket (2026-11-07: home 1.5 % of pixels past 32/255).
 
 `cargo build --release --target x86_64-pc-windows-gnu` cross-compiles from Linux (mingw).
 CI builds the MSVC target on Windows runners (`.github/workflows/native.yml`); packaging,

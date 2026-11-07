@@ -9,6 +9,10 @@
 # resource arrays (Rune's blur layers use them; Windows' own FXC has them), so
 # d3d12 is switched off and Rune falls back to its Vulkan path: winevulkan on
 # the host's lavapipe. The mock API must be running (tools/mock-server.ts).
+#
+# Text draws unsmoothed, as on Linux (LUMEN_FONT_SMOOTHING=off): Wine's DirectWrite
+# ignores variable fonts' weight axis, so the Windows default would draw every
+# Geist weight at 400. Set LUMEN_FONT_SMOOTHING=directwrite to see it anyway.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 scene=${1:?scene}
@@ -21,6 +25,7 @@ export VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json
 export WINEDEBUG=${WINEDEBUG:--all}
 export WINEDLLOVERRIDES="d3d12=;d3d12core="
 export LUMEN_SERVER=${LUMEN_SERVER:-http://127.0.0.1:4791}
+export LUMEN_FONT_SMOOTHING=${LUMEN_FONT_SMOOTHING:-off}
 export LUMEN_DATA_DIR
 LUMEN_DATA_DIR=$(win "$here/out/data-win")
 exec xvfb-run -a -s "-screen 0 1920x1080x24" wine "$here/target/x86_64-pc-windows-gnu/release/lumen.exe" \

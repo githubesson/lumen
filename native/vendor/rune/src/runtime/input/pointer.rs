@@ -11,7 +11,8 @@ impl<S: 'static> Runtime<S> {
     /// point the drag last saw has nothing new to report, and its instant transaction would
     /// cut short whatever the press started (a tapped slider's knob mid-spring).
     pub(super) fn move_pointer(&mut self, x: f32, y: f32, drag_move: bool) {
-        if self.pointer != Some((x, y)) { self.hover_paused = false; self.release_hover_hold(); }
+        let moved = self.pointer != Some((x, y));
+        if moved { self.hover_paused = false; self.release_hover_hold(); }
         self.pointer = Some((x, y));
         if self.in_viewport(x, y) { self.left_in_capture = false; }
         for &(id, rect) in &self.hits {
@@ -37,15 +38,19 @@ impl<S: 'static> Runtime<S> {
         let Some(i) = self.live_index(&path) else { return };
         let (id, r, has_drag) = (self.nodes[i].id, self.nodes[i].target, self.nodes[i].handlers.on_drag.is_some() && !self.drags_out(&self.nodes[i]));
         // A hit rect is where the element was drawn (after scrolling); `target` is its
-        // unscrolled layout rect, kept only for elements that were never drawn.
-        let mut hits = self.hits.iter().filter(|(hit, _)| *hit == id).peekable();
-        self.capture_inside = !self.press_cancelled && if self.native_overlay || hits.peek().is_some() {
-            hits.any(|&(id, r)| self.hit_contains(id, r, x, y))
-        } else { contains(r, x, y) };
+        // unscrolled layout rect, kept only for elements that were never drawn. Only the
+        // pointer moving decides whether it's still inside: a button that springs out from
+        // under a still pointer stays pressed, as AppKit only re-tracks on a drag.
+        if moved {
+            let mut hits = self.hits.iter().filter(|(hit, _)| *hit == id).peekable();
+            self.capture_inside = !self.press_cancelled && if self.native_overlay || hits.peek().is_some() {
+                hits.any(|&(id, r)| self.hit_contains(id, r, x, y))
+            } else { contains(r, x, y) };
+        }
         if has_drag && drag_move {
             let (dx, dy) = (x - self.press_at.0, y - self.press_at.1);
             let [lx, ly] = self.to_local(i, x, y);
-            let d = Drag { phase: Phase::Move, x: lx, y: ly, dx, dy, ..d };
+            let d = Drag { phase: Phase::Move, x: lx, y: ly, dx, dy, window: [x, y], screen: self.screen_at(x, y), ..d };
             self.queue.push(Action::Drag(path, d, self.capture_button));
         }
     }
@@ -66,6 +71,17 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(crate) fn pointer_captured(&self) -> bool { self.capture.is_some() || self.secondary_capture.is_some() }
+
+    /// The host's window content top-left in desktop pixels; `None` where it has none.
+    pub(crate) fn set_window_pixels(&mut self, pixels: Option<(i32, i32)>) {
+        self.window_pixels = pixels;
+    }
+
+    /// (x, y) window points in desktop pixels (`Drag::screen_point`).
+    pub(super) fn screen_at(&self, x: f32, y: f32) -> Option<(i32, i32)> {
+        let s = self.env.scale;
+        self.window_pixels.map(|(px, py)| (px + (x * s).round() as i32, py + (y * s).round() as i32))
+    }
 
     /// The host moved its window by (dx, dy) points under a still pointer. Keep the pointer and
     /// a held press's origin in window points, so a drag that moves its own window still reports
@@ -98,7 +114,7 @@ impl<S: 'static> Runtime<S> {
         let (x, y) = self.pointer.unwrap_or(self.press_at);
         let [lx, ly] = self.to_local(i, x, y);
         let (dx, dy) = (x - self.press_at.0, y - self.press_at.1);
-        let (path, d) = (path.clone(), Drag { phase: Phase::Up, x: lx, y: ly, dx, dy, cancelled: true, ..*d });
+        let (path, d) = (path.clone(), Drag { phase: Phase::Up, x: lx, y: ly, dx, dy, cancelled: true, window: [x, y], screen: self.screen_at(x, y), ..*d });
         let button = std::mem::take(&mut self.capture_button);
         self.queue.push(Action::Drag(path, d, button));
         self.capture = None;
@@ -155,6 +171,8 @@ impl<S: 'static> Runtime<S> {
             return;
         }
         self.drop_drag_out_request();
+        // A host that didn't act on the last press's request mustn't get it with this one.
+        self.titlebar.action = None;
         self.pointer = Some((x, y));
         // A press is the hand's: hover follows the pointer through moving layout.
         self.release_hover_hold();
@@ -193,14 +211,14 @@ impl<S: 'static> Runtime<S> {
         // Any press breaks a pending pair unless it's the second press of it.
         let pending = self.last_press.take();
         let now = self.now_clock();
-        let n = &self.nodes[ti];
-        if n.window_drag && n.handlers.on_press.is_none() && n.handlers.on_double_press.is_none() && n.handlers.on_drag.is_none() && n.handlers.drag_out.is_none() && self.textbox_input(ti).is_none() {
+        if self.bare_drag_region(ti) {
             self.titlebar.press_region(now, x, y, self.double_click_interval);
             if self.focused.is_some() {
                 self.queue.push(Action::Blur);
             }
             return;
         }
+        let n = &self.nodes[ti];
         self.press_at = (x, y);
         let clicks = self.press_clicks.press(&n.path, now, (x, y), self.double_click_interval);
         self.double_armed = n.handlers.on_double_press.is_some() && pending.is_some_and(|(p, t, px, py)| {
@@ -244,6 +262,8 @@ impl<S: 'static> Runtime<S> {
             data: 0.0,
             clicks,
             cancelled: false,
+            window: [x, y],
+            screen: self.screen_at(x, y),
         };
         let path = n.path.clone();
         self.drag_out_armed = self.drags_out(n);
@@ -297,7 +317,7 @@ impl<S: 'static> Runtime<S> {
         if has_drag {
             let (dx, dy) = (x - self.press_at.0, y - self.press_at.1);
             let [lx, ly] = self.to_local(i, x, y);
-            self.queue.push(Action::Drag(path.clone(), Drag { phase: Phase::Up, x: lx, y: ly, dx, dy, ..d }, button));
+            self.queue.push(Action::Drag(path.clone(), Drag { phase: Phase::Up, x: lx, y: ly, dx, dy, window: [x, y], screen: self.screen_at(x, y), ..d }, button));
         }
         self.link_up(&path, x, y);
         if has_press && self.capture_inside && !selected {

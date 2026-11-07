@@ -182,7 +182,20 @@ pub fn measure_with(
 ) -> (f32, f32) {
     with_text(|t| {
         let l = t.layout_rich_with(text, spans, style, 1.0, max_width, options);
-        (l.full_width().ceil(), super::layout_height(&l, style, 1.0))
+        // Spaces hanging past a wrapped line's end take no room, as the runtime measures them.
+        let w = if max_width.is_some() { l.width() } else { l.full_width() };
+        (w.ceil(), super::layout_height(&l, style, 1.0))
+    })
+}
+
+/// CSS's min-content and max-content widths of `text` (with `spans`) in `style`, in points and
+/// unrounded, as a browser's automatic table layout reads a cell: its widest unbreakable run,
+/// and its width on one line, neither counting the spaces that end a line.
+pub fn content_widths(text: &str, spans: &[Span], style: TextStyle) -> (f32, f32) {
+    with_text(|t| {
+        let min = t.layout_rich_with(text, spans, style, 1.0, Some(0.0), RichLayoutOptions::default()).width();
+        let max = t.layout_rich_with(text, spans, style, 1.0, None, RichLayoutOptions::default()).width();
+        (min, max)
     })
 }
 

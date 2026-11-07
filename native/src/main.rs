@@ -45,15 +45,18 @@ fn main() {
         always_on_top: !headless && config::Config::load().always_on_top,
         ..Default::default()
     };
-    // Chromium's Windows text is heavier than Rune's default unsmoothed
-    // rasterization. Keep the Linux reference renderer unchanged, and use
-    // Rune's outline-dilation pass on Windows to match the desktop client.
-    let smoothing = if cfg!(target_os = "windows") {
-        rune::FontSmoothing::On
-    } else {
-        rune::FontSmoothing::Off
+    // Text keeps Rune's default smoothing: DirectWrite on Windows, rasterised
+    // as Chromium's Skia does there, so it matches the Electron client; off on
+    // Linux, which the reference shots are taken with. `LUMEN_FONT_SMOOTHING`
+    // (`off`, `on`, `directwrite`) overrides it: `tools/wine-snap.sh` sets
+    // `off`, as Wine's DirectWrite ignores variable fonts' weight axis.
+    let app = rune::App::new(app::spec()).window_options(options);
+    let app = match std::env::var("LUMEN_FONT_SMOOTHING").as_deref() {
+        Ok("off") => app.font_smoothing(rune::FontSmoothing::Off),
+        Ok("on") => app.font_smoothing(rune::FontSmoothing::On),
+        Ok("directwrite") => app.font_smoothing(rune::FontSmoothing::DirectWrite),
+        _ => app,
     };
-    let app = rune::App::new(app::spec()).font_smoothing(smoothing).window_options(options);
     let handle = app.handle();
     app.on_window(desktop::window::on_window)
         .on_ready(move |_| {

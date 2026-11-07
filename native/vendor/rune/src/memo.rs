@@ -283,6 +283,17 @@ impl MemoCache {
         self.pass + 1
     }
 
+    /// Drops the memos whose own id starts with `prefix`, wherever they nest, and those built
+    /// inside them.
+    pub(crate) fn evict_prefix(&mut self, prefix: &str) {
+        let before = self.entries.len();
+        self.entries.retain(|id, _| !(id.starts_with(prefix) || id.match_indices('/').any(|(i, _)| id[i + 1..].starts_with(prefix))));
+        if self.entries.len() < before {
+            let live: crate::runtime::HashSet<u64> = self.entries.values().map(|e| e.built.id).collect();
+            self.flattened.retain(|id, _| live.contains(id));
+        }
+    }
+
     /// Drops the memos no build since pass `since` (a [`MemoCache::next_pass`]) used: a commit
     /// keeps what any of its view builds used.
     pub(crate) fn keep_since(&mut self, since: u64) {
@@ -294,6 +305,17 @@ impl MemoCache {
             let live: crate::runtime::HashSet<u64> = self.entries.values().map(|e| e.built.id).collect();
             self.flattened.retain(|id, _| live.contains(id));
         }
+    }
+}
+
+impl<S: 'static> crate::Runtime<S> {
+    /// Drops this window's cached subtrees whose memo id starts with `prefix`, wherever they
+    /// nest, and those built inside them, then re-runs the view. A library that built them
+    /// can unload once the commit after this drops its handlers. A memo enclosing a dropped
+    /// one still reuses its own subtree, so it keeps what changed in its version.
+    pub fn invalidate_memos_by_prefix(&mut self, prefix: &str) {
+        self.memo.evict_prefix(prefix);
+        self.invalidate();
     }
 }
 
@@ -330,12 +352,14 @@ thread_local! {
 
 /// Makes `cache` the one [`memo`] uses until [`Guard::finish`], for one view build.
 /// `caret` and `layout` are what the view's `Cx` returns.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn enter(
     mut cache: MemoCache,
     env: crate::Env,
     accent: crate::SystemAccent,
     reduced_motion: bool,
     srgb_blend: bool,
+    chrome: [u32; 4],
     caret: Option<(String, [f32; 4])>,
     layout: LayoutRects,
 ) -> Guard {
@@ -344,7 +368,8 @@ pub(crate) fn enter(
     let accent = [accent.accent(env.system_dark), accent.focus(env.system_dark)].map(|c| [c.r, c.g, c.b, c.a].map(f32::to_bits));
     let scale = env.scale;
     // Theme colours resolve per blend mode (`theme::blends_srgb`), so a switch rebuilds memos.
-    let env = hash_of(&(env.system_dark, scale.to_bits(), reduced_motion, accent, crate::platform::scroll_bars::scoped(), srgb_blend));
+    // So does a change to what the window's controls take (`Cx::chrome_insets`).
+    let env = hash_of(&(env.system_dark, scale.to_bits(), reduced_motion, accent, crate::platform::scroll_bars::scoped(), srgb_blend, chrome));
     let scope = Scope {
         cache,
         env,
@@ -394,6 +419,7 @@ pub(crate) fn enter_partial(
     accent: crate::SystemAccent,
     reduced_motion: bool,
     srgb_blend: bool,
+    chrome: [u32; 4],
     caret: Option<(String, [f32; 4])>,
     layout: LayoutRects,
 ) -> Guard {
@@ -410,7 +436,7 @@ pub(crate) fn enter_partial(
         keep_nested_rows(&mut cache, &mut nested, next);
     }
     cache.nested_scratch = nested;
-    enter(cache, env, accent, reduced_motion, srgb_blend, caret, layout)
+    enter(cache, env, accent, reduced_motion, srgb_blend, chrome, caret, layout)
 }
 
 /// Records a `Cx::caret` read for the memo building, if any.
@@ -550,8 +576,15 @@ fn keyed(el: El, key: String) -> El {
 /// it just builds.
 #[cfg_attr(debug_assertions, track_caller)]
 pub fn memo(id: impl Into<String>, version: impl Hash, build: impl FnOnce() -> El) -> El {
+    memo_with_hash(id, hash_of(&version), build)
+}
+
+/// [`memo`] with a version already hashed to a `u64`, for a caller that keeps its own
+/// hashes (a plugin across a C ABI, where `impl Hash` can't cross). The window's environment
+/// still joins it, as it does `memo`'s.
+#[cfg_attr(debug_assertions, track_caller)]
+pub fn memo_with_hash(id: impl Into<String>, version: u64, build: impl FnOnce() -> El) -> El {
     let key = id.into();
-    let version = hash_of(&version);
     enum Step {
         Reuse(Rc<Built>),
         Build { id: Rc<str>, version: u64, store: bool },
@@ -838,7 +871,7 @@ mod tests {
     #[test]
     fn a_view_panicking_inside_a_memo_leaves_no_scope_for_the_next_build() {
         let panicked = std::panic::catch_unwind(|| {
-            let _scope = enter(MemoCache::default(), Env::new(true, 1.0), crate::SystemAccent::DEFAULT, false, true, None, LayoutRects::default());
+            let _scope = enter(MemoCache::default(), Env::new(true, 1.0), crate::SystemAccent::DEFAULT, false, true, [0; 4], None, LayoutRects::default());
             memo("outer", 0, || memo("inner", 0, || panic!("view panicked")))
         });
         assert!(panicked.is_err());

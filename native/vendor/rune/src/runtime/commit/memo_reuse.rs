@@ -12,6 +12,8 @@ pub(crate) struct InheritedFlatten {
     pub(super) inert: bool,
     pub(super) trace_namespace: Option<(&'static str, &'static str)>,
     pub(super) scale_bits: u32,
+    /// The window's foreground (`Cx::foreground`), which a memo's uncoloured text took.
+    pub(super) foreground: Option<Color>,
 }
 
 pub(crate) struct FlattenedMemo {
@@ -161,6 +163,8 @@ pub(super) struct MemoFlattenCtx<'a> {
     pub(super) taken_paths: Vec<(u32, u32)>,
     pub(super) path_ids: &'a mut HashMap<String, NodeId>,
     pub(super) next_id: &'a mut u64,
+    /// What text, icons and text fields without their own colour draw in (`Cx::foreground`).
+    pub(super) foreground: Option<Color>,
 }
 
 fn opt_rc_eq<T: ?Sized>(a: &Option<Rc<T>>, b: &Option<Rc<T>>) -> bool {
@@ -181,25 +185,26 @@ fn opt_box_eq<T: PartialEq>(a: &Option<Box<T>>, b: &Option<Box<T>>) -> bool {
 
 fn same_visual_cold(a: &crate::el::VisualCold, b: &crate::el::VisualCold) -> bool {
     let crate::el::VisualCold {
-        surface, surface_place, border_bottom, border_dash, border_dash_phase, shadows, blur_motion,
-        clip, clip_radius, clip_corners, icon, gradient, radial, outline, shape,
+        surface, surface_place, border_bottom, border_sides, border_dash, border_dash_phase, shadows, blur_motion,
+        clip, clip_radius, clip_corners, cutout, icon, icon_inked, gradient, radial, outline, shape,
         pixels, pixels_fit, effect, backdrop_blur, hover_motion, hover_within,
-        group_opacity, group_color, hover_alone, icon_turn, cache_key, offset_motion, scale_motion,
-        origin, rotate_motion, child_exit, enter_delay, motion_intent, instant_motion, clip_to_content,
+        group_opacity, group_color, hover_alone, hover_share, icon_turn, cache_key, offset_motion, scale_motion,
+        origin, rotate_motion, child_exit, enter_delay, motion_intent, instant_motion, clip_to_content, flight_crop,
     } = b;
     (match (&a.surface, surface) {
         (None, None) => true,
         (Some((sa, fa)), Some((sb, fb))) => sa.key() == sb.key() && fa == fb,
         _ => false,
-    }) && a.surface_place == *surface_place && a.border_bottom == *border_bottom && a.border_dash == *border_dash
+    }) && a.surface_place == *surface_place && a.border_bottom == *border_bottom && a.border_sides == *border_sides && a.border_dash == *border_dash
         && a.border_dash_phase == *border_dash_phase && a.shadows == *shadows
         && opt_box_eq(&a.blur_motion, blur_motion) && a.clip == *clip
-        && a.clip_radius == *clip_radius && a.clip_corners == *clip_corners
+        && a.clip_radius == *clip_radius && a.clip_corners == *clip_corners && a.cutout == *cutout
         && match (&a.icon, icon) {
             (None, None) => true,
             (Some((ia, ca)), Some((ib, cb))) => std::ptr::eq(*ia, *ib) && ca == cb,
             _ => false,
         }
+        && a.icon_inked == *icon_inked
         && opt_box_eq(&a.gradient, gradient) && opt_box_eq(&a.radial, radial)
         && a.outline == *outline && opt_rc_eq(&a.shape, shape)
         && match (&a.pixels, pixels) {
@@ -209,24 +214,25 @@ fn same_visual_cold(a: &crate::el::VisualCold, b: &crate::el::VisualCold) -> boo
         }
         && a.pixels_fit == *pixels_fit && a.effect == *effect && a.backdrop_blur == *backdrop_blur
         && opt_rc_eq(&a.hover_motion, hover_motion) && opt_rc_eq(&a.hover_within, hover_within)
-        && a.group_opacity == *group_opacity && a.group_color == *group_color && a.hover_alone == *hover_alone
+        && a.group_opacity == *group_opacity && a.group_color == *group_color && a.hover_alone == *hover_alone && a.hover_share == *hover_share
         && a.icon_turn == *icon_turn && a.cache_key == *cache_key
         && opt_box_eq(&a.offset_motion, offset_motion) && opt_box_eq(&a.scale_motion, scale_motion)
         && a.origin == *origin && opt_box_eq(&a.rotate_motion, rotate_motion)
         && opt_box_eq(&a.child_exit, child_exit) && a.enter_delay == *enter_delay
         && a.motion_intent == *motion_intent && a.instant_motion == *instant_motion
         && a.clip_to_content == *clip_to_content
+        && a.flight_crop == *flight_crop
 }
 
 pub(super) fn same_visual(a: &Visual, b: &Visual) -> bool {
     let Visual {
-        fill, border, hover, press, radius, offset, border_width, opacity, paint_alpha, blur,
+        fill, border, hover, press, radius, offset, border_width, opacity, paint_alpha, layer_opacity, blur,
         rotate, mark, hit, continuous_corners, blend, hover_group, cache, raise,
         no_pixel_snap, ride_trailing, cold,
     } = b;
     a.fill == *fill && a.border == *border && a.hover == *hover && a.press == *press
         && a.radius == *radius && a.offset == *offset && a.border_width == *border_width
-        && a.opacity == *opacity && a.paint_alpha == *paint_alpha && a.blur == *blur
+        && a.opacity == *opacity && a.paint_alpha == *paint_alpha && a.layer_opacity == *layer_opacity && a.blur == *blur
         && a.rotate == *rotate && a.mark == *mark && a.hit == *hit
         && a.continuous_corners == *continuous_corners && a.blend == *blend
         && a.hover_group == *hover_group && a.cache == *cache && a.raise == *raise
@@ -410,6 +416,7 @@ pub(super) fn same_root_el(el: &El, built: &crate::memo::Built) -> bool {
         time_scale,
         help,
         help_cut,
+        help_above,
         material,
         aspect_fit,
         selection_group,
@@ -463,6 +470,7 @@ pub(super) fn same_root_el(el: &El, built: &crate::memo::Built) -> bool {
         && el.time_scale == *time_scale
         && el.help == *help
         && el.help_cut == *help_cut
+        && el.help_above == *help_above
         && el.material == *material
         && el.aspect_fit == *aspect_fit
         && el.selection_group == *selection_group
@@ -476,6 +484,7 @@ pub(super) fn inherited_for(
     motion: Spring,
     in_row: RowLayout,
     scale: f32,
+    foreground: Option<Color>,
 ) -> (InheritedFlatten, Option<Rc<(Anim, Anim)>>) {
     let parent_is_stack = parent.is_some_and(|p| nodes[p].growth.is_some());
     let instant_changes = parent.is_some_and(|p| nodes[p].instant_changes);
@@ -491,6 +500,7 @@ pub(super) fn inherited_for(
             inert,
             trace_namespace,
             scale_bits: scale.to_bits(),
+            foreground,
         },
         hover_within,
     )
@@ -537,7 +547,7 @@ pub(super) fn try_reuse_memo(
     if old_slice[0].is_moved_stub() || old_slice[0].path.is_empty() || old_slice[0].id != flat.root_id || old_slice[flat.len - 1].id != flat.last_id {
         return None;
     }
-    let (inherited, hover_within) = inherited_for(parent, nodes, motion, in_row, scale);
+    let (inherited, hover_within) = inherited_for(parent, nodes, motion, in_row, scale, ctx.foreground);
     // By value: a view that sets `hover_motion_within` above the memo builds a new pair each time.
     if flat.inherited != inherited || flat.hover_within.as_deref() != hover_within.as_deref() {
         return None;

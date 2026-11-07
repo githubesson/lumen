@@ -145,10 +145,6 @@ pub(crate) fn align_name(align: crate::el::Align) -> &'static str {
 
 fn round1(v: f32) -> f32 { (v * 10.0).round() / 10.0 }
 
-fn rect4(b: [f32; 4]) -> [f32; 4] {
-    [round1(b[0]), round1(b[1]), round1((b[2] - b[0]).max(0.0)), round1((b[3] - b[1]).max(0.0))]
-}
-
 pub(crate) fn clean_slice(spec: &crate::el::TextSpec, a: usize, b: usize) -> String {
     let a = a.min(spec.content.len());
     let b = b.min(spec.content.len()).max(a);
@@ -208,7 +204,12 @@ fn text_runs(path: &str, spec: &crate::el::TextSpec) -> Vec<A11yRun> {
 impl<S: 'static> Runtime<S> {
     fn scroll_digest(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        let mut entries: Vec<_> = self.scrolls.iter().map(|(id, s)| (id.0, s.offset.to_bits(), s.x.offset.to_bits())).collect();
+        // A page hands horizontal scrolling to the DOM, whose container scrolls its own children:
+        // its offset changes nothing in the mirror, and hashing it would rewrite the whole page's
+        // items on every frame of a horizontal flick.
+        let mut entries: Vec<_> = self.scrolls.iter()
+            .map(|(id, s)| (id.0, s.offset.to_bits(), if self.page.on { 0 } else { s.x.offset.to_bits() }))
+            .collect();
         entries.sort_unstable_by_key(|e| e.0);
         entries.hash(&mut h);
         h.finish()
@@ -224,6 +225,17 @@ impl<S: 'static> Runtime<S> {
             }
         }
         j
+    }
+
+    /// Every node's [`Self::subtree_end`], in one reverse pass: a node's children always come
+    /// after it, so each subtree's end is known before the parent that extends to it. Walking the
+    /// parent chain per node instead costs a page's depth per node on every mirror build.
+    fn subtree_ends(&self) -> Vec<usize> {
+        let mut ends: Vec<usize> = (1..=self.nodes.len()).collect();
+        for i in (0..self.nodes.len()).rev() {
+            if let Some(p) = self.nodes[i].parent { ends[p] = ends[p].max(ends[i]); }
+        }
+        ends
     }
 
     pub(crate) fn descendant_label(&self, root: usize, end: usize) -> String {
@@ -248,26 +260,34 @@ impl<S: 'static> Runtime<S> {
         serde_json::to_string(&values).unwrap_or_else(|_| "[]".into())
     }
 
-    /// Node `i`'s drawn box in the mirror's coordinates: the band's, plus its offset in a page.
-    fn mirror_rect(&self, i: usize) -> [f32; 4] {
-        let mut b = self.drawn_box(i);
-        let dy = self.page_offset();
-        b[1] += dy;
-        b[3] += dy;
-        rect4(b)
+    /// Node `i`'s drawn box in the mirror's coordinates: the band's, plus where the band starts in
+    /// the document, and `dx` points right for content inside a horizontal scroller the browser
+    /// scrolls itself. Both are added in `f64` and rounded once, so a fractional device-pixel
+    /// scroll offset can't round the same document position two ways between frames.
+    fn mirror_rect(&self, i: usize, dx: f64) -> [f32; 4] {
+        let b = self.drawn_box(i);
+        let (dx, dy) = (dx, f64::from(self.page_offset()));
+        let (left, right) = (f64::from(b[0]) + dx, f64::from(b[2]) + dx);
+        let (top, bottom) = (f64::from(b[1]) + dy, f64::from(b[3]) + dy);
+        [round1(left as f32), round1(top as f32), round1((right - left).max(0.0) as f32), round1((bottom - top).max(0.0) as f32)]
     }
 
     pub(crate) fn web_a11y_items(&self) -> Vec<A11yItem> {
         let mut out: Vec<A11yItem> = Vec::new();
         let mut last_flow_parent: Option<usize> = None;
+        let ends = self.subtree_ends();
         // Open containers: (end of their node subtree, their item index).
         let mut open: Vec<(usize, usize)> = Vec::new();
+        // Open horizontal scrollers and how far the browser has scrolled each, so their content
+        // mirrors where it sits inside them rather than where the scroll puts it.
+        let mut scrollers: Vec<(usize, f64)> = Vec::new();
         let mut i = 0;
         while i < self.nodes.len() {
             while open.last().is_some_and(|&(end, _)| i >= end) { open.pop(); }
+            while scrollers.last().is_some_and(|&(end, _)| i >= end) { scrollers.pop(); }
             let parent = open.last().map(|&(_, item)| item);
             let n = &self.nodes[i];
-            let end = self.subtree_end(i);
+            let end = ends[i];
             if !self.allowed(i) || self.subtree_exiting(i) || n.vis.opacity <= 0.01 || n.a11y.hidden
                 || matches!(n.role, "none" | "presentation")
             {
@@ -280,11 +300,28 @@ impl<S: 'static> Runtime<S> {
                 last_flow_parent = None;
                 continue;
             }
-            let rect = self.mirror_rect(i);
+            // A page hands every horizontal viewport to the DOM: iOS scrolls it natively, at the
+            // compositor's rate, with axis locking, momentum and text selection.
+            if self.page.on && n.scroll_axes == crate::el::ScrollAxes::X {
+                let rect = self.mirror_rect(i, 0.0);
+                let offset = self.scrolls.get(&n.id).map_or(0.0, |st| st.x.offset);
+                let mut item = A11yItem::new("scroll_x", &n.path, rect);
+                item.tag = Some("div");
+                item.parent = parent;
+                out.push(item);
+                open.push((end, out.len() - 1));
+                scrollers.push((end, offset));
+                last_flow_parent = None;
+                i += 1;
+                continue;
+            }
+            let shift: f64 = scrollers.iter().map(|&(_, offset)| offset).sum();
+            let rect = self.mirror_rect(i, shift);
             let push = |out: &mut Vec<A11yItem>, mut item: A11yItem| {
                 item.parent = parent;
                 out.push(item);
             };
+
             if let Some(tag) = container_tag(n.role) {
                 let mut item = A11yItem::new("group", &n.path, rect);
                 item.tag = Some(tag);
@@ -317,7 +354,7 @@ impl<S: 'static> Runtime<S> {
                 last_flow_parent = None;
                 continue;
             }
-            let button_like = (n.role == "button" || n.handlers.on_press.is_some()) && !n.window_drag;
+            let button_like = (n.role == "button" || n.handlers.on_press.is_some()) && n.window_drag != crate::el::WindowDrag::Drag;
             // Only collapse a pressable container into one button when it doesn't wrap an entire
             // multi-block section with independent buttons inside.
             let nested_press = (i + 1..end).any(|j| self.nodes[j].handlers.on_press.is_some() || self.nodes[j].role == "button");
@@ -399,6 +436,16 @@ impl<S: 'static> Runtime<S> {
             i += 1;
         }
         out
+    }
+
+    /// The page's horizontal scroll viewports: their paths and how far each is scrolled right.
+    /// The browser's mirror holds the containers, so the DOM keeps an offset Rune scrolls too.
+    pub(crate) fn page_scroll_x(&self) -> Vec<(String, f32)> {
+        if !self.page.on { return Vec::new(); }
+        self.nodes.iter()
+            .filter(|n| n.scroll_axes == crate::el::ScrollAxes::X)
+            .filter_map(|n| self.scrolls.get(&n.id).map(|st| (n.path.clone(), st.x.offset as f32)))
+            .collect()
     }
 
     /// Returns updated JSON only when layout commits, viewport or scroll positions changed.
