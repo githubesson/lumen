@@ -759,9 +759,17 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .clip_rounded(r)
         .role("dialog")
         .label("Command palette")
+        // It fades in as one: what it gains or loses inside lands at once (Rune would fade
+        // each new node on its own), as do the scroll area its second frame may rebuild once
+        // it knows whether the list overflows, and results as they swap. The type picker's
+        // indicator still slides: a matched flight isn't one of those changes.
+        .instant_changes()
         .child(input_row)
         .child(list)
         .child(footer(t));
+    // The backdrop and its blur are there at once; the panel fades in over them, and the
+    // whole layer fades out. (A backdrop blur's strength follows its element's opacity, so
+    // Rune's default entrance fade brought the blur in late.)
     Some(
         col()
             .key("cmdk-layer")
@@ -770,12 +778,14 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
             .px(16.0)
             .pt((wh * 0.12).floor())
             .modal(true, close)
+            .transition(rune::Transition::asymmetric(rune::Transition::none(), rune::Transition::opacity()))
             .child(
                 el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
                     .fill(t.c.scrim)
                     .backdrop_blur(4.0)
+                    .transition(rune::Transition::none())
                     .on_press(close),
             )
-            .child(panel),
+            .child(crate::ui::kit::takes_clicks(panel)),
     )
 }

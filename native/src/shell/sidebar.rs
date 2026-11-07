@@ -234,6 +234,7 @@ pub fn drawer(app: &App, t: &Theme, window_w: f32) -> Option<El> {
         .shadow_md(t)
         .transition(rune::Transition::offset(-(w + 12.0), 0.0))
         .child(view(app, t, true));
+    let panel = crate::ui::kit::takes_clicks(panel);
     Some(el().key("mobile-nav")
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .modal(true, |app: &mut App| app.ui.mobile_nav_open = false)

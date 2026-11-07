@@ -211,6 +211,7 @@ pub fn drawer(app: &App, t: &Theme, cx: &mut Cx<App>, window_w: f32) -> Option<E
         .pin(None, Some(4.0), Some(4.0), Some(4.0))
         .w(w)
         .transition(rune::Transition::offset(12.0, 0.0).combined(rune::Transition::opacity()));
+    let panel = crate::ui::kit::takes_clicks(panel);
     Some(
         el().key("lyrics-drawer")
             .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))

@@ -45,8 +45,30 @@ pub struct Overlays {
     pub toast: toast::State,
 }
 
-/// Every open overlay, in paint order (later draws above).
+/// The root's overlay layers, in paint order (later draws above): the
+/// dialogs and menus, then what goes over them (portals, the open select's
+/// listbox, tooltips). Each set sits in a group that is always there, and
+/// the groups are plain elements. That matters because while any element
+/// in the window is sticky, Rune paints a `modal` element above every later
+/// sibling that isn't one; as root siblings, a dialog would cover a
+/// select's listbox or a tooltip drawn after it. Grouped, each set paints in
+/// tree order, as Rune's input already treats it (what follows a modal is
+/// over it).
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
+    let group = |key: &str, layers: Vec<El>| {
+        layers.into_iter().fold(rune::el().key(key).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)), |g, l| g.child(l))
+    };
+    vec![group("overlay-layers", dialogs(app, t, cx)), group("over-overlays", over(app, t, cx))]
+}
+
+/// What goes over every dialog: portaled layers and the open select's
+/// listbox, then tooltips.
+fn over(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
+    [crate::ui::forms::select_layer(app, t, cx), crate::ui::tooltip::view(app, t, cx)].into_iter().flatten().collect()
+}
+
+/// Every open dialog, menu and toast, in paint order.
+fn dialogs(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
     [
         toast::view(app, t, cx),
         settings::view(app, t, cx),
@@ -60,8 +82,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
         confirm::view(app, t, cx),
         crate::pages::playlists::overlay(app, t, cx),
         crate::pages::home::layer(app, t, cx),
-        crate::ui::forms::select_layer(app, t, cx),
-        crate::ui::tooltip::view(app, t, cx),
     ]
     .into_iter()
     .flatten()

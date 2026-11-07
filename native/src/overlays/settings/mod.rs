@@ -348,7 +348,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
                     .transition(rune::Transition::opacity())
                     .on_press(close),
             )
-            .child(panel),
+            .child(crate::ui::kit::takes_clicks(panel)),
     )
 }
 

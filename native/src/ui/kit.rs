@@ -201,7 +201,7 @@ impl Dialog {
 
     pub fn build(self, t: &Theme, window: [f32; 2], close: fn(&mut App)) -> El {
         let r = t.radius_xl();
-        let mut panel = crate::ui::css_border(col(), 1.0, t.c.border, r)
+        let panel = crate::ui::css_border(col(), 1.0, t.c.border, r)
             .key(format!("{}-panel", self.key))
             .w_full()
             .max_w(self.max_width)
@@ -212,6 +212,7 @@ impl Dialog {
             .clip_rounded(r)
             .role("dialog")
             .transition(rune::Transition::scale(0.95));
+        let mut panel = takes_clicks(panel);
         if let Some(title) = self.title {
             let close_btn = iconbtn(t, &format!("{}-close", self.key), &i::X, 14.0, BtnState::default())
                 .label("Close")
@@ -247,6 +248,14 @@ impl Dialog {
             )
             .child(panel)
     }
+}
+
+/// A dialog's or drawer's panel keeps the presses on its own background, as the
+/// browser stops a click at the element under it. Rune's hit test skips
+/// elements that take no input, so without this a press between the panel's
+/// controls reaches the backdrop under it, which closes the dialog.
+pub fn takes_clicks(panel: El) -> El {
+    panel.on_press(|_: &mut App| {})
 }
 
 /// `DialogFooter`: a bordered bar with buttons on the right, and optionally
