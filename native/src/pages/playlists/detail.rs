@@ -689,6 +689,14 @@ pub fn on_key(app: &mut App, ev: &KeyEvent, _tx: &mut Tx) -> bool {
 
 // ── view ──────────────────────────────────────────────────────────────────
 
+/// The page's content width (inside `.view`'s padding). On the Tracks tab
+/// the head is the table's first virtual row, gone once it scrolls out of
+/// the rows built, so the page measures it: the scroller's child, there
+/// whichever rows are built (`playlist-view` on the other tabs).
+pub fn content_width(t: &Theme, cx: &mut Cx<App>) -> f32 {
+    cx.layout_size("playlist-page").or_else(|| cx.layout_size("playlist-view")).map_or(956.0, |s| s[0] - 2.0 * t.pad())
+}
+
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let page = || col().key("playlist-view").w_full().padding(t.pad());
     let Some(d) = detail(app) else { return page().child(loading_state(t, "Loading…")) };

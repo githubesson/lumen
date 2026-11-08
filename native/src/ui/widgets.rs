@@ -2,7 +2,7 @@
 
 use rune::{Color, Cursor, El, Icon, Shadow, el, icon, text};
 
-use crate::images::{Cover, Images};
+use crate::images::{Cover, Fit, Images};
 use crate::theme::Theme;
 use crate::ui::{font, ico};
 
@@ -140,8 +140,9 @@ pub(super) fn cover(t: &Theme, images: &Images, url: Option<&str>, label: &str, 
         CoverBox::Square => (el().w_full().aspect_ratio(1.0), (240.0, 240.0)),
     };
     let base = base.radius(radius).fill(t.c.muted);
-    let state = url.map(|u| images.get_sized_lazy(u, fw, fh)).unwrap_or(Cover::Failed);
-    let base = load_when_shown(base, &state, url, fw, fh);
+    let fit = images.sized(fw, fh);
+    let state = url.map(|u| images.get_lazy(u, fit)).unwrap_or(Cover::Failed);
+    let base = load_when_shown(base, &state, url, fit);
     match state {
         Cover::Ready(img) => {
             let pic = match shape {
@@ -165,11 +166,11 @@ fn cover_letter(label: &str) -> String {
 /// shows on screen, and waits behind those that show once it leaves. A view
 /// builds every card of a grid, so without it the covers far below would
 /// load with (or before) the ones in view.
-pub fn load_when_shown(base: El, state: &Cover, url: Option<&str>, w: f32, h: f32) -> El {
+pub fn load_when_shown(base: El, state: &Cover, url: Option<&str>, fit: Fit) -> El {
     let (Cover::Loading, Some(url)) = (state, url) else { return base };
     let url = url.to_string();
     base.on_visible(move |app: &mut crate::app::App, shown: bool, tx: &mut rune::Tx| {
-        if shown { app.images.want_sized(&url, w, h) } else { app.images.unwant_sized(&url, w, h) }
+        app.images.want(&url, fit, shown);
         // Only the fetch order changed; the cover shows when it arrives.
         tx.live_only();
     })

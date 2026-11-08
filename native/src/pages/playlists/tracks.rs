@@ -345,7 +345,7 @@ pub fn page(app: &App, t: &Theme, cx: &mut Cx<App>, d: &Detail, p: &Playlist, pe
         return padded(head, empty_state(t, None, "No matches.", Some(&hint), None));
     }
     let selecting = selecting(app);
-    let width = cx.layout_size("playlist-head").map_or(956.0, |s| s[0]);
+    let width = detail::content_width(t, cx);
     let c = cols(width, selecting);
     let show_added_by = p.visibility == Visibility::Collaborative || d.adders.iter().any(|by| *by != p.owner_id);
     let reorderable = perms.can_edit_tracks && d.sort == SortKey::Custom && q.is_empty() && !selecting;

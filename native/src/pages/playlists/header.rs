@@ -114,7 +114,7 @@ pub struct Props<'a> {
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, h: Props) -> El {
     let p = h.playlist;
     // The body's width: the header's, less the padding, art and gap.
-    let body_w = cx.layout_size("playlist-header").map_or(956.0, |s| s[0]) - 50.0 - 200.0 - 24.0;
+    let body_w = detail::content_width(t, cx) - 50.0 - 200.0 - 24.0;
     let width = crate::ui::balanced_width(&p.name, title_style(), body_w.max(1.0));
     let title_text = text(p.name.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(width);
     let title = if h.perms.can_edit_details {

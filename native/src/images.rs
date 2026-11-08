@@ -1,6 +1,6 @@
 //! Cover art: fetched with the session on a worker, decoded, and kept by URL.
 //! `CoverArt` in the web app shows the muted surface (and the entity's
-//! initial once a fetch fails) until the image decodes; [`Images::get_sized_lazy`]
+//! initial once a fetch fails) until the image decodes; [`Images::get_lazy`]
 //! gives the view what it needs to do the same.
 //!
 //! Covers are decoded and resized on the worker to the device pixels they're
@@ -38,6 +38,19 @@ pub enum Cover {
     Ready(Picture),
     /// No image: the placeholder with the entity's initial.
     Failed,
+}
+
+/// The pixels a cover is decoded to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Fit {
+    /// Its natural size, at most [`UNSIZED_MAX`] px a side.
+    Natural,
+    /// `w`×`h` device pixels, cropped to fill them (`object-fit: cover`),
+    /// with the box's longer side in points (an SVG's raster size).
+    Cover(u32, u32, f32),
+    /// The top-left `w`×`h` pixels of the natural size, one pixel a point:
+    /// what a CSS background at its own size shows in a `w`×`h` box.
+    Corner(u32, u32),
 }
 
 /// A decoded cover, ready to draw.
@@ -126,7 +139,7 @@ impl<V: Clone> Lru<V> {
 /// so they load before the rows scrolled past. A lazy one (`loading="lazy"`
 /// in the web app: a cover built off screen, as a grid builds every card)
 /// waits at the front, in the order asked, until it comes on screen
-/// ([`Images::want_sized`] moves it to the back). Past `MAX_QUEUED` the job
+/// ([`Images::want`] moves it to the back). Past `MAX_QUEUED` the job
 /// at the front is dropped and its slot forgotten, so a cover that shows
 /// again asks again.
 struct Stack<J: Task = Job> {
@@ -299,48 +312,50 @@ impl Images {
 
     /// The cover at `url` at its natural size (at most 512 px a side).
     pub fn get(&self, url: &str) -> Cover {
-        self.request(url, None, true)
+        self.request(url, Fit::Natural, true)
     }
 
-    /// The cover at `url` drawn `w`×`h` points: decoded at those device
-    /// pixels, cropped to fill them as `object-fit: cover` does. It may be
-    /// off screen: its fetch waits behind every cover on screen until
-    /// [`Images::want_sized`] says it shows (`CoverArt`'s `loading="lazy"`).
-    pub fn get_sized_lazy(&self, url: &str, w: f32, h: f32) -> Cover {
-        self.request(url, Some(self.sized(w, h)), false)
+    /// The cover at `url` decoded to `fit`. It may be off screen: its fetch
+    /// waits behind every cover on screen until [`Images::want`] says it
+    /// shows (`CoverArt`'s `loading="lazy"`).
+    pub fn get_lazy(&self, url: &str, fit: Fit) -> Cover {
+        self.request(url, fit, false)
     }
 
-    /// The cover came on screen: fetch it next (asking again if it was dropped).
-    pub fn want_sized(&self, url: &str, w: f32, h: f32) {
-        let size = self.sized(w, h);
-        let key = Self::key(url, Some(size));
+    /// A cover came on screen (`shown`): fetch it next, asking again if it
+    /// was dropped. One that left before it loaded waits behind those that
+    /// show.
+    pub fn want(&self, url: &str, fit: Fit, shown: bool) {
+        let key = Self::key(url, fit);
+        if !shown {
+            self.jobs.reorder(&key, false);
+            return;
+        }
         let waiting = matches!(self.shared.decoded.lock().unwrap().get(&key), Some(Slot::Loading));
         if waiting {
             self.jobs.reorder(&key, true);
         } else {
-            self.request(url, Some(size), true);
+            self.request(url, fit, true);
         }
     }
 
-    /// The cover left the screen before it loaded: covers that show go first.
-    pub fn unwant_sized(&self, url: &str, w: f32, h: f32) {
-        self.jobs.reorder(&Self::key(url, Some(self.sized(w, h))), false);
-    }
-
-    fn sized(&self, w: f32, h: f32) -> (u32, u32, f32) {
+    /// A cover drawn `w`×`h` points: decoded at those device pixels, cropped
+    /// to fill them as `object-fit: cover` does.
+    pub fn sized(&self, w: f32, h: f32) -> Fit {
         let s = self.scale();
-        ((w * s).round().max(1.0) as u32, (h * s).round().max(1.0) as u32, w.max(h))
+        Fit::Cover((w * s).round().max(1.0) as u32, (h * s).round().max(1.0) as u32, w.max(h))
     }
 
-    fn key(url: &str, size: Option<(u32, u32, f32)>) -> String {
-        match size {
-            Some((w, h, _)) => format!("{w}x{h}@{url}"),
-            None => url.to_string(),
+    fn key(url: &str, fit: Fit) -> String {
+        match fit {
+            Fit::Natural => url.to_string(),
+            Fit::Cover(w, h, _) => format!("{w}x{h}@{url}"),
+            Fit::Corner(w, h) => format!("tl{w}x{h}@{url}"),
         }
     }
 
-    fn request(&self, url: &str, size: Option<(u32, u32, f32)>, urgent: bool) -> Cover {
-        let key = Self::key(url, size);
+    fn request(&self, url: &str, fit: Fit, urgent: bool) -> Cover {
+        let key = Self::key(url, fit);
         if let Some(slot) = self.shared.decoded.lock().unwrap().get(&key) {
             return match slot {
                 Slot::Loading => Cover::Loading,
@@ -355,7 +370,7 @@ impl Images {
             generation: self.shared.generation.load(Ordering::Acquire),
             url: url.to_string(),
             key: key.clone(),
-            size,
+            fit,
             scale: self.scale(),
             cache: self.cache.clone(),
             shared: self.shared.clone(),
@@ -364,7 +379,7 @@ impl Images {
         };
         if self.sync.load(Ordering::Relaxed) {
             job.run();
-            return self.request(url, size, urgent);
+            return self.request(url, fit, urgent);
         }
         self.jobs.push(job, urgent);
         Cover::Loading
@@ -383,7 +398,7 @@ struct Job {
     generation: u64,
     url: String,
     key: String,
-    size: Option<(u32, u32, f32)>,
+    fit: Fit,
     scale: f32,
     cache: Arc<ImageCache>,
     shared: Arc<Shared>,
@@ -463,7 +478,12 @@ impl Job {
     fn decode(&self, bytes: &[u8]) -> (Slot, usize) {
         let svg = String::from_utf8_lossy(&bytes[..bytes.len().min(512)]).contains("<svg");
         if svg {
-            let pt = self.size.map_or(UNSIZED_MAX as f32 / self.scale, |(_, _, pt)| pt);
+            // A corner stays whole: Rune keeps an SVG's pixels to itself
+            // (the mock server's covers; real ones are JPEG or PNG).
+            let pt = match self.fit {
+                Fit::Cover(_, _, pt) => pt,
+                Fit::Natural | Fit::Corner(..) => UNSIZED_MAX as f32 / self.scale,
+            };
             let px = (pt * self.scale) as usize;
             // Rune rasterizes it, with mips: a third more than its pixels.
             return (Self::ready(self.cache.svg(bytes.to_vec(), pt, self.scale)), px * px * 16 / 3);
@@ -473,17 +493,7 @@ impl Job {
             return (Self::ready(self.cache.load(bytes.to_vec())), 256 * 256 * 16 / 3);
         };
         // A cover that's RGBA already (most PNGs) isn't copied.
-        let rgba = img.into_rgba8();
-        let (iw, ih) = rgba.dimensions();
-        let (out, w, h) = match self.size {
-            Some((w, h, _)) => (cover_fill(&rgba, w, h), w, h),
-            None if iw.max(ih) > UNSIZED_MAX => {
-                let k = UNSIZED_MAX as f32 / iw.max(ih) as f32;
-                let (w, h) = (((iw as f32 * k).round() as u32).max(1), ((ih as f32 * k).round() as u32).max(1));
-                (image::imageops::resize(&rgba, w, h, image::imageops::FilterType::Lanczos3), w, h)
-            }
-            None => (rgba, iw, ih),
-        };
+        let (out, w, h) = fit_pixels(img.into_rgba8(), self.fit);
         // Decoded at the device pixels it's drawn at, so it draws 1:1 and
         // needs no mips: the pixels as they are (`Pixels::set`), one buffer.
         // `ImageCache::rgba` premultiplied a copy and built a mip chain, a
@@ -501,6 +511,30 @@ impl Job {
             Err(_) => Slot::Failed,
         }
     }
+}
+
+/// A decoded cover's pixels for `fit`, with their size.
+fn fit_pixels(rgba: image::RgbaImage, fit: Fit) -> (image::RgbaImage, u32, u32) {
+    match fit {
+        Fit::Cover(w, h, _) => (cover_fill(&rgba, w, h), w, h),
+        Fit::Natural => natural(rgba),
+        Fit::Corner(cw, ch) => {
+            let (img, w, h) = natural(rgba);
+            let (w, h) = (w.min(cw), h.min(ch));
+            (image::imageops::crop_imm(&img, 0, 0, w, h).to_image(), w, h)
+        }
+    }
+}
+
+/// The natural size, scaled down to at most [`UNSIZED_MAX`] px a side.
+fn natural(rgba: image::RgbaImage) -> (image::RgbaImage, u32, u32) {
+    let (iw, ih) = rgba.dimensions();
+    if iw.max(ih) <= UNSIZED_MAX {
+        return (rgba, iw, ih);
+    }
+    let k = UNSIZED_MAX as f32 / iw.max(ih) as f32;
+    let (w, h) = (((iw as f32 * k).round() as u32).max(1), ((ih as f32 * k).round() as u32).max(1));
+    (image::imageops::resize(&rgba, w, h, image::imageops::FilterType::Lanczos3), w, h)
 }
 
 /// `object-fit: cover`: scale `src` to cover `w`×`h`, crop the centred
@@ -674,6 +708,18 @@ mod tests {
         let copied = image::imageops::crop_imm(&src, 50, 0, 200, 200).to_image();
         let expected = image::imageops::resize(&copied, 64, 64, image::imageops::FilterType::Lanczos3);
         assert!(cover_fill(&src, 64, 64) == expected, "the same pixels as from a copy");
+    }
+
+    #[test]
+    fn a_corner_is_the_natural_sizes_top_left() {
+        let src = image::RgbaImage::from_fn(1024, 600, |x, y| image::Rgba([(x % 256) as u8, (y % 256) as u8, 7, 255]));
+        let (natural_px, ..) = fit_pixels(src.clone(), Fit::Natural);
+        let (out, w, h) = fit_pixels(src, Fit::Corner(32, 32));
+        assert_eq!((w, h, out.dimensions()), (32, 32, (32, 32)));
+        assert!(out == image::imageops::crop_imm(&natural_px, 0, 0, 32, 32).to_image(), "the same pixels the whole cover drew there");
+        // A cover smaller than the box keeps its own size.
+        let (out, w, h) = fit_pixels(image::RgbaImage::new(20, 40), Fit::Corner(32, 32));
+        assert_eq!((w, h, out.dimensions()), (20, 32, (20, 32)));
     }
 
     #[test]

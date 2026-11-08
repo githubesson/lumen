@@ -516,20 +516,21 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     Some(Dialog::new("share", body.key("share-body")).title("Share track").footer(footer).build(t, window_size, dismiss))
 }
 
-/// The strip's drag: grab an edge or the window, then follow the pointer.
-pub(super) fn on_drag(app: &mut App, d: &rune::Drag) {
+/// The strip's drag, the pointer `x` points into the strip `w` wide: grab
+/// an edge or the window, then follow the pointer.
+pub(super) fn on_drag(app: &mut App, phase: rune::Phase, x: f32, w: f32) {
     let s = &mut app.overlays.share;
     let dur = track_secs(s);
-    if dur <= 0.0 || d.w <= 0.0 {
+    if dur <= 0.0 || w <= 0.0 {
         return;
     }
-    let at = (d.x / d.w).clamp(0.0, 1.0) as f64 * dur;
+    let at = (x / w).clamp(0.0, 1.0) as f64 * dur;
     let b = bounds(s);
-    match d.phase {
+    match phase {
         rune::Phase::Down => {
             // A press outside the window (`recenter`) moves it there at once,
             // as every press runs the gesture below.
-            let target = snippet_drag_target(at, b.start_sec, b.end_sec, dur, d.w as f64);
+            let target = snippet_drag_target(at, b.start_sec, b.end_sec, dur, w as f64);
             s.drag = Some((target.kind, target.grab_offset_sec));
         }
         rune::Phase::Up => {

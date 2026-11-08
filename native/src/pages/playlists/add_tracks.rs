@@ -8,11 +8,11 @@ use rune::{Cursor, El, KeyEvent, Tx, col, el, row, text};
 use crate::api::{TrackListItem, TrackSource};
 use crate::app::App;
 use crate::format::{display_text, fmt_duration_ms};
-use crate::images::Cover;
+use crate::images::{Cover, Fit};
 use crate::theme::Theme;
 use crate::ui::forms::search_input;
 use crate::ui::kit::{Dialog, scroll_area_fit};
-use crate::ui::{Btn, css_border_bottom, font, line, tnum};
+use crate::ui::{Btn, css_border_bottom, font, line, load_when_shown, tnum};
 
 use super::detail::{self, detail, detail_mut};
 use super::logic::error_message;
@@ -163,10 +163,16 @@ fn is_existing(t: &TrackListItem, existing: &HashSet<String>) -> bool {
 }
 
 /// The `.mini-art` tile outside a table: the cover at its own size, its
-/// top-left corner showing (no `background-size` applies there).
+/// top-left corner showing (no `background-size` applies there). Only that
+/// corner is decoded, and only once the row shows: the list holds up to 200
+/// tracks, and their whole covers (up to 1 MB each) overflowed the decoded
+/// budget, so each arrival evicted another the dialog still drew and asked
+/// for again, redrawing the window forever.
 fn mini_art(app: &App, url: &str) -> El {
-    let mut tile = el().size(32.0, 32.0).clip_rounded(0.0);
-    if let Cover::Ready(img) = app.images.get(url) {
+    let fit = Fit::Corner(32, 32);
+    let state = app.images.get_lazy(url, fit);
+    let mut tile = load_when_shown(el().size(32.0, 32.0).clip_rounded(0.0), &state, Some(url), fit);
+    if let Cover::Ready(img) = state {
         let [w, h] = img.size().unwrap_or([32, 32]);
         tile = tile.child(el().size(w as f32, h as f32).absolute(0.0, 0.0).pixels_fit(img.pixels(), rune::SurfaceFit::Fill));
     }
