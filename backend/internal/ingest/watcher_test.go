@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestDeletedTreePrefix(t *testing.T) {
@@ -46,5 +48,33 @@ func TestWatcherRecoversIngestPanic(t *testing.T) {
 		case <-timeout:
 			t.Fatal("no recovered panic was logged")
 		}
+	}
+}
+
+// MUSIC_ROOT/.users appears at runtime with the first personal upload; the
+// watcher must not take its files in as shared-library tracks.
+func TestWatcherIgnoresNewHiddenDir(t *testing.T) {
+	root := t.TempDir()
+	hidden := filepath.Join(root, ".users")
+	if err := os.MkdirAll(filepath.Join(hidden, "someone"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := writeVorbisFLAC(t, "TITLE=Mine")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hidden, "someone", "mine.flac"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWatcher(&Service{})
+	w.handle(context.Background(), fsnotify.Event{Name: hidden, Op: fsnotify.Create})
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) != 0 {
+		t.Fatalf("scheduled %d personal uploads for shared ingest", len(w.pending))
+	}
+	if len(w.watchSet) != 0 {
+		t.Fatalf("watching %v under a hidden dir", w.watchSet)
 	}
 }

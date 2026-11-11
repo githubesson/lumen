@@ -192,6 +192,12 @@ func (w *Watcher) handle(ctx context.Context, ev fsnotify.Event) {
 	case ev.Has(fsnotify.Create):
 		info, err := lstatOrNil(ev.Name)
 		if err == nil && info != nil && info.IsDir() {
+			// Hidden directories are never library content: MUSIC_ROOT/.users
+			// holds personal uploads, and created while running (the first
+			// personal upload) absorbing it re-ingested them all as global.
+			if strings.HasPrefix(filepath.Base(ev.Name), ".") {
+				return
+			}
 			// A new directory appeared. Registering just this one dir is not
 			// enough — on Linux, moving a populated directory into a watched
 			// root fires a single IN_MOVED_TO at the directory, with no
