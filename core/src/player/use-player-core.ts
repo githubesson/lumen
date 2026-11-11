@@ -136,9 +136,22 @@ async function probeStream(
     return {
       reason:
         readable && (error.status === 502 || error.status === 503) ? detailLine(readable) : null,
-      answer: detailLine(`HTTP ${error.status}${readable ? ` · ${readable}` : ""}`) ?? "",
+      answer:
+        detailLine(`HTTP ${error.status}${readable ? ` · ${readable}` : proxyPageNote(text)}`) ?? "",
     };
   }
+}
+
+/**
+ * An HTML error page instead of Lumen's plain-text answer means the server
+ * never answered: a proxy in front of it did. Say so, with the page's title
+ * and whose page it is when it says, so a report points the right way.
+ */
+function proxyPageNote(text: string): string {
+  if (!text.trimStart().startsWith("<")) return "";
+  const title = /<title[^>]*>([^<]{1,120})<\/title>/i.exec(text)?.[1]?.trim();
+  const from = /cloudflare/i.test(text) ? "Cloudflare" : /nginx/i.test(text) ? "nginx" : null;
+  return ` · a proxy's error page${title ? ` ("${title}")` : ""}${from ? ` from ${from}` : ""}, not Lumen's server`;
 }
 
 /**
