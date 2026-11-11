@@ -142,6 +142,21 @@
   text-overflow: ellipsis;
   cursor: pointer;
 }
+/* Title, artists and album in the bar open their pages; text until hovered. */
+.np-link {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.np-link:hover,
+.np-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .np-error-btn:hover,
 .np-error-btn[aria-expanded="true"] {
   text-decoration: underline;

@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 import type { TrackListItem } from "@music-library/core";
+import { artistNames, trackAlbumHref, trackArtistHref } from "../../lib/nowPlayingLinks";
 import { trackCoverUrl } from "../../api";
 import { displayText } from "../../lib/format";
 import CoverArt from "../CoverArt";
@@ -13,6 +15,7 @@ export default function NowPlaying({
   error,
   errorPanel,
   onContextMenu,
+  links = true,
 }: {
   track: TrackListItem | null;
   title: string;
@@ -25,7 +28,11 @@ export default function NowPlaying({
   /** In the mini player the details open in its panel instead of a popover. */
   errorPanel?: MiniPanelToggle;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
+  /** Title, artists and album open their pages (off in the mini player). */
+  links?: boolean;
 }) {
+  const linked = useInRouterContext() && links && !!track && !error;
+  const names = linked ? artistNames(track.artist) : [];
   const coverSrc = track ? trackCoverUrl(track) : null;
   // Held in state, as in DevicePickerButton: the popover reads them during
   // render.
@@ -52,7 +59,15 @@ export default function NowPlaying({
           forcePlaceholder={!track}
         />
         <div className="np-text">
-          <div className="np-title" title={title}>{title}</div>
+          <div className="np-title" title={title}>
+            {linked ? (
+              <PageLink label={`Go to the album of ${title}`} href={() => trackAlbumHref(track)}>
+                {title}
+              </PageLink>
+            ) : (
+              title
+            )}
+          </div>
           <div
             className={"np-artist" + (error ? " np-error" : "")}
             title={error ? undefined : artist}
@@ -85,7 +100,29 @@ export default function NowPlaying({
                 </button>
               )}
             </span>
-            {!error && artist}
+            {!error && !linked && artist}
+            {linked && (
+              <>
+                {names.length > 0
+                  ? names.map((name, i) => (
+                      <Fragment key={name + i}>
+                        {i > 0 && ", "}
+                        <PageLink label={`Go to ${name}`} href={() => trackArtistHref(track, name)}>
+                          {name}
+                        </PageLink>
+                      </Fragment>
+                    ))
+                  : "—"}
+                {track.album_title && (
+                  <>
+                    {" · "}
+                    <PageLink label={`Go to ${track.album_title}`} href={() => trackAlbumHref(track)}>
+                      {displayText(track.album_title)}
+                    </PageLink>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -97,5 +134,29 @@ export default function NowPlaying({
         onClose={() => setDetailsOpen(false)}
       />
     </>
+  );
+}
+
+/** Text in the bar that opens a page, looked up when clicked. */
+function PageLink({
+  label,
+  href,
+  children,
+}: {
+  label: string;
+  href: () => Promise<string | null>;
+  children: React.ReactNode;
+}) {
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      className="np-link"
+      title={label}
+      // A lookup that fails or finds nothing leaves the page as it is.
+      onClick={() => void href().then((to) => to && navigate(to)).catch(() => {})}
+    >
+      {children}
+    </button>
   );
 }

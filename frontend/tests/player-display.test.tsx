@@ -369,3 +369,26 @@ it("shuts the mini player's error panel when the failure clears", () => {
   rerender(<NowPlaying track={track} title="Song" artist="Artist · Album" error={null} errorPanel={panel(true)} />);
   expect(close).toHaveBeenCalled();
 });
+
+it("opens the album from the title and album, and each artist's page from their name", async () => {
+  const { MemoryRouter, Routes, Route, useLocation } = await import("react-router-dom");
+  const { api } = await import("../../core/src/api");
+  vi.spyOn(api, "getTrack").mockResolvedValue({
+    id: "t1", title: "The Sign", artists: [{ id: "a-nujabes", name: "Nujabes", role: "primary" }, { id: "a-pase", name: "Pase Rock", role: "featured" }],
+  } as never);
+  let at = "";
+  function Where() { at = useLocation().pathname + useLocation().search; return null; }
+  const song = { id: "t1", title: "The Sign", duration_ms: 1, source: "local" as const, album_id: "al-1", album_title: "Modal Soul", artist: "Nujabes, Pase Rock" };
+  render(
+    <MemoryRouter initialEntries={["/"]}>
+      <NowPlaying track={song} title="The Sign" artist="ignored" />
+      <Routes><Route path="*" element={<Where />} /></Routes>
+    </MemoryRouter>,
+  );
+  await act(async () => { screen.getByRole("button", { name: "The Sign" }).click(); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+  await act(async () => { screen.getByRole("button", { name: "Pase Rock" }).click(); });
+  expect(at).toBe("/library?view=artists&artist=a-pase");
+  await act(async () => { screen.getByRole("button", { name: "Modal Soul" }).click(); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+});
