@@ -693,6 +693,9 @@ type TrackPatch struct {
 	AlbumID     *uuid.UUID // move the track into this existing album; takes precedence over AlbumTitle
 	AlbumTitle  *string    // nil = leave alone; "" = detach; non-empty = attach (upsert)
 	AlbumArtist *string    // used alongside AlbumTitle for upsert; "" means compilation
+	// Owner limits the patch to that user's own personal upload (ErrNotFound
+	// otherwise), and upserts albums as that user's ingest would. nil = admin.
+	Owner *uuid.UUID
 }
 
 // UpdateTrack applies a patch in a single tx. Returns ErrNotFound if the
@@ -704,10 +707,12 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 	}
 	defer tx.Rollback(ctx)
 
-	// Make sure the track exists and is live before touching anything.
+	// Make sure the track exists and is live (and, for an owner's edit, theirs)
+	// before touching anything. FOR UPDATE holds it against a concurrent delete.
 	var existing uuid.UUID
 	if err := tx.QueryRow(ctx,
-		`SELECT id FROM tracks WHERE id = $1 AND deleted_at IS NULL`, id).
+		`SELECT id FROM tracks WHERE id = $1 AND deleted_at IS NULL
+		   AND ($2::uuid IS NULL OR owner_id = $2) FOR UPDATE`, id, p.Owner).
 		Scan(&existing); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -775,7 +780,7 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 				}
 				albumArtistID = &aid
 			}
-			aid, err := UpsertAlbum(ctx, tx, *p.AlbumTitle, albumArtistID, 0, isComp, "", nil)
+			aid, err := UpsertAlbum(ctx, tx, *p.AlbumTitle, albumArtistID, 0, isComp, "", p.Owner)
 			if err != nil {
 				return fmt.Errorf("upsert album: %w", err)
 			}
@@ -907,6 +912,36 @@ func (s *Store) SetTrackAlbumCover(ctx context.Context, trackID uuid.UUID, cover
 		  AND t.owner_id IS NULL
 		  AND NULLIF(a.cover_art_path, '') IS NULL`,
 		trackID, coverPath)
+	return err
+}
+
+// SetPersonalTrackCover makes coverPath userID's own cover for the album of
+// their personal track trackID (album_personal_covers: only they see it, and
+// shared album art still wins). ErrNotFound when the track isn't theirs;
+// ErrInvalidInput when it has no album to hang a cover on.
+func (s *Store) SetPersonalTrackCover(ctx context.Context, trackID, userID uuid.UUID, coverPath string) error {
+	coverPath = dbtext.Clean(coverPath)
+	if coverPath == "" {
+		return fmt.Errorf("%w: empty cover", ErrInvalidInput)
+	}
+	var albumID *uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		SELECT album_id FROM tracks
+		WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL`, trackID, userID).Scan(&albumID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if albumID == nil {
+		return fmt.Errorf("%w: give the track an album before adding cover art", ErrInvalidInput)
+	}
+	_, err = s.db.Exec(ctx, `
+		INSERT INTO album_personal_covers (album_id, user_id, cover_art_path)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (album_id, user_id) DO UPDATE
+		SET cover_art_path = EXCLUDED.cover_art_path, created_at = NOW()`, *albumID, userID, coverPath)
 	return err
 }
 

@@ -272,6 +272,9 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/tidal/tracks/{id}", tidalH.Track)
 			ordinary.Get("/tracks/{id}", tracksH.Get)
 			ordinary.Delete("/tracks/{id}", tracksH.Delete)
+			// Admins edit any local track; everyone else their own uploads.
+			ordinary.Patch("/tracks/{id}", tracksH.Patch)
+			r.With(appmw.Timeout(imageRequestTimeout)).Put("/tracks/{id}/cover", tracksH.PutTrackCover)
 			r.Get("/tracks/{id}/stream", tracksH.Stream)
 			r.Get("/tracks/{id}/hls", tracksH.TIDALHLS)
 			covers.Get("/tracks/{id}/cover", tracksH.TrackCover)
@@ -346,7 +349,6 @@ func NewRouter(d Deps) http.Handler {
 			ordinary.Get("/admin/library/rescan", libH.RescanStatus)
 			ordinary.Get("/admin/library/errors", libH.Errors)
 
-			ordinary.Patch("/tracks/{id}", tracksH.Patch)
 			ordinary.Delete("/admin/tracks/{id}", tracksH.AdminDelete)
 			ordinary.Post("/admin/tracks/{id}/links", tracksH.Link)
 			ordinary.Delete("/admin/tracks/{id}/links", tracksH.Unlink)

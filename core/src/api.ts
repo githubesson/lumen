@@ -391,6 +391,13 @@ export const api = {
     fd.append("file", file as unknown as Blob);
     return request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd });
   },
+  // The uploader's own cover for their personal track (on its album, seen
+  // only by them). The track needs an album; returns the updated track.
+  setTrackCover: (id: string, file: CoverUploadFile) => {
+    const fd = new FormData();
+    fd.append("file", file as unknown as Blob);
+    return request<TrackDetail>(`/api/tracks/${trackPathID(id)}/cover`, { method: "PUT", body: fd });
+  },
   // Clear an album's cover art, reverting it to the placeholder. Admin only.
   removeAlbumCover: (id: string) =>
     request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "DELETE" }),

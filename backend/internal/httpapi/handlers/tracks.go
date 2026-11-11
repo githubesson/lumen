@@ -17,6 +17,7 @@ import (
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/lastfm"
 	"github.com/githubesson/lumen/internal/library"
+	"github.com/githubesson/lumen/internal/models"
 	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
@@ -491,9 +492,10 @@ type trackPatchReq struct {
 	AlbumArtist *string   `json:"album_artist,omitempty"` // "" means compilation
 }
 
-// Patch updates track metadata. Admin only — edits apply to the global row
-// (or the admin's personal copy if they own it). The updated track is
-// returned in the response so the client can refresh without a second GET.
+// Patch updates track metadata. Admins edit any local track; anyone else only
+// their own personal uploads (404 otherwise, as Delete does), and can't move
+// a track into an album by id. The updated track is returned in the response
+// so the client can refresh without a second GET.
 func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireUser(w, r)
 	if !ok {
@@ -508,6 +510,14 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 	var req trackPatchReq
 	if !decodeJSON(w, r, &req) {
 		return
+	}
+	var owner *uuid.UUID
+	if u.Role != models.RoleAdmin {
+		owner = &u.ID
+		if req.AlbumID != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 	var albumID *uuid.UUID
 	if req.AlbumID != nil {
@@ -528,6 +538,7 @@ func (h *Tracks) Patch(w http.ResponseWriter, r *http.Request) {
 		AlbumID:     albumID,
 		AlbumTitle:  req.AlbumTitle,
 		AlbumArtist: req.AlbumArtist,
+		Owner:       owner,
 	})
 	if err != nil {
 		writeStoreError(w, err)

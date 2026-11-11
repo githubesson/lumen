@@ -268,7 +268,7 @@ export default function TrackList({
                   onPlay={handlePlay}
                   onToggleSelect={toggleSelection}
                   onToggleFav={handleToggleFav}
-                  onEdit={isAdmin ? setEditId : undefined}
+                  onEdit={setEditId}
                   onContextMenu={handleContextMenu}
                 />
               ))}
