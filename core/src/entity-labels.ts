@@ -95,6 +95,16 @@ export interface AlbumCredit {
   name: string;
   /** The library artist page the name opens; unset when there is none to open. */
   artistId?: string;
+  /** The TIDAL artist page it opens instead (a TIDAL album's main artist). */
+  tidalArtistId?: string;
+}
+
+/** A TIDAL album's credits: its main artist opens their TIDAL page. */
+export function tidalAlbumCredits(album: { artist_id?: string; artist?: string; artists?: string[] }): AlbumCredit[] {
+  const main = displayText(album.artist);
+  return albumCredits(album).map((credit) =>
+    album.artist_id && main && sameName(credit.name, main) ? { ...credit, tidalArtistId: album.artist_id } : credit,
+  );
 }
 
 /**

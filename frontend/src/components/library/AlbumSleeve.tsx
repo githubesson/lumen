@@ -259,15 +259,23 @@ function SleevePlay({ tracks, loading }: { tracks: TrackListItem[]; loading: boo
 }
 
 /**
- * The artists under the title. One with a library page links to it; the
- * link keeps the rest of the library's state (tab, search) so the Library
- * crumb returns there.
+ * The artists under the title, each opening their page: the library page,
+ * else (a TIDAL album's main artist) the TIDAL page, else an artist search.
+ * The link keeps the rest of the library's state (tab, search) so the
+ * Library crumb returns there.
  */
 function AlbumCredits({ credits }: { credits: AlbumCredit[] }) {
   const [params] = useSearchParams();
-  const artistLink = (artistId: string) => {
+  const artistLink = (credit: AlbumCredit) => {
     const next = withoutLibraryDrill(params);
-    next.set("artist", artistId);
+    if (credit.artistId) next.set("artist", credit.artistId);
+    else if (credit.tidalArtistId) {
+      next.set("tidalArtist", credit.tidalArtistId);
+      next.set("artistName", credit.name);
+    } else {
+      next.set("view", "artists");
+      next.set("q", credit.name);
+    }
     return { pathname: "/library", search: `?${next}` };
   };
   return (
@@ -275,13 +283,9 @@ function AlbumCredits({ credits }: { credits: AlbumCredit[] }) {
       {credits.map((credit, index) => (
         <Fragment key={credit.name}>
           {index > 0 && ", "}
-          {credit.artistId ? (
-            <Link className="album-sleeve-artist" to={artistLink(credit.artistId)}>
-              {credit.name}
-            </Link>
-          ) : (
-            <span>{credit.name}</span>
-          )}
+          <Link className="album-sleeve-artist" to={artistLink(credit)}>
+            {credit.name}
+          </Link>
         </Fragment>
       ))}
     </div>

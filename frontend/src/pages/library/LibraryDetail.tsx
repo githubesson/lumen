@@ -16,6 +16,7 @@ import {
 import {
   albumCredits,
   libraryAlbumFacts,
+  tidalAlbumCredits,
   tidalAlbumFacts,
   type AlbumCredit,
 } from "@music-library/core/entity-labels";
@@ -204,7 +205,7 @@ export function TidalAlbumDetailView({
             title: album.title,
             coverSrc: albumArtUrl({ ...album, source: "tidal" }),
             coverMissing: !album.cover_url,
-            credits: albumCredits(album),
+            credits: tidalAlbumCredits(album),
             facts: tidalAlbumFacts(album, album.tracks),
             factHints: { saved: TIDAL_SAVED_HINT },
             tracks: album.tracks,
