@@ -47,6 +47,7 @@ automated tests.
 | 9 | Cancel an upload, with nothing left behind | Server + web + desktop | Partly (see below) | Built, tested on a local server; waiting for Bee |
 | 10 | Home: the round play button on song rows works | Web + desktop | No | Built, tested by Claude; waiting for Bee |
 | 11 | Home: Jump back in's title, cover and artists, and song rows' artists, open their pages | Web + desktop | No | Built, tested by Claude; waiting for Bee |
+| 12 | Album pages: every artist opens a page (TIDAL albums included) | Web + desktop | No | Built, unit-tested; TIDAL page not tried in a browser; waiting for Bee |
 
 ### 1. Discord status on Linux
 
@@ -326,6 +327,27 @@ player bar (feature 8), now shared in `frontend/src/components/EntityLinks.tsx`.
 the right page. A row's artist opened the artist page without starting
 playback, and clicking a row's title still played the song. A Home test
 covers the card's links, including a song with no album id.
+
+### 12. Album pages: every artist opens a page
+
+On an album page, the artist names under the title were links only when the
+artist had a library page, so a **TIDAL album's** artist (e.g. "Shoreline
+Mafia" on *Party Pack. Vol 2*) was plain text. Now:
+
+- a TIDAL album's **main artist** opens their TIDAL artist page (the album
+  carries their TIDAL id);
+- an artist with a library page opens it, as before;
+- any other name opens an artist search, the same fallback the player bar
+  uses.
+
+**Files:** `core/src/entity-labels.ts` (`tidalAlbumCredits`),
+`frontend/src/components/library/AlbumSleeve.tsx`,
+`frontend/src/pages/library/LibraryDetail.tsx`.
+
+**Tested:** unit tests cover the TIDAL credit and the link targets. The
+existing test that expected plain text for an artist without a page was
+updated to expect the search link. **Not tried in a browser:** the local test
+server has no TIDAL connection, so the TIDAL album page needs Bee's check.
 
 ### Not done / limits
 
