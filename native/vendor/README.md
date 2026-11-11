@@ -168,3 +168,12 @@ Hooks in upstream files:
   `Renderer::draw`; the compositor branch invalidates the canvas.
 - `src/window.rs` (`surface_config`): the drawable takes `COPY_DST` where the surface allows
   it, so the canvas is copied in rather than drawn.
+
+
+## Element-link keyboard activation (2026-11-11)
+
+`runtime/input/focus.rs`: Return recognizes a focused `role("link")` element
+with an `on_press` handler, as well as rich-text links. Previously Tab drew its
+focus ring but Enter skipped it (and could activate a default button instead).
+The focused-link regression checks precedence over a default button; native
+Home title Tab/Enter is also exercised in the Lumen affordance audit.

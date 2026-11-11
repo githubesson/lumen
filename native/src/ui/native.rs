@@ -65,6 +65,7 @@ pub fn radio_card(t: &Theme, key: &str, checked: bool, label: &str, description:
         .label(label.to_string())
         .cursor(Cursor::Pointer)
         .focusable(true)
+        .hover(t.c.foreground.alpha(0.08))
         .on_press(on_pick);
     if checked {
         card = card.fill(color_mix(t.c.primary, 0.05, Color::TRANSPARENT));

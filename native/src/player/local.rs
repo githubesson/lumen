@@ -128,6 +128,7 @@ pub struct LocalPlayer {
 }
 
 impl LocalPlayer {
+    pub fn set_equalizer(&mut self, settings: super::engine::equalizer::Settings) { self.adapter.set_equalizer(settings); }
     pub fn new(adapter: Box<dyn AudioAdapter>, clock: Box<dyn Clock>, volume: f64) -> LocalPlayer {
         let mut p = LocalPlayer {
             adapter,

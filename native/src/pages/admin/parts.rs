@@ -127,7 +127,7 @@ pub fn stat_link(key: &str, label: &str, style: TextStyle, color: Color, help: O
         .label(label.to_string())
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .hover(Color::TRANSPARENT)
+        .hover_group()
         .on_press_tx(on_press)
         .child(text(label.to_string()).font(style).color(color).w(w))
         .child(dots)

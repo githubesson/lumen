@@ -3,7 +3,7 @@
 //! device and every other online one, picked to play there; the bar's
 //! button with its live dot; the "controlled from another device" notice.
 
-use rune::{Align, Color, Cursor, El, Icon, Side, col, el, row, text};
+use rune::{Align, Cursor, El, Icon, Side, col, el, row, text};
 
 use super::{Popover, close_btn, pop_box, pop_head, pop_layer, status_pill};
 use crate::app::App;
@@ -223,7 +223,7 @@ fn device_row(
         .focus_highlight(t.c.accent)
         .child(tile)
         .child(copy);
-    r = if active { r.fill(t.c.accent).hover(Color::TRANSPARENT) } else { r.hover(t.c.accent) };
+    r = if active { r.fill(t.c.accent).hover_group() } else { r.hover(t.c.accent) };
     if playing {
         r = r.child(el().mr(1.0).child(super::adapters::playing_bars(t, &format!("{key}-bars"))));
     } else if active {

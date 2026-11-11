@@ -133,6 +133,7 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
         .role("checkbox")
         .checked(f.is_compilation)
         .label("Compilation")
+        .hover(t.c.ghost_hover)
         .cursor(Cursor::Pointer)
         .focusable(true)
         .on_press(|app: &mut App| app.overlays.edit.album_form.is_compilation = !app.overlays.edit.album_form.is_compilation)

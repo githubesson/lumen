@@ -31,7 +31,7 @@ pub fn trigger(t: &Theme, key: &str, summary: &str, label: &str, open: bool, on_
         .items_center()
         .radius(t.radius_md())
         .fill(t.c.input_bg)
-        .hover(crate::ui::hover_overlay(t.c.input_bg, t.c.accent))
+        .hover(t.c.foreground.alpha(0.08))
         .role("combobox")
         .expanded(open)
         .label(format!("{label}: {summary}"))

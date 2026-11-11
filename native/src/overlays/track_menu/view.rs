@@ -174,7 +174,7 @@ fn item_box(b: El, t: &Theme, key: &str, highlighted: bool, enabled: bool) -> El
     if !enabled {
         return b.opacity(0.5).disabled(true);
     }
-    b = b.hover(t.c.accent).hover_motion(motion::ease(120.0), motion::ease(120.0)).press_scale(0.98);
+    b = b.cursor(Cursor::Pointer).hover(t.c.accent).hover_motion(motion::ease(120.0), motion::ease(120.0)).press_scale(0.98);
     if highlighted {
         b = b.fill(t.c.accent).box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 2.0, color: t.c.focus_ring, inset: true });
     }

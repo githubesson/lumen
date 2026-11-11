@@ -257,8 +257,18 @@ impl Rpc for Conn {
 /// Connects to the Discord client running on this machine.
 pub struct IpcConnector;
 
+fn allow_live_rpc(headless: bool, args: impl IntoIterator<Item = String>, opt_in: bool) -> bool {
+    opt_in || (!headless && !args.into_iter().any(|arg| arg == "--scene" || arg.starts_with("--scene=")))
+}
+
 impl Connector for IpcConnector {
     fn connect(&mut self, client_id: &str) -> Result<Box<dyn Rpc>, String> {
+        // Fixture windows share the desktop's IPC socket unless explicitly
+        // isolated. Never let their fake songs replace the user's activity.
+        // Deliberate integration checks can opt in with an isolated account.
+        if !allow_live_rpc(rune::is_headless(), std::env::args(), std::env::var("LUMEN_TEST_DISCORD").as_deref() == Ok("1")) {
+            return Err("Discord disabled for test scenes (LUMEN_TEST_DISCORD=1 to opt in)".into());
+        }
         let stream = open().ok_or("Could not connect")?;
         let mut conn = Conn { stream, buf: Vec::new(), nonce: 0 };
         conn.handshake(client_id)?;
@@ -270,6 +280,16 @@ impl Connector for IpcConnector {
 mod tests {
     use super::*;
     use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn test_runs_cannot_publish_live_activity_without_opt_in() {
+        let args = |values: &[&str]| values.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(allow_live_rpc(false, args(&["lumen"]), false));
+        assert!(!allow_live_rpc(true, args(&["lumen"]), false));
+        assert!(!allow_live_rpc(false, args(&["lumen", "--scene", "library"]), false));
+        assert!(!allow_live_rpc(false, args(&["lumen", "--scene=library"]), false));
+        assert!(allow_live_rpc(true, args(&["lumen", "--scene", "library"]), true));
+    }
 
     fn read_frame(s: &mut UnixStream) -> (u32, Value) {
         let mut head = [0u8; 8];

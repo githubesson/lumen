@@ -14,7 +14,7 @@ mod tests;
 
 use std::cell::Cell;
 
-use rune::{Color, Cursor, Cx, El, col, el, row, text};
+use rune::{Cursor, Cx, El, col, el, row, text};
 
 use crate::api::stats::{ReplayData, generate_replay_playlist, get_replay_image};
 use crate::api::{TrackListItem, error_message};
@@ -438,7 +438,7 @@ fn pills(app: &App, t: &Theme) -> El {
         if active {
             pill = crate::ui::kit::segment_lit(t, pill, r);
         } else {
-            pill = pill.hover(Color::TRANSPARENT).hover_motion(crate::ui::motion::ease(120.0), crate::ui::motion::ease(120.0));
+            pill = pill.hover_group().hover_motion(crate::ui::motion::ease(120.0), crate::ui::motion::ease(120.0));
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         pill = pill.child(exact(text(period_label(period)).font(style).color(ink).group_color(t.c.foreground), 20.3));

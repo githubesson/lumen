@@ -129,7 +129,7 @@ pub struct Player {
     media: MediaSession,
     /// What the OS media controls were last given: (current track's
     /// revision, exposed, playing).
-    media_shown: Option<(u64, bool, bool)>,
+    media_shown: Option<(u64, bool, bool, i64, i64)>,
     /// The remote-control notice was showing at the last poll.
     notice_shown: bool,
     pool: Pool,
@@ -274,6 +274,7 @@ impl Player {
 /// The app-level poll: hand the player the app's state, then poll it.
 pub fn poll(app: &mut App, tx: &mut Tx) -> bool {
     let enabled = matches!(&app.session, AppSession::SignedIn(me) if !me.must_reset_password);
+    app.player.local.set_equalizer(app.tweaks.equalizer);
     let smooth_mix = app.tweaks.smooth_mix.unwrap_or(0.0);
     app.player.sync_env(app.client.as_ref(), enabled, smooth_mix);
     let changed = app.player.poll(tx);

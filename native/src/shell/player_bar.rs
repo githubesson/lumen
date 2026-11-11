@@ -44,7 +44,7 @@ pub fn t_btn_with(t: &Theme, key: &str, glyph: El, active: bool, disabled: bool)
     if disabled {
         b.opacity(0.4).disabled(true)
     } else {
-        b.cursor(Cursor::Pointer).focusable(true).hover(t.c.ghost_hover)
+        b.cursor(Cursor::Pointer).focusable(true).hover(if active { t.c.foreground.alpha(0.08) } else { t.c.ghost_hover })
     }
 }
 
@@ -73,13 +73,19 @@ fn bar_with(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &s
             match d.phase {
                 rune::Phase::Down | rune::Phase::Move => {
                     app.ui.seek_drag = Some((k.clone(), at));
+                    if clock {
+                        app.ui.player.progress.snap(at);
+                    }
                     if live {
                         on_seek(app, at);
                     }
                 }
                 rune::Phase::Up => {
                     app.ui.seek_drag = None;
-                    on_seek(app, at);
+                    let at = if d.cancelled() { current(app) } else {
+                        on_seek(app, at);
+                        at
+                    };
                     if clock {
                         // The fill stays where it was let go, rather than
                         // gliding back from where the clock last was.
@@ -88,9 +94,11 @@ fn bar_with(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &s
                 }
             }
         });
-    let (fill, thumb_track) = if clock && dragging.is_none() {
-        // Playback moves these through live values, not the view.
-        (pui::progress::fill(app, t), pui::progress::thumb(app, t, h, false))
+    let (fill, thumb_track) = if clock {
+        // Keep the same live geometry during playback and dragging. Replacing
+        // it with percentage-width nodes reuses animated/live node state and
+        // can paint the old offset on top of the new layout for a frame.
+        (pui::progress::fill(app, t), pui::progress::thumb(app, t, h, dragging.is_some()))
     } else {
         let thumb_opacity = if dragging.is_some() { 1.0 } else { 0.0 };
         // Centred on the value: the end of a box `v` of the track wide, pulled 6 px past it.
@@ -154,13 +162,31 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
         Some(summary) => error::line_button(app, t, summary, style, underline_at),
         None => {
             if let Some(track) = d.current.filter(|_| !app.ui.player.mini.on) {
-                let mut parts = row().min_w(0.0).child(ui::entity_links::artists(track, style, t.c.muted_foreground));
-                if let Some(album) = &track.album_title {
-                    let tr = track.clone();
-                    parts = parts.child(line(format!(" · {album}"), style, t.c.muted_foreground).cursor(Cursor::Pointer).role("link")
-                        .on_press(move |app: &mut App| ui::entity_links::album(app, tr.clone())));
+                // One bounded text layout gives the whole metadata line one
+                // ellipsis, while keeping each visible artist/album clickable.
+                let artist = crate::format::display_text(track.artist.as_deref(), "—");
+                let mut label = line(d.artist.clone(), style, t.c.muted_foreground)
+                    .w_full()
+                    .tip_truncated("np-artist", &d.artist, style);
+                let paint = rune::LinkPaint::new().underline(t.c.muted_foreground);
+                let mut start = 0;
+                for name in artist.split(", ") {
+                    let end = start + name.len();
+                    label = label.link(rune::Link::new(start..end, format!("artist:{name}")).hover(paint));
+                    start = end + 2;
                 }
-                parts
+                let album_start = artist.len() + " · ".len();
+                if album_start < d.artist.len() {
+                    label = label.link(rune::Link::new(album_start..d.artist.len(), "album").hover(paint));
+                }
+                let track = track.clone();
+                label.on_link(move |app: &mut App, target: &str, _| {
+                    if target == "album" {
+                        ui::entity_links::album(app, track.clone());
+                    } else if let Some(name) = target.strip_prefix("artist:") {
+                        ui::entity_links::artist(app, track.clone(), name.to_owned());
+                    }
+                })
             } else { line(d.artist.clone(), style, t.c.muted_foreground).tip_truncated("np-artist", &d.artist, style) }
         },
     }
@@ -193,7 +219,7 @@ fn now_playing(app: &App, t: &Theme, bp: Bp) -> El {
         .child({
             let title = line(d.title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated("np-title", &d.title, font(14.0, 500.0)).h(20.3);
             if let Some(track) = d.current.cloned() {
-                title.cursor(Cursor::Pointer).role("link").on_press(move |app: &mut App| ui::entity_links::album(app, track.clone()))
+                title.hover(t.c.ghost_hover).focusable(true).cursor(Cursor::Pointer).role("link").on_press(move |app: &mut App| ui::entity_links::album(app, track.clone()))
             } else { title }
         })
         .child(el().h(17.4).min_w(0.0).child(np_artist(app, t, font(12.0, 400.0), error::underline_at(12.0, 17.4))));

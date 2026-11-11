@@ -101,7 +101,7 @@ impl<S: 'static> Runtime<S> {
     /// Whether Return goes to focused element `i` rather than the default button: a focused
     /// link, a `focus_highlight` row, or an item of a menu, list, tree or grid group.
     fn takes_return(&self, i: usize) -> bool {
-        self.link_focused(i) || self.nodes[i].focus.highlight.is_some()
+        self.link_focused(i) || self.nodes[i].role == "link" || self.nodes[i].focus.highlight.is_some()
             || self.group(i).is_some_and(|g| LIST_ROLES.contains(&self.nodes[g].role) || VERTICAL_ROLES.contains(&self.nodes[g].role))
     }
     /// Return with no modifiers presses the window's default button (`El::default_button`)
@@ -1015,6 +1015,21 @@ mod tests {
         assert!(rings(&rt).is_empty(), "the caret shows a field's focus");
         tab_to(&mut rt, "item");
         assert!(rings(&rt).is_empty(), "a menu item's highlight shows its focus");
+    }
+
+    #[test]
+    fn return_activates_an_element_link_before_the_default_button() {
+        fn view(_: &Keys, _: &mut Cx<Keys>) -> El {
+            col().size(300.0, 100.0)
+                .child(button("album").role("link").on_press(|s: &mut Keys| s.log.push("album")))
+                .child(button("default").default_button().on_press(|s: &mut Keys| s.log.push("default")))
+        }
+        let mut rt = Runtime::new(Keys::default(), view, (300.0, 100.0), Env::new(true, 1.0));
+        rt.frame(0.0);
+        press(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt), "album");
+        press(&mut rt, Key::Enter);
+        assert_eq!(rt.state.log, ["album"]);
     }
 
     #[test]

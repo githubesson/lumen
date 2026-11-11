@@ -6,7 +6,7 @@
 
 use std::rc::Rc;
 
-use rune::{Color, Cursor, Cx, El, Link, LinkPaint, PointerPress, col, el, row, text};
+use rune::{Cursor, Cx, El, Link, LinkPaint, PointerPress, col, el, row, text};
 
 use super::layout::{Areas, BentoTiles, Feat, arrange, bands, cells, column, minis, span_width};
 use crate::api::stats::{ReplayActivityBucket, ReplayBucket, ReplayData, ReplayTrack};
@@ -567,7 +567,7 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         .child(crate::ui::cover_art(t, &app.images, Some(&tr.cover_at(Some(512))), &tr.title, art, art, t.radius_lg()));
     if let Some(a) = &album {
         let href = a.album_href();
-        cover = cover.cursor(Cursor::Pointer).on_press(move |app: &mut App| app.navigate_to(&href));
+        cover = crate::ui::cover_link(t, cover).on_press(move |app: &mut App| app.navigate_to(&href));
     }
 
     // Artists, each linked when they have a page, then the album.
@@ -643,7 +643,7 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         .press_scale(0.95)
         .child(heart)
         .on_press(move |app: &mut App| track_row::toggle_favorite(app, &id));
-    let heart_btn = if fav { heart_btn.fill(t.c.muted) } else { heart_btn };
+    let heart_btn = if fav { heart_btn.fill(t.c.muted).hover(t.c.foreground.alpha(0.08)) } else { heart_btn };
     let (t1, t2) = (tr.clone(), tr.clone());
     let more = iconbtn(t, "replay-feat-more", &i::ELLIPSIS, 16.0, BtnState::default())
         .label("More actions")
@@ -666,7 +666,7 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         .label(format!("Play {title}"))
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .hover(crate::ui::hover_overlay(t.c.primary, crate::theme::color_mix(t.c.primary, 0.8, Color::TRANSPARENT)))
+        .hover(t.c.background.alpha(0.2))
         .hover_motion(motion::ease(120.0), motion::ease(120.0))
         .press_scale(0.97)
         .child(ico(&i::PLAY_FILLED, 20.0, t.c.primary_foreground))

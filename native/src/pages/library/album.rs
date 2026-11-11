@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rune::{Color, Cursor, Cx, El, col, el, row, text};
+use rune::{Cursor, Cx, El, col, el, row, text};
 
 use crate::api::TrackListItem;
 use crate::app::App;
@@ -410,7 +410,7 @@ fn library_link(t: &Theme, lib: String) -> El {
         .items_center()
         .role("button")
         .cursor(Cursor::Pointer)
-        .hover(Color::TRANSPARENT)
+        .hover_group()
         .child(ico(&i::LIBRARY, 14.0, t.c.muted_foreground).group_color(t.c.foreground))
         .child(text("Open in library").font(font(13.0, 500.0)).color(t.c.muted_foreground).group_color(t.c.foreground))
         .on_press(move |app: &mut App| super::open_album(app, EntityTarget::local(&lib)))
@@ -516,6 +516,7 @@ fn version_picker(app: &App, t: &Theme, cx: &mut Cx<App>, versions: &[ArtistRele
             .role("tab")
             .checked(active)
             .help(description)
+            .focusable(true)
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| super::open_version(app, &v, &artist));
         if active {
@@ -524,7 +525,7 @@ fn version_picker(app: &App, t: &Theme, cx: &mut Cx<App>, versions: &[ArtistRele
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         b = b.child(text(label).font(label_style).color(ink).group_color(t.c.foreground));
         if !active {
-            b = b.hover(Color::TRANSPARENT).press_scale(0.97);
+            b = b.hover_group().press_scale(0.97);
         }
         group = group.child(b);
     }

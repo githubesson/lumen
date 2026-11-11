@@ -218,7 +218,7 @@ fn track_row(app: &App, t: &Theme, tr: &TrackListItem, existing: &HashSet<String
     if disabled {
         r.opacity(0.5).cursor(Cursor::NotAllowed).disabled(true)
     } else {
-        r.cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| toggle(app, &id))
+        r.hover(t.c.ghost_hover).cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| toggle(app, &id))
     }
 }
 

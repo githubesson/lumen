@@ -132,7 +132,7 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
             {
                 let title = board::lh(text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w), h).mb(6.0);
                 if let Some(track) = b.track.clone() {
-                    title.cursor(rune::Cursor::Pointer).role("link").on_press(move |app: &mut App| crate::ui::entity_links::album(app, track.clone()))
+                    title.key("hero-album-title").hover(t.c.ghost_hover).focusable(true).cursor(rune::Cursor::Pointer).role("link").on_press(move |app: &mut App| crate::ui::entity_links::album(app, track.clone()))
                 } else { title }
             }
         }
@@ -319,7 +319,7 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let side = l.art.unwrap_or(ART);
     let art = cover_art(t, &app.images, Some(&track.cover_at(None)), &label, side, side, t.radius_lg());
     let tr = track.clone();
-    let art = art.cursor(rune::Cursor::Pointer).role("link").label(format!("Open {label}"))
+    let art = crate::ui::cover_link(t, art).key("hero-album-cover").label(format!("Open {label}"))
         .on_press(move |app: &mut App| crate::ui::entity_links::album(app, tr.clone()));
     let art = if l.stacked && narrow { el().w_full().center().child(art) } else { art };
     let head = head_view(Some(art), body_view(t, body, &l, narrow), &l);

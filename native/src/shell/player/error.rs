@@ -36,7 +36,7 @@ pub fn line_button(app: &App, t: &Theme, summary: &str, style: rune::TextStyle, 
         .expanded(open)
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .hover(rune::Color::TRANSPARENT)
+        .hover_group()
         .child(line(summary, style, t.c.destructive))
         .child(underline);
     if mini {

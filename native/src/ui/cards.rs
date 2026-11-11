@@ -69,6 +69,8 @@ pub fn card_play(t: &Theme, key: &str, label: &str, on_play: Action) -> El {
         .label(label)
         .cursor(Cursor::Pointer)
         .shadow_md(t)
+        .hover(t.c.background.alpha(0.2))
+        .focusable(true)
         .group_opacity(0.0, 1.0)
         .press_scale(0.95)
         .on_press(move |app: &mut App| on_play(app))
@@ -139,7 +141,7 @@ impl MediaCard {
         let title = line(self.title.clone(), font(title_fs, 500.0), t.c.foreground);
         let mut card = card_box(t, &self.key).child(art).child(card_text(t, title, self.subtitle.as_deref()));
         if let Some(href) = self.to {
-            card = card.role("link").label(self.title.clone()).on_press(move |app: &mut App| app.navigate_to(&href));
+            card = card.focusable(true).role("link").label(self.title.clone()).on_press(move |app: &mut App| app.navigate_to(&href));
         }
         card
     }
@@ -216,6 +218,7 @@ pub fn playlist_card(app: &App, t: &Theme, p: &Playlist) -> El {
         .child(ico(glyph, 12.0, t.c.muted_foreground));
     let href = format!("/playlists/{}", p.id);
     card_box(t, &key)
+        .focusable(true)
         .role("link")
         .label(p.name.clone())
         .child(art)

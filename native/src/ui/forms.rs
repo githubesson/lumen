@@ -129,6 +129,7 @@ pub fn select(
                 .items_center()
                 .radius(t.radius_lg())
                 .fill(t.c.input_bg)
+                .hover(crate::ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
                 .child(line(label, font(14.0, 400.0), ink).grow(1.0))
                 .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground))
         }
@@ -141,6 +142,7 @@ pub fn select(
                 .items_center()
                 .radius(t.radius_lg())
                 .fill(t.c.input_bg)
+                .hover(crate::ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
                 .child(line(label, font(14.0, 400.0), t.c.foreground).grow(1.0))
                 .child(ico(&NATIVE_ARROW, 18.0, t.c.foreground))
         }
@@ -150,7 +152,7 @@ pub fn select(
             .radius(t.radius_md())
             .child(line(label, font(14.0, 400.0), t.c.muted_foreground).group_color(t.c.foreground))
             .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground).group_color(t.c.foreground))
-            .hover(Color::TRANSPARENT),
+            .hover_group(),
         SelectVariant::Toolbar => {
             let hot = color_mix(t.c.foreground, 0.07, Color::TRANSPARENT);
             let ink = if open { t.c.foreground } else { t.c.muted_foreground };
@@ -293,6 +295,7 @@ pub fn input_box(t: &Theme, key: &str, focused: bool, field: El) -> El {
         .w_full()
         .radius(t.radius_lg())
         .fill(t.c.input_bg)
+        .hover(crate::ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
         .items_center();
     let b = if focused { focus_rings(t, b) } else { b };
     b.child(field)
@@ -334,6 +337,7 @@ pub fn search_input(
         .items_center()
         .radius(t.radius_lg())
         .fill(t.c.input_bg)
+        .hover(crate::ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
         .min_w(0.0);
     b = match width {
         Some(w) => b.w(w),
@@ -489,7 +493,7 @@ pub fn setting_select(
     if disabled {
         return b.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed);
     }
-    b.cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| {
+    b.hover(t.c.ghost_hover).cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| {
         app.select = if app.select.as_ref().is_some_and(|s| s.key == spec.key) { None } else { Some(spec.clone()) };
     })
 }

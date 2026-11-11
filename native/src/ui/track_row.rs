@@ -99,6 +99,8 @@ pub fn idx_play(t: &Theme, key: &str, label: &str) -> El {
         .center()
         .role("button")
         .label(label)
+        .hover(t.c.ghost_hover)
+        .focusable(true)
         .cursor(Cursor::Pointer)
         .child(ico(&i::PLAY_FILLED, 14.0, t.c.foreground))
 }
@@ -145,6 +147,8 @@ pub fn action_button(t: &Theme, key: &str, label: &str) -> El {
         .center()
         .role("button")
         .label(label)
+        .hover(t.c.ghost_hover)
+        .focusable(true)
         .cursor(Cursor::Pointer)
         .hover(t.c.accent)
         .focusable(true)

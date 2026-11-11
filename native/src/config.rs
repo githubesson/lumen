@@ -27,6 +27,8 @@ pub struct Tweaks {
     pub home_board: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smooth_mix: Option<f64>,
+    #[serde(default)]
+    pub equalizer: crate::player::engine::equalizer::Settings,
 }
 
 fn default_radius() -> u32 {
@@ -35,7 +37,7 @@ fn default_radius() -> u32 {
 
 impl Default for Tweaks {
     fn default() -> Self {
-        Tweaks { theme: Mode::Dark, radius: 10, density: Density::Balanced, layout: Layout::Sidebar, home_board: None, smooth_mix: None }
+        Tweaks { theme: Mode::Dark, radius: 10, density: Density::Balanced, layout: Layout::Sidebar, home_board: None, smooth_mix: None, equalizer: Default::default() }
     }
 }
 

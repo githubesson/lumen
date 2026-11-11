@@ -183,6 +183,7 @@ impl Outbox {
 }
 
 pub enum MixerCmd {
+    Equalizer(super::equalizer::Settings),
     /// The current voice (a `load`); None plays nothing.
     SetCurrent(Option<Box<MixVoice>>),
     SetPrepared(Option<Box<MixVoice>>),
@@ -208,11 +209,12 @@ pub struct Mixer {
     fade: Option<(u64, u64)>,
     /// The volume last applied, ramped towards the new one per buffer.
     gain: f32,
+    equalizer: super::equalizer::Equalizer,
 }
 
 impl Mixer {
     pub fn new(format: OutFormat, cmds: Receiver<MixerCmd>, levels: Arc<Levels>, outbox: Outbox) -> Mixer {
-        Mixer { format, cmds, levels, outbox, playing: false, current: None, prepared: None, outgoing: None, fade: None, gain: 0.0 }
+        Mixer { format, cmds, levels, outbox, playing: false, current: None, prepared: None, outgoing: None, fade: None, gain: 0.0, equalizer: super::equalizer::Equalizer::new(format.rate, format.channels) }
     }
 
     pub fn format(&self) -> OutFormat {
@@ -226,6 +228,7 @@ impl Mixer {
             return;
         }
         self.format = format;
+        self.equalizer.reformat(format.rate, format.channels);
         self.finish_fade();
         for voice in [&mut self.current, &mut self.prepared].into_iter().flatten() {
             let at = voice.position().unwrap_or_else(|| voice.state.position());
@@ -245,7 +248,9 @@ impl Mixer {
 
     fn apply(&mut self, cmd: MixerCmd) {
         match cmd {
+            MixerCmd::Equalizer(settings) => self.equalizer.configure(settings),
             MixerCmd::SetCurrent(voice) => {
+                self.equalizer.reset_history();
                 self.finish_fade();
                 let old = std::mem::replace(&mut self.current, voice);
                 self.outbox.retire_voice(old);
@@ -288,6 +293,7 @@ impl Mixer {
                 self.outbox.retire_feed(gone);
             }
             MixerCmd::Seeking { id, epoch } => {
+                self.equalizer.reset_history();
                 // A seek ends a crossfade.
                 if self.outgoing.is_some() && self.current.as_ref().is_some_and(|c| c.id() == id) {
                     self.finish_fade();
@@ -312,6 +318,7 @@ impl Mixer {
             }
             MixerCmd::Pause { seq } => {
                 self.playing = false;
+                self.equalizer.reset_history();
                 self.finish_fade();
                 self.outbox.event(EngineEvent::Paused { seq });
             }
@@ -328,6 +335,7 @@ impl Mixer {
         let frames = out.len() / ch;
         if self.playing && frames > 0 {
             self.mix(&mut out[..frames * ch], ch);
+            self.equalizer.process(&mut out[..frames * ch]);
         }
         // Volume, ramped over the buffer so a drag doesn't click.
         let target = self.levels.gain();

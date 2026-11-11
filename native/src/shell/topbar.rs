@@ -82,8 +82,8 @@ fn breadcrumbs(app: &App, t: &Theme) -> El {
         } else if let Some(to) = c.to {
             let replace = c.replace;
             ui::line(c.label, style, t.c.muted_foreground)
-                .group_color(t.c.foreground)
-                .hover_group()
+                .hover(t.c.ghost_hover)
+                .focusable(true)
                 .role("link")
                 .cursor(Cursor::Pointer)
                 .on_press(move |app: &mut App| {
@@ -118,6 +118,7 @@ fn search(t: &Theme, window_w: f32) -> El {
         .items_center()
         .radius(t.radius_lg())
         .fill(t.c.input_bg)
+        .hover(ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
         .role("button")
         .label("Search library, albums, tracks… Ctrl+K")
         .cursor(Cursor::Pointer)
@@ -137,6 +138,7 @@ fn search_icon(t: &Theme) -> El {
         .center()
         .radius(t.radius_lg())
         .fill(t.c.input_bg)
+        .hover(ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
         .role("button")
         .label("Search library, albums, tracks… Ctrl+K")
         .cursor(Cursor::Pointer)

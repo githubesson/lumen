@@ -72,7 +72,7 @@ pub fn text_link(key: &str, label: &str, style: TextStyle, rest: Color, hover: C
         .label(label)
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .hover(Color::TRANSPARENT)
+        .hover_group()
         .child(
             rich(label, vec![Span::new(0, n).underline(rest)])
                 .font(style)

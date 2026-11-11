@@ -112,13 +112,15 @@ impl Player {
     /// the play state moved.
     fn show_in_media_session(&mut self) {
         let exposed = media_session::should_expose(self.controlling());
-        let key = (self.local.current_rev(), exposed, self.local.is_playing());
+        let position_us = if exposed { (self.local.current_time().max(0.0) * 1_000_000.0) as i64 } else { 0 };
+        let duration_us = if exposed { (self.local.duration().max(0.0) * 1_000_000.0) as i64 } else { 0 };
+        let key = (self.local.current_rev(), exposed, self.local.is_playing(), position_us, duration_us);
         if self.media_shown == Some(key) {
             return;
         }
         self.media_shown = Some(key);
         let track = self.local.current().filter(|_| exposed).map(media_session::now_playing);
-        self.media.show(Shown { track, playing: self.local.is_playing() }, self.client.as_ref());
+        self.media.show(Shown { track, playing: self.local.is_playing(), position_us, duration_us }, self.client.as_ref());
     }
 
     /// When the clock, a debounce, a heartbeat or a timeout is next due.

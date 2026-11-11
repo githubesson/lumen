@@ -26,6 +26,8 @@ pub enum AdapterEvent {
 }
 
 pub trait AudioAdapter {
+    /// Local sound shaping; null/remote adapters leave it alone.
+    fn set_equalizer(&mut self, _settings: super::engine::equalizer::Settings) {}
     /// Replace the current source; does not start it. Any prepared source
     /// goes too: the core forgets its marker on every `load`, or the next
     /// track would never be prepared again (and its hand-off would gap).

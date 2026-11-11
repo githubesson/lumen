@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use rune::{Color, Cursor, El, TextStyle, col, el, row, text};
+use rune::{Cursor, El, TextStyle, col, el, row, text};
 
 use crate::api::{Playlist, TrackListItem};
 use crate::app::App;
@@ -90,7 +90,7 @@ fn head(t: &Theme, key: &str, sub: &str, title: &str, to: &str, content: f32) ->
         .role("link")
         .label(LINK)
         .cursor(Cursor::Pointer)
-        .hover(Color::TRANSPARENT)
+        .hover_group()
         .child(text(LINK).font(font(14.0, 400.0)).color(t.c.muted_foreground).group_color(t.c.foreground))
         .on_press(move |app: &mut App| app.navigate_to(&to));
     row()
@@ -358,6 +358,8 @@ pub fn playlist_row(app: &App, t: &Theme, key: String, p: &Playlist, on_play: Ac
         .key(format!("{key}-play"))
         .role("button")
         .label(play_label)
+        .hover(t.c.background.alpha(0.2))
+        .focusable(true)
         .cursor(Cursor::Pointer)
         .press_scale(0.95)
         .group_opacity(0.0, 1.0)

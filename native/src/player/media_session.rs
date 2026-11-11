@@ -2,7 +2,7 @@
 //! playback in the OS media controls. On Windows that's the System Media
 //! Transport Controls (the media keys and the volume flyout's player), via
 //! a `MediaPlayer` with its command manager off, so no window handle is
-//! needed. Elsewhere it does nothing yet.
+//! needed. Linux publishes MPRIS on the session bus.
 //!
 //! While another device is controlled the session is withdrawn: these
 //! controls drive this device's audio. Pause keeps it, as music players do.
@@ -16,6 +16,7 @@ use crate::net::LateWaker;
 /// `NowPlayingMetadata`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NowPlaying {
+    pub id: String,
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -29,7 +30,7 @@ const NOW_PLAYING_ARTWORK_PX: u32 = 1024;
 pub fn now_playing(track: &TrackListItem) -> NowPlaying {
     let nonempty = |s: Option<&str>| Some(display_text(s, "")).filter(|s| !s.is_empty());
     NowPlaying {
-        title: display_text(Some(&track.title), ""),
+        id: track.id.clone(),        title: display_text(Some(&track.title), ""),
         artist: nonempty(track.artist.as_deref()),
         album: nonempty(track.album_title.as_deref()),
         artwork: track.cover_at(Some(NOW_PLAYING_ARTWORK_PX)),
@@ -57,6 +58,9 @@ pub enum Button {
 pub struct Shown {
     pub track: Option<NowPlaying>,
     pub playing: bool,
+    /// Actual local timeline, in MPRIS microseconds.
+    pub position_us: i64,
+    pub duration_us: i64,
 }
 
 enum Update {
@@ -204,7 +208,11 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+#[path = "media_session_linux.rs"]
+mod platform;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use std::sync::mpsc::Sender;
 

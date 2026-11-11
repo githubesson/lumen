@@ -381,6 +381,8 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .items_center()
         .role("button")
         .label("Drop files here, or click to choose")
+        .hover(t.c.ghost_hover)
+        .disabled(s.busy)
         .cursor(Cursor::Pointer)
         .focusable(true)
         .on_press_tx(pick)

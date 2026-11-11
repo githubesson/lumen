@@ -10,6 +10,7 @@
 //! it lets go of leave through rings made up front ([`mixer::Outbox`]).
 
 pub mod decoder;
+pub mod equalizer;
 pub mod hls;
 pub mod mixer;
 pub mod output;
@@ -151,6 +152,7 @@ pub struct Engine {
     /// The mixer's events (read here; its porter wakes the UI for them).
     mixer_events: rtrb::Consumer<EngineEvent>,
     sink: EventSink,
+    equalizer: equalizer::Settings,
 }
 
 impl Engine {
@@ -180,6 +182,7 @@ impl Engine {
             events,
             mixer_events,
             sink,
+            equalizer: equalizer::Settings::default(),
         }
     }
 
@@ -195,6 +198,14 @@ impl Engine {
     #[cfg(test)]
     pub fn render(&self, out: &mut [f32]) {
         self.mixer.lock().unwrap().render(out);
+    }
+
+    pub fn set_equalizer(&mut self, settings: equalizer::Settings) {
+        let settings = settings.sanitized();
+        if self.equalizer != settings {
+            self.equalizer = settings;
+            let _ = self.mixer_tx.send(MixerCmd::Equalizer(settings));
+        }
     }
 
     /// A handle for choosing the output device.
@@ -237,6 +248,7 @@ pub struct EngineAdapter {
     engine: Engine,
     /// The session the media requests carry.
     client: Arc<Mutex<Option<Client>>>,
+    http: source::Http,
     next_id: u64,
     active: Option<VoiceRef>,
     prepared: Option<VoiceRef>,
@@ -260,6 +272,7 @@ impl EngineAdapter {
         EngineAdapter {
             engine,
             client,
+            http: source::Http::new(None),
             next_id: 0,
             active: None,
             prepared: None,
@@ -287,7 +300,7 @@ impl EngineAdapter {
         let voice = Box::new(MixVoice::new(state.clone(), ctl.clone()));
         decoder::spawn(decoder::Ctx {
             voice: state.clone(),
-            http: source::Http::new(cookie),
+            http: self.http.with_cookie(cookie),
             format,
             ctl: rx,
             mixer: self.engine.mixer_tx.clone(),
@@ -341,6 +354,7 @@ impl EngineAdapter {
 }
 
 impl AudioAdapter for EngineAdapter {
+    fn set_equalizer(&mut self, settings: equalizer::Settings) { self.engine.set_equalizer(settings); }
     /// Drops the prepared voice too (see [`AudioAdapter::load`]).
     fn load(&mut self, url: &str) {
         self.auto = None;
