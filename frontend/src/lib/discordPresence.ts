@@ -96,6 +96,8 @@ export function useDiscordPresence() {
   const targetDeviceRef = useRef<PlaybackDevice | null>(null);
   const currentRef = useRef<TrackListItem | null>(null);
   const isPlayingRef = useRef(false);
+  // The track whose end stopped playback (the queue ran out), until playing again.
+  const endedTrackRef = useRef<string | null>(null);
   const coverUrlCacheRef = useRef<Map<string, SignedCoverCacheEntry>>(new Map());
   const remoteActivityPushedRef = useRef(false);
   const remoteActivityPendingRef = useRef(false);
@@ -195,6 +197,12 @@ export function useDiscordPresence() {
       const generation = ++remotePushGenerationRef.current;
       remoteActivityPendingRef.current = false;
       remoteActivityPushedRef.current = false;
+      // A finished queue leaves its last track loaded but stopped: take the
+      // card down rather than showing it paused forever.
+      if (!(overrides?.isPlaying ?? true) && endedTrackRef.current === track.id) {
+        void presence.clear();
+        return;
+      }
       const cover = coverUrlCacheRef.current;
       const trackId = track.id;
       const duration = adapter.duration() || 0;
@@ -239,9 +247,16 @@ export function useDiscordPresence() {
       }
     };
 
-    const offPlay = adapter.on("play", () =>
-      pushPreferred({ isPlaying: true }),
-    );
+    const offPlay = adapter.on("play", () => {
+      endedTrackRef.current = null;
+      pushPreferred({ isPlaying: true });
+    });
+    // The element fires `pause` before `ended`, so the paused card is already
+    // out by now: take it down here. A next track (or repeat) pushes again.
+    const offEnded = adapter.on("ended", () => {
+      endedTrackRef.current = currentRef.current?.id ?? null;
+      pushLocal({ isPlaying: false });
+    });
     const offPause = adapter.on("pause", () =>
       pushPreferred({ isPlaying: false }),
     );
@@ -258,6 +273,7 @@ export function useDiscordPresence() {
     return () => {
       pushLocalActivityRef.current = () => {};
       offPlay();
+      offEnded();
       offPause();
       offSeeked();
       offMeta();

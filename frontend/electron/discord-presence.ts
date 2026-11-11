@@ -1,5 +1,6 @@
 import type { DiscordActivityPayload, DiscordCardOptions } from "../src/contracts/desktop";
 import { DEFAULT_DISCORD_CARD, discordCardLines, discordStatusDisplayType } from "./discord-card";
+import { discordTransport } from "./discord-ipc-path";
 export type { DiscordActivityPayload } from "../src/contracts/desktop";
 
 // discord-rpc is CommonJS-only and intentionally loaded lazily.
@@ -27,6 +28,29 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 // Bumped by every push and clear. A push that settles after a newer one
 // started must neither queue a retry nor record itself as the activity.
 let pushGeneration = 0;
+
+// A paused card comes down after this long, as Spotify's does, so a track
+// left paused (or a finished queue) doesn't sit on the profile for hours.
+export const PAUSED_CARD_TTL_MS = 10 * 60_000;
+let pausedTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelPausedExpiry(): void {
+  if (pausedTimer) {
+    clearTimeout(pausedTimer);
+    pausedTimer = null;
+  }
+}
+
+function expirePausedCard(generation: number): void {
+  pausedTimer = setTimeout(() => {
+    pausedTimer = null;
+    if (generation !== pushGeneration) return;
+    // Forget it too, so a reconnect or card change doesn't put it back.
+    requested = null;
+    void client?.clearActivity().catch(() => {});
+  }, PAUSED_CARD_TTL_MS);
+  pausedTimer.unref?.();
+}
 
 function cancelRetry(): void {
   retryActivity = null;
@@ -90,7 +114,7 @@ async function ensureDiscord(): Promise<DiscordClient | null> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RPC = require("discord-rpc");
-    nextClient = new RPC.Client({ transport: "ipc" });
+    nextClient = new RPC.Client({ transport: discordTransport() });
     nextClient.on("ready", () => {
       console.log("[discord] connected as client", clientId);
     });
@@ -150,6 +174,7 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
 }> {
   // A newer update supersedes one waiting to be retried.
   cancelRetry();
+  cancelPausedExpiry();
   const generation = ++pushGeneration;
   requested = { payload, at: Date.now() };
   const discord = await ensureDiscord();
@@ -219,6 +244,7 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
     if (generation === pushGeneration) {
       lastActivity = payload;
       lastStartMs = start;
+      if (!payload.isPlaying) expirePausedCard(generation);
     }
     return { ok: true };
   } catch (error) {
@@ -230,6 +256,7 @@ export async function pushDiscordActivity(payload: DiscordActivityPayload): Prom
 export async function clearDiscordActivity(): Promise<void> {
   pushGeneration += 1;
   cancelRetry();
+  cancelPausedExpiry();
   // Forget the activity before awaiting: a disconnect during the clear
   // would otherwise queue it to be restored after the reconnect backoff.
   lastActivity = null;
@@ -247,6 +274,7 @@ export async function clearDiscordActivity(): Promise<void> {
 export async function teardownDiscordPresence(): Promise<void> {
   pushGeneration += 1;
   cancelRetry();
+  cancelPausedExpiry();
   const current = client;
   client = null;
   lastActivity = null;

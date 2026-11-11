@@ -27,7 +27,7 @@ function load(
       return timer;
     },
     clearTimeout: (timer: { cleared: boolean }) => { timer.cleared = true; },
-    require: (id: string) => id === "./discord-card" ? card : ({ Client: class { on(event: string, fn: () => void) { handlers.set(event, fn); } login = login; destroy = destroy; request = request; clearActivity = clearActivity; } }),
+    require: (id: string) => id === "./discord-card" ? card : id === "./discord-ipc-path" ? { discordTransport: () => "ipc" } : ({ Client: class { on(event: string, fn: () => void) { handlers.set(event, fn); } login = login; destroy = destroy; request = request; clearActivity = clearActivity; } }),
   });
   /** Advance the clock and run timers that came due. */
   const advance = async (to: number) => {
@@ -241,4 +241,21 @@ it("restores the newest track after a disconnect, not the last one Discord confi
   await advance(30_000);
   expect(login).toHaveBeenCalledTimes(2);
   expect(request.mock.calls.at(-1)![1].activity.details).toBe("Song B");
+});
+
+it("takes a paused card down after a while, and a new push cancels that", async () => {
+  const login = vi.fn().mockResolvedValue(undefined);
+  const { exports, clearActivity, advance } = load(login);
+  exports.configureDiscordPresence({ clientId: "fixture" });
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song", isPlaying: false });
+  await advance(5 * 60_000);
+  expect(clearActivity).not.toHaveBeenCalled();
+  await advance(10 * 60_000);
+  expect(clearActivity).toHaveBeenCalledTimes(1);
+
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song", isPlaying: false });
+  await advance(15 * 60_000);
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song", isPlaying: true, elapsedSec: 1 });
+  await advance(30 * 60_000);
+  expect(clearActivity).toHaveBeenCalledTimes(1);
 });

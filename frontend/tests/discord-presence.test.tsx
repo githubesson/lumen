@@ -201,3 +201,39 @@ it("shows the track's text cleaned up for display, local or remote", async () =>
     trackId: "remote-track", artist: "Duo · Trio", album: "LP",
   }));
 });
+
+it("clears the card when the queue runs out instead of showing the last track paused", async () => {
+  mock.player = { current: local, isPlaying: true };
+  const { rerender } = renderHook(() => useDiscordPresence());
+  await act(async () => {});
+  expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({ trackId: "local-track", isPlaying: true }));
+  mock.push.mockClear();
+  // The last track ends: the element fires pause, then ended; the core stops
+  // playback but keeps the track loaded.
+  act(() => mock.events.get("pause")!());
+  mock.player = { current: local, isPlaying: false };
+  rerender();
+  await act(async () => {});
+  act(() => mock.events.get("ended")!());
+  await act(async () => {});
+  expect(mock.clear).toHaveBeenCalled();
+  // The last thing Discord heard was the clear, not the paused card.
+  expect(mock.clear.mock.invocationCallOrder.at(-1)!).toBeGreaterThan(mock.push.mock.invocationCallOrder.at(-1) ?? 0);
+  // Playing it again brings the card back.
+  mock.player = { current: local, isPlaying: true };
+  act(() => mock.events.get("play")!());
+  rerender();
+  await act(async () => {});
+  expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({ trackId: "local-track", isPlaying: true }));
+});
+
+it("still shows an ordinary pause", async () => {
+  mock.player = { current: local, isPlaying: true };
+  const { rerender } = renderHook(() => useDiscordPresence());
+  await act(async () => {});
+  mock.player = { current: local, isPlaying: false };
+  rerender();
+  await act(async () => {});
+  expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({ trackId: "local-track", isPlaying: false }));
+  expect(mock.clear).not.toHaveBeenCalled();
+});
