@@ -182,10 +182,19 @@ export function BoardTrackList({
           </div>
           <span className="board-row-end">
             <span className="board-row-meta">{meta(track)}</span>
-            {!ranked && (
-              <span className="board-play" aria-hidden="true">
+            {!ranked && !track.unavailable && (
+              // A real button, as on playlist rows: the row's title button
+              // already plays from the keyboard, so this one stays out of
+              // the tab order.
+              <button
+                type="button"
+                className="board-play"
+                tabIndex={-1}
+                aria-label={`Play ${displayText(track.title)}`}
+                onClick={() => onPlay(track)}
+              >
                 <PlayIcon className="size-3.5" />
-              </span>
+              </button>
             )}
           </span>
         </li>

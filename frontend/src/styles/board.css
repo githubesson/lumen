@@ -283,6 +283,16 @@
   grid-area: 1 / 1;
   align-self: center;
 }
+/* What fades out on hover (a duration, a rank number) is still drawn, above
+   the row's click area, so it would swallow the click meant to play. Only
+   real buttons here take the pointer. */
+.board-row-end,
+.board-rank {
+  pointer-events: none;
+}
+.board-row-end button {
+  pointer-events: auto;
+}
 .board-play {
   width: 28px;
   height: 28px;
@@ -319,6 +329,9 @@ button.board-play {
     visibility: visible;
     opacity: 1;
   }
+}
+button.board-play:hover {
+  transform: scale(1.08);
 }
 button.board-play:active {
   transform: scale(0.95);
