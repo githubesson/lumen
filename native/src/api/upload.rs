@@ -224,6 +224,64 @@ pub fn upload_music(
     Ok(results.unwrap_or_default())
 }
 
+/// Upload with cancellation checked before every body read. Completed responses
+/// still return their track IDs so the caller can undo only this operation's inserts.
+pub fn upload_music_cancellable(
+    c: &Client,
+    files: &[PathBuf],
+    scope: crate::core::upload::UploadScope,
+    cancel: &super::Cancel,
+) -> ApiResult<Vec<UploadResult>> {
+    cancel.check()?;
+    let mut parts = vec![Part::text("scope", scope.as_str())];
+    parts.extend(files.iter().map(|f| Part::file("files", f)));
+    let body = Multipart::new(parts).into_body(None).map_err(|e| ApiError::local(0, e.to_string()))?;
+    let body = match body {
+        Body::Stream { content_type, len, reader } => Body::Stream {
+            content_type, len, reader: Box::new(CancellableReader { reader, cancel: cancel.clone() }),
+        },
+        body => body,
+    };
+    let reply = c.request("POST", "/api/library/upload", body, &[], &Behavior { timeout: None, ..Default::default() });
+    match reply {
+        Ok(reply) => {
+            let results: Option<Vec<UploadResult>> = reply.json()?;
+            Ok(results.unwrap_or_default())
+        }
+        Err(_) if cancel.is_cancelled() => Err(ApiError::aborted()),
+        Err(e) => Err(e),
+    }
+}
+
+struct CancellableReader {
+    reader: Box<dyn Read + Send>,
+    cancel: super::Cancel,
+}
+
+impl Read for CancellableReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.cancel.is_cancelled() {
+            // Interrupted is retried by Read helpers; use a terminal error instead.
+            return Err(io::Error::other("Upload cancelled"));
+        }
+        self.reader.read(buf)
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    #[test]
+    fn cancelling_stops_consumption_of_the_upload_body() {
+        let cancel = super::super::Cancel::new();
+        let mut reader = CancellableReader { reader: Box::new(io::Cursor::new(vec![1, 2, 3, 4])), cancel: cancel.clone() };
+        let mut bytes = [0; 2];
+        assert_eq!(reader.read(&mut bytes).unwrap(), 2);
+        cancel.cancel();
+        assert!(reader.read(&mut bytes).is_err());
+    }
+}
+
 /// Admin: replace an album's cover with an image file.
 pub fn set_album_cover(c: &Client, id: &str, image: &Path) -> ApiResult<Album> {
     send_form(c, "PUT", &format!("/api/albums/{}/cover", seg(id)), Multipart::new(vec![Part::file("file", image)]), None)
@@ -305,4 +363,9 @@ mod tests {
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("filename=\"a%22b%0Ac.png\""));
     }
+}
+
+/// Set a personal cover for an owned upload; server enforces ownership.
+pub fn set_track_cover(c: &Client, id: &str, image: &Path) -> ApiResult<super::TrackDetail> {
+    send_form(c, "PUT", &format!("/api/tracks/{}/cover", seg(id)), Multipart::new(vec![Part::file("file", image)]), None)
 }

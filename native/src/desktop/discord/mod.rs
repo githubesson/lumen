@@ -70,6 +70,7 @@ pub struct Engine {
     card: DiscordCard,
     last_activity: Option<Activity>,
     last_start_ms: f64,
+    paused_since: Option<f64>,
     /// The newest update asked for, confirmed by Discord or not. A card
     /// change or a reconnect redraws this one.
     requested: Option<(Activity, f64)>,
@@ -101,6 +102,7 @@ impl Engine {
             card: DiscordCard::default(),
             last_activity: None,
             last_start_ms: 0.0,
+            paused_since: None,
             requested: None,
             retry_after: 0.0,
             failures: 0,
@@ -281,6 +283,8 @@ impl Engine {
 
     /// `pushDiscordActivity`.
     pub fn push(&mut self, payload: Activity, now: f64) -> Result<(), String> {
+        if payload.is_playing { self.paused_since = None; }
+        else if self.paused_since.is_none() { self.paused_since = Some(now); }
         // A newer update supersedes one waiting to be retried.
         self.cancel_retry();
         self.requested = Some((payload.clone(), now));
@@ -331,6 +335,7 @@ impl Engine {
         // Forgotten first: a disconnect during the clear mustn't queue it to
         // be restored after the reconnect backoff.
         self.last_activity = None;
+        self.paused_since = None;
         self.last_start_ms = 0.0;
         self.requested = None;
     }
@@ -358,6 +363,10 @@ impl Engine {
 
     /// The retry timer, and a look at the connection for pings or a disconnect.
     pub fn tick(&mut self, now: f64) {
+        if self.paused_since.is_some_and(|at| now - at >= 600_000.0) {
+            self.clear(now);
+            return;
+        }
         if let Some(client) = self.client.as_mut()
             && let Err(RpcError::Closed(_)) = client.poll()
         {

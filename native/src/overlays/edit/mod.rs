@@ -35,6 +35,7 @@ pub struct State {
     pub track: Option<TrackDetail>,
     pub load_error: Option<String>,
     pub track_form: TrackForm,
+    pub track_cover: Option<std::path::PathBuf>,
     // Edit album
     pub album: Option<Album>,
     pub album_form: AlbumForm,

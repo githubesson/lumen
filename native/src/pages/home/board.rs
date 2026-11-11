@@ -16,7 +16,7 @@ use crate::ui::cards::{Action, disc, playlist_subtitle, top_artist_glyph, top_ar
 use crate::ui::tooltip::TipExt;
 use super::logic::TopArtistAction;
 use crate::ui::ShadowMd;
-use crate::format::{clean_text, display_text_nullish};
+use crate::format::clean_text;
 
 /// Row art is 40-48px; the server's next size up covers a 2x screen.
 pub const ROW_ART_SIZE: u32 = 128;
@@ -279,7 +279,9 @@ pub fn track_row(app: &App, t: &Theme, key: String, track: &TrackListItem, o: Tr
         r = r.child(cover_art(t, &app.images, Some(&track.cover_at(Some(ROW_ART_SIZE))), &label, 40.0, 40.0, t.radius_md()));
     }
     let title = line(clean_text(Some(&track.title)), font(title_size(t), 500.0), t.c.foreground);
-    r = r.child(row_text(t, title, &display_text_nullish(track.artist.as_deref(), "Unknown artist")));
+    r = r.child(col().grow(1.0).min_w(0.0).gap(1.0)
+        .child(lh(title, title_size(t) * 1.45))
+        .child(lh(crate::ui::entity_links::artists(track, font(12.0, 400.0), t.c.muted_foreground), 17.4)));
     let meta = text(o.meta.clone()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground);
     let mut end = el().h_full().items_center().justify_end();
     if o.ranked || unavailable {

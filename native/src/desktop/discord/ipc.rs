@@ -42,8 +42,9 @@ fn candidates(id: u8) -> Vec<std::path::PathBuf> {
         let base = base.trim_end_matches('/').to_string();
         let mut paths = vec![format!("{base}/discord-ipc-{id}").into()];
         if let Some(run) = runtime {
-            paths.push(format!("{run}/app/com.discordapp.Discord/discord-ipc-{id}").into());
-            paths.push(format!("{run}/snap.discord/discord-ipc-{id}").into());
+            for sandbox in ["app/com.discordapp.Discord", "app/com.discordapp.DiscordCanary", "app/com.discordapp.DiscordPTB", "app/dev.vencord.Vesktop", "app/xyz.armcord.ArmCord", "snap.discord", "snap.discord-canary"] {
+                paths.push(format!("{run}/{sandbox}/discord-ipc-{id}").into());
+            }
         }
         paths
     }
@@ -215,11 +216,16 @@ impl Conn {
 
 impl Rpc for Conn {
     fn set_activity(&mut self, pid: u32, activity: Option<Value>) -> Result<(), RpcError> {
+        let clearing = activity.is_none();
         let args = match activity {
             Some(activity) => json!({ "pid": pid, "activity": activity }),
             None => json!({ "pid": pid }),
         };
-        self.request("SET_ACTIVITY", args).map(|_| ())
+        let result = self.request("SET_ACTIVITY", args).map(|_| ());
+        if std::env::var_os("LUMEN_DISCORD_TRACE").is_some() {
+            eprintln!("[discord] {} {}", if clearing { "clear" } else { "activity" }, if result.is_ok() { "accepted" } else { "failed" });
+        }
+        result
     }
 
     fn poll(&mut self) -> Result<(), RpcError> {

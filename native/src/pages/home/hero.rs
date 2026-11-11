@@ -43,6 +43,7 @@ fn title_height(s: &str, width: f32) -> f32 {
 
 /// What the hero's text says.
 struct Body {
+    track: Option<TrackListItem>,
     eyebrow: Option<String>,
     /// None: the loading skeleton.
     title: Option<String>,
@@ -128,7 +129,12 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
         Some(title) => {
             let w = if narrow { l.body_w } else { crate::ui::balanced_width(title, title_style(), l.body_w) };
             let h = title_height(title, l.body_w);
-            board::lh(text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w), h).mb(6.0)
+            {
+                let title = board::lh(text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w), h).mb(6.0);
+                if let Some(track) = b.track.clone() {
+                    title.cursor(rune::Cursor::Pointer).role("link").on_press(move |app: &mut App| crate::ui::entity_links::album(app, track.clone()))
+                } else { title }
+            }
         }
         // A `12ch` bar on the title's line.
         None => skeleton_line_w(t, 24.0, 27.6, crate::ui::ch(12.0, title_style())).mb(6.0),
@@ -147,6 +153,9 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
                 m = m.child(dot(t));
             }
             let mut p = text(part.clone()).font(font(14.0, 400.0)).color(t.c.muted_foreground);
+            if n == 0 {
+                if let Some(track) = &b.track { p = crate::ui::entity_links::artists(track, font(14.0, 400.0), t.c.muted_foreground); }
+            }
             if b.status_meta {
                 p = p.role("status");
             }
@@ -196,6 +205,7 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
     }
     if Source::list(&st.recent).loading || Source::list(&st.tracks).loading {
         let body = Body {
+            track: None,
             eyebrow: Some(p.title.clone().unwrap_or_else(|| "Jump back in".into())),
             title: None,
             meta: vec!["Loading your music…".into()],
@@ -217,6 +227,7 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
     }
     let body = if st.recent.error.is_some() || st.tracks.error.is_some() {
         Body {
+            track: None,
             eyebrow: None,
             title: Some("Your library".into()),
             meta: vec![],
@@ -227,6 +238,7 @@ pub fn resume(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
     } else {
         let name = app.me().map(|m| m.username.clone()).unwrap_or_default();
         Body {
+            track: None,
             eyebrow: Some(format!("Welcome, {name}")),
             title: Some("Your library is quiet".into()),
             meta: vec!["Nothing ingested yet".into()],
@@ -281,6 +293,7 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     }
     let title_text = clean_text(Some(track.album_title.as_deref().unwrap_or(&track.title)));
     let body = Body {
+            track: Some(track.clone()),
         eyebrow: Some(p.title.clone().unwrap_or_else(|| (if from_recent { "Jump back in" } else { "From your library" }).into())),
         title: Some(title_text),
         meta,
@@ -305,6 +318,9 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let label = track.album_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| track.title.clone());
     let side = l.art.unwrap_or(ART);
     let art = cover_art(t, &app.images, Some(&track.cover_at(None)), &label, side, side, t.radius_lg());
+    let tr = track.clone();
+    let art = art.cursor(rune::Cursor::Pointer).role("link").label(format!("Open {label}"))
+        .on_press(move |app: &mut App| crate::ui::entity_links::album(app, tr.clone()));
     let art = if l.stacked && narrow { el().w_full().center().child(art) } else { art };
     let head = head_view(Some(art), body_view(t, body, &l, narrow), &l);
     let mut hero = shell(t, &key, w, h);

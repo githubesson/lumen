@@ -41,6 +41,8 @@ pub fn is_uploadable_file(name: &str) -> bool {
 
 /// The server's cap on one upload request, files and form together.
 pub const UPLOAD_REQUEST_MAX_BYTES: u64 = 512 << 20;
+/// Keep grouped requests below common proxy limits; larger individual files go alone.
+pub const UPLOAD_BATCH_MAX_BYTES: u64 = 90 << 20;
 
 // Room for the scope field and the closing boundary, and for each file's
 // part headers, so a planned batch never meets the cap.
@@ -64,6 +66,7 @@ pub fn plan_upload_batches<T: Clone>(
     max_request_bytes: u64,
 ) -> UploadBatchPlan<T> {
     let budget = max_request_bytes.saturating_sub(UPLOAD_FORM_OVERHEAD_BYTES);
+    let group_budget = max_request_bytes.min(UPLOAD_BATCH_MAX_BYTES).saturating_sub(UPLOAD_FORM_OVERHEAD_BYTES);
     let mut batches = Vec::new();
     let mut too_large = Vec::new();
     let mut batch: Vec<T> = Vec::new();
@@ -82,7 +85,13 @@ pub fn plan_upload_batches<T: Clone>(
             too_large.push(file.clone());
             continue;
         }
-        if used + cost > budget && !batch.is_empty() {
+        if cost > group_budget {
+            if !batch.is_empty() { batches.push(std::mem::take(&mut batch)); }
+            used = 0;
+            batches.push(vec![file.clone()]);
+            continue;
+        }
+        if used + cost > group_budget && !batch.is_empty() {
             batches.push(std::mem::take(&mut batch));
             used = 0;
         }
@@ -235,7 +244,7 @@ mod tests {
         assert_eq!(plan(&[], max), (vec![], vec![]));
         assert_eq!(
             plan(&[("a", Some(300 * MIB)), ("b", Some(300 * MIB)), ("c", Some(100 * MIB)), ("d", Some(400 * MIB))], max),
-            (vec![vec!["a"], vec!["b", "c"], vec!["d"]], vec![])
+            (vec![vec!["a"], vec!["b"], vec!["c"], vec!["d"]], vec![])
         );
         assert_eq!(plan(&[("a", Some(256 * MIB)), ("b", Some(256 * MIB))], max).0, vec![vec!["a"], vec!["b"]]);
         assert_eq!(plan(&[("whole", Some(UPLOAD_REQUEST_MAX_BYTES))], max), (vec![], vec!["whole"]));
@@ -255,5 +264,17 @@ mod tests {
         let refused = too_large_upload_result("huge.flac");
         assert_eq!(upload_result_status(&refused), UploadStatus::Failed);
         assert_eq!(upload_result_detail(&refused), "file too large");
+    }
+}
+
+#[cfg(test)]
+mod proxy_batch_tests {
+    use super::*;
+    #[test]
+    fn groups_below_proxy_limit_but_keeps_large_single_files() {
+        let sizes = [60 << 20, 60 << 20, 120 << 20, 600 << 20];
+        let plan = plan_upload_batches(&sizes, |n| Some(*n), UPLOAD_REQUEST_MAX_BYTES);
+        assert_eq!(plan.batches, vec![vec![60 << 20], vec![60 << 20], vec![120 << 20]]);
+        assert_eq!(plan.too_large, vec![600 << 20]);
     }
 }

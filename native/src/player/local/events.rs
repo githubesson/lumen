@@ -39,6 +39,7 @@ impl LocalPlayer {
                     self.start_playback();
                 } else {
                     self.advance(0.0);
+                    if !self.is_playing { self.ended_track = self.current.as_ref().map(|t| t.id.clone()); }
                 }
             }
             AdapterEvent::Seeked => {
@@ -46,6 +47,7 @@ impl LocalPlayer {
                 self.publish_hint = true;
             }
             AdapterEvent::Play => {
+                self.ended_track = None;
                 self.listening_tick = Some(self.clock.mono());
                 self.is_playing = true;
             }

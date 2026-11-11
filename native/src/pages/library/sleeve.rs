@@ -78,15 +78,23 @@ fn credits_line(t: &Theme, credits: &[AlbumCredit], max: f32) -> El {
         }
         let start = s.len();
         s.push_str(&c.name);
-        if let Some(id) = &c.artist_id {
-            links.push(Link::new(start..s.len(), id.clone()).hover(LinkPaint::new().underline(t.c.foreground)));
-        }
+        let target = c.artist_id.as_ref().map(|id| format!("local:{id}")).unwrap_or_else(|| format!("name:{}", c.name));
+        links.push(Link::new(start..s.len(), target).hover(LinkPaint::new().underline(t.c.foreground)));
     }
     let mut e = text(s).font(font(14.0, 500.0)).color(t.c.foreground).wrap_anywhere().max_w(max);
     for l in links {
         e = e.link(l);
     }
-    e.on_link(|app: &mut App, id: &str, _tx: &mut rune::Tx| super::artist_link(app, id))
+    e.on_link(|app: &mut App, target: &str, _tx: &mut rune::Tx| {
+        if let Some(id) = target.strip_prefix("local:") { super::artist_link(app, id); return; }
+        let name = target.strip_prefix("name:").unwrap_or(target);
+        let href = app.pages.library.detail.tidal_album.as_ref()
+            .filter(|a| a.artist.as_deref().is_some_and(|artist| artist.eq_ignore_ascii_case(name)))
+            .and_then(|a| a.artist_id.as_ref())
+            .map(|id| format!("/library?tidalArtist={}&artistName={}", urlencoding::encode(id), urlencoding::encode(name)))
+            .unwrap_or_else(|| crate::ui::entity_links::artist_search(name));
+        app.navigate_to(&href);
+    })
 }
 
 /// `SleevePlay`: Play all, and the player's shuffle beside it.

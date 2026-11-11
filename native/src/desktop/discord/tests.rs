@@ -315,3 +315,16 @@ fn turning_presence_off_clears_and_disconnects() {
     assert!(e.push(song("Song"), 0.0).is_err());
     assert_eq!((fake.log().logins, e.next_wake()), (1, None));
 }
+
+#[test]
+fn paused_card_expires_after_ten_minutes_and_play_restores_it() {
+    let fake = Fake::default();
+    let mut e = engine(&fake, Some(default_card()));
+    e.push(Activity { is_playing: false, ..track("t1", "Song") }, 0.0).unwrap();
+    e.tick(599_999.0);
+    assert_eq!(fake.log().clears, 0);
+    e.tick(600_000.0);
+    assert_eq!(fake.log().clears, 1);
+    e.push(track("t1", "Song"), 601_000.0).unwrap();
+    assert_eq!(fake.log().requests.len(), 2);
+}

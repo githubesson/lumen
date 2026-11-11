@@ -193,7 +193,11 @@ pub fn probe_stream(client: &Client, url: &str, first_byte: bool) -> StreamProbe
 pub fn probe_from_status(status: u16, text: &str) -> StreamProbe {
     let readable = if text.chars().count() <= 300 && !text.starts_with('<') && !text.contains('\n') { text } else { "" };
     let reason = if !readable.is_empty() && (status == 502 || status == 503) { detail_line(Some(readable)) } else { None };
-    let answer = if readable.is_empty() { format!("HTTP {status}") } else { format!("HTTP {status} · {readable}") };
+    let lower = text.trim_start().to_ascii_lowercase();
+    let answer = if lower.starts_with("<") {
+        let source = if lower.contains("cloudflare") { "HTML error page mentioning Cloudflare" } else { "HTML error page; possibly from a proxy" };
+        format!("HTTP {status} · {source}")
+    } else if readable.is_empty() { format!("HTTP {status}") } else { format!("HTTP {status} · {readable}") };
     StreamProbe { reason, answer: detail_line(Some(&answer)).unwrap_or_default() }
 }
 
@@ -232,7 +236,7 @@ mod tests {
         let p = probe_from_status(503, "TIDAL refused this track in your region");
         assert_eq!(p.reason.as_deref(), Some("TIDAL refused this track in your region"));
         let p = probe_from_status(502, "<html>bad gateway</html>");
-        assert_eq!(p, StreamProbe { reason: None, answer: "HTTP 502".into() });
+        assert_eq!(p, StreamProbe { reason: None, answer: "HTTP 502 · HTML error page; possibly from a proxy".into() });
     }
 
     #[test]

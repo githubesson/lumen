@@ -486,7 +486,7 @@ pub fn error_banner(t: &Theme, message: &str) -> El {
 /// 20.3 px lines, where rune rounds the box up).
 pub fn error_banner_in(t: &Theme, message: &str, width: Option<f32>) -> El {
     let style = font(14.0, 400.0);
-    let mut msg = text(message).font(style).color(t.c.destructive).wrap();
+    let mut msg = text(message).font(style).color(t.c.destructive).w_full().min_w(0.0).wrap();
     if let Some(w) = width {
         msg = msg.h(crate::ui::css_text_h(message, style, Some(w - 26.0)));
     }

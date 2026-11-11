@@ -82,7 +82,30 @@ fn save(app: &mut App) {
         return;
     }
     let patch = build_track_patch(track, &s.track_form.values());
-    super::submit(app, move |client| crate::api::library::update_track(client, &id, &patch).map(drop));
+    let cover = s.track_cover.clone();
+    let admin = app.me().is_some_and(|m| m.is_admin());
+    super::submit(app, move |client| {
+        let updated = crate::api::library::update_track(client, &id, &patch)?;
+        if let Some(path) = cover {
+            let result = if admin && updated.owned != Some(true) {
+                match updated.album_id {
+                    Some(album) => crate::api::upload::set_album_cover(client, &album, &path).map(drop),
+                    None => Err(crate::api::ApiError::local(0, "Add an album before setting shared cover art.")),
+                }
+            } else { crate::api::upload::set_track_cover(client, &id, &path).map(drop) };
+            result.map_err(|e| crate::api::ApiError::local(0, format!("Details saved, but cover upload failed: {e}")))?;
+        }
+        Ok(())
+    });
+}
+
+fn pick_cover(app: &mut App, tx: &mut rune::Tx) {
+    if app.overlays.edit.busy { return; }
+    let nonce = app.overlays.edit.nonce;
+    tx.open_file(rune::FileDialogOptions { title: "Cover art".into(), ..Default::default() }.filter("Images", &["jpg", "jpeg", "png", "webp"]), move |app: &mut App, result, _| {
+        if app.overlays.edit.nonce != nonce { return; }
+        if let Ok(Some(path)) = result { app.overlays.edit.track_cover = Some(path); }
+    });
 }
 
 pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
@@ -135,6 +158,11 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
                         None,
                     ),
                 ]));
+            let cover_label = s.track_cover.as_ref().map(|p| format!("Cover: {}", p.file_name().unwrap_or_default().to_string_lossy())).unwrap_or_else(|| "Choose cover art".into());
+            form_body = form_body.child(crate::ui::Btn::new("edit-track-cover", cover_label).ghost().disabled(s.busy).build(t).on_press_tx(pick_cover));
+            if s.track_cover.is_some() {
+                form_body = form_body.child(crate::ui::Btn::new("edit-track-cover-clear", "Clear cover selection").ghost().disabled(s.busy).build(t).on_press(|app: &mut App| app.overlays.edit.track_cover = None));
+            }
             if let Some(e) = &s.error {
                 form_body = form_body.child(error_banner(t, e));
             }

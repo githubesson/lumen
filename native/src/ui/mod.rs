@@ -1,6 +1,7 @@
 //! Shared building blocks: text styles, and the web app's small components
 //! (`.iconbtn`, `.btn`, `kbd`, `CoverArt`, …) built from rune elements with
 //! the same box metrics as their CSS.
+pub mod entity_links;
 pub mod blocks;
 pub mod cards;
 pub mod chart;

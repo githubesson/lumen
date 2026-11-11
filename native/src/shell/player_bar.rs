@@ -152,7 +152,17 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
     let d = display::display(app);
     match &d.error {
         Some(summary) => error::line_button(app, t, summary, style, underline_at),
-        None => line(d.artist.clone(), style, t.c.muted_foreground).tip_truncated("np-artist", &d.artist, style),
+        None => {
+            if let Some(track) = d.current.filter(|_| !app.ui.player.mini.on) {
+                let mut parts = row().min_w(0.0).child(ui::entity_links::artists(track, style, t.c.muted_foreground));
+                if let Some(album) = &track.album_title {
+                    let tr = track.clone();
+                    parts = parts.child(line(format!(" · {album}"), style, t.c.muted_foreground).cursor(Cursor::Pointer).role("link")
+                        .on_press(move |app: &mut App| ui::entity_links::album(app, tr.clone())));
+                }
+                parts
+            } else { line(d.artist.clone(), style, t.c.muted_foreground).tip_truncated("np-artist", &d.artist, style) }
+        },
     }
 }
 
@@ -180,7 +190,12 @@ fn now_playing(app: &App, t: &Theme, bp: Bp) -> El {
         .h(art_size)
         .gap(2.0)
         .justify_center()
-        .child(line(d.title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated("np-title", &d.title, font(14.0, 500.0)).h(20.3))
+        .child({
+            let title = line(d.title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated("np-title", &d.title, font(14.0, 500.0)).h(20.3);
+            if let Some(track) = d.current.cloned() {
+                title.cursor(Cursor::Pointer).role("link").on_press(move |app: &mut App| ui::entity_links::album(app, track.clone()))
+            } else { title }
+        })
         .child(el().h(17.4).min_w(0.0).child(np_artist(app, t, font(12.0, 400.0), error::underline_at(12.0, 17.4))));
     let np = row()
         .key("np")
