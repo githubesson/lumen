@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useState } from "react";
-import { useInRouterContext, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useInRouterContext } from "react-router-dom";
 import type { TrackListItem } from "@music-library/core";
-import { artistNames, trackAlbumHref, trackArtistHref } from "../../lib/nowPlayingLinks";
+import { trackAlbumHref } from "../../lib/nowPlayingLinks";
+import { ArtistLinks, PageLink } from "../EntityLinks";
 import { trackCoverUrl } from "../../api";
 import { displayText } from "../../lib/format";
 import CoverArt from "../CoverArt";
@@ -32,7 +33,6 @@ export default function NowPlaying({
   links?: boolean;
 }) {
   const linked = useInRouterContext() && links && !!track && !error;
-  const names = linked ? artistNames(track.artist) : [];
   const coverSrc = track ? trackCoverUrl(track) : null;
   // Held in state, as in DevicePickerButton: the popover reads them during
   // render.
@@ -103,16 +103,7 @@ export default function NowPlaying({
             {!error && !linked && artist}
             {linked && (
               <>
-                {names.length > 0
-                  ? names.map((name, i) => (
-                      <Fragment key={name + i}>
-                        {i > 0 && ", "}
-                        <PageLink label={`Go to ${name}`} href={() => trackArtistHref(track, name)}>
-                          {name}
-                        </PageLink>
-                      </Fragment>
-                    ))
-                  : "—"}
+                <ArtistLinks track={track} fallback="—" />
                 {track.album_title && (
                   <>
                     {" · "}
@@ -137,26 +128,3 @@ export default function NowPlaying({
   );
 }
 
-/** Text in the bar that opens a page, looked up when clicked. */
-function PageLink({
-  label,
-  href,
-  children,
-}: {
-  label: string;
-  href: () => Promise<string | null>;
-  children: React.ReactNode;
-}) {
-  const navigate = useNavigate();
-  return (
-    <button
-      type="button"
-      className="np-link"
-      title={label}
-      // A lookup that fails or finds nothing leaves the page as it is.
-      onClick={() => void href().then((to) => to && navigate(to)).catch(() => {})}
-    >
-      {children}
-    </button>
-  );
-}

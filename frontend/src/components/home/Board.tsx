@@ -1,3 +1,4 @@
+import { ArtistLinks } from "../EntityLinks";
 import type { CSSProperties, MouseEventHandler, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ListMusic as QueueListIcon, Play as PlayIcon } from "lucide-react";
@@ -178,7 +179,7 @@ export function BoardTrackList({
               <span className="sr-only">Play</span>{" "}
               {displayText(track.title)}
             </button>
-            <div className="card-sub">{displayText(track.artist, "Unknown artist")}</div>
+            <div className="card-sub"><ArtistLinks track={track} /></div>
           </div>
           <span className="board-row-end">
             <span className="board-row-meta">{meta(track)}</span>

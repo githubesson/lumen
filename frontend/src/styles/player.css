@@ -142,8 +142,8 @@
   text-overflow: ellipsis;
   cursor: pointer;
 }
-/* Title, artists and album in the bar open their pages; text until hovered. */
-.np-link {
+/* Titles, artists, albums and covers that open their pages; text until hovered. */
+.entity-link {
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -152,8 +152,22 @@
   font: inherit;
   cursor: pointer;
 }
-.np-link:hover,
-.np-link:focus-visible {
+/* Over a row's stretched click area, so they get the click, not the row. */
+.board-row .entity-link {
+  position: relative;
+  z-index: 1;
+}
+/* A cover that opens its album: the cover itself, no underline. */
+.entity-link.hero-art-link {
+  display: block;
+  border-radius: var(--radius-lg);
+}
+.entity-link.hero-art-link:hover {
+  text-decoration: none;
+  filter: brightness(1.06);
+}
+.entity-link:hover,
+.entity-link:focus-visible {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
