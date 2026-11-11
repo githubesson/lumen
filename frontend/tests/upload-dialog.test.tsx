@@ -121,3 +121,33 @@ it("walks a dropped folder, nested ones included", async () => {
   expect(await screen.findByText("2 files selected")).toBeTruthy();
   expect(screen.getByText("Mix/Disc 2/b.opus")).toBeTruthy();
 });
+
+it("explains a proxy's 413 instead of showing its HTML page", async () => {
+  const { ApiError } = await import("../../core/src/api-transport");
+  mock.uploadMusic.mockRejectedValueOnce(new ApiError(413, "<html><title>413 Payload Too Large</title></html>"));
+  await pick([file("one.flac", 1 * MB)]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect(screen.getByText(/proxy in front of it, like Cloudflare/)).toBeTruthy();
+  expect(screen.queryByText(/<html>/)).toBeNull();
+});
+
+it("applies details typed before uploading to what the upload adds", async () => {
+  mock.uploadMusic.mockImplementation(async (files: File[]) =>
+    files.map((f, i) => ({ file: f.name, inserted: true, track_id: `t${i}` })),
+  );
+  (mock as Record<string, unknown>).updateTrack = vi.fn(async (id: string) => ({ id, album_id: "al" }));
+  await pick([file("Zhnoi - 01 cute girls.flac")]);
+  fireEvent.click(screen.getByRole("switch"));
+  fireEvent.change(screen.getByLabelText("Title for Zhnoi - 01 cute girls.flac"), { target: { value: "cute girls doing cute things" } });
+  fireEvent.change(screen.getByLabelText("Artists for Zhnoi - 01 cute girls.flac"), { target: { value: "Zhnoi" } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect((mock as unknown as { updateTrack: ReturnType<typeof vi.fn> }).updateTrack).toHaveBeenCalledWith("t0", {
+    title: "cute girls doing cute things",
+    artists: ["Zhnoi"],
+  });
+  expect(screen.getByText("Added")).toBeTruthy();
+});

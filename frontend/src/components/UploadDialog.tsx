@@ -1,10 +1,13 @@
 import { useRef, useState } from "react";
-import { Upload as ArrowUpTrayIcon, Check as CheckIcon, FolderOpen as FolderIcon } from "lucide-react";
-import { api, errorMessage, type UploadResult } from "../api";
+import { Upload as ArrowUpTrayIcon, Check as CheckIcon, FolderOpen as FolderIcon, Image as PhotoIcon } from "lucide-react";
+import { api, type UploadResult } from "../api";
 import { Button } from "./Button";
 import DialogFooter from "./DialogFooter";
 import ErrorBanner from "./ErrorBanner";
 import Fieldset from "./Fieldset";
+import { Field, FieldRow, TextInput } from "./Field";
+import Switch from "./Switch";
+import { applyUploadEdits, type UploadEdits } from "../lib/uploadEdits";
 import RadioCardOption from "./RadioCardOption";
 import { DialogShell } from "./DialogShell";
 import { displayPath, filesFromDrop, mergeFiles } from "../lib/droppedFiles";
@@ -20,6 +23,7 @@ import {
   uploadAddedAny,
   uploadResultDetail,
   uploadResultStatus,
+  uploadErrorMessage,
   uploadScope,
   type UploadScope,
 } from "@music-library/core/upload";
@@ -53,6 +57,19 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const [progress, setProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
+  const coverRef = useRef<HTMLInputElement>(null);
+  // Details typed in before uploading, applied to the tracks as they're added.
+  const [editing, setEditing] = useState(false);
+  const [perFile, setPerFile] = useState<Map<File, { title: string; artists: string }>>(new Map());
+  const [album, setAlbum] = useState("");
+  const [albumArtist, setAlbumArtist] = useState("");
+  const [cover, setCover] = useState<File | null>(null);
+  const setFileField = (file: File, key: "title" | "artists", value: string) =>
+    setPerFile((prev) => {
+      const next = new Map(prev);
+      next.set(file, { title: "", artists: "", ...prev.get(file), [key]: value });
+      return next;
+    });
 
   // Picks and drops add to the selection, so files and folders can be mixed.
   const accept = (list: FileList | File[] | null) => {
@@ -80,19 +97,26 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     const { batches, tooLarge } = planUploadBatches(files, (f) => f.size);
     const uploaded: UploadResult[] = [];
     let sent = 0;
+    const scopeSent = uploadScope(isAdmin, scope);
+    const edits: UploadEdits | null = editing
+      ? { perFile: files.map((f) => perFile.get(f) ?? { title: "", artists: "" }), album, albumArtist, cover }
+      : null;
     setProgress(0);
     try {
       for (const batch of batches) {
         // Only admins may upload to the shared library; the choice is hidden
         // from everyone else.
-        uploaded.push(...(await api.uploadMusic(batch, uploadScope(isAdmin, scope))));
+        const results = await api.uploadMusic(batch, scopeSent);
+        uploaded.push(
+          ...(edits ? await applyUploadEdits(results, batch.map((f) => files.indexOf(f)), edits, scopeSent) : results),
+        );
         sent += batch.length;
         setProgress(sent);
       }
       setResults([...uploaded, ...tooLarge.map((f) => tooLargeUploadResult(f.name))]);
       onComplete?.();
     } catch (err) {
-      const message = errorMessage(err, "Upload failed.");
+      const message = uploadErrorMessage(err);
       setError(message);
       // Nothing went in: the selection stays, so Upload tries again. Once a
       // batch has, its results show, and the files after the failed request
@@ -280,6 +304,71 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
               {pluralize(leftOut.length, "file")} left out, not a format the
               server can add: {leftOut.join(", ")}
             </p>
+          )}
+
+          {files.length > 0 && !results && (
+            <div style={{ marginTop: 12 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+                <Switch checked={editing} onChange={setEditing} aria-labelledby="upload-edit-label" />
+                <span id="upload-edit-label">Edit details before uploading</span>
+              </label>
+              {editing && (
+                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                  <p style={{ margin: 0, fontSize: 12, color: "var(--muted-foreground)" }}>
+                    Blank fields keep what the file's own tags say. Applied as each track is added;
+                    tracks already in the library aren't changed.
+                  </p>
+                  <FieldRow>
+                    <Field label="Album (all files)">
+                      <TextInput value={album} onChange={(e) => setAlbum(e.target.value)} />
+                    </Field>
+                    <Field label="Album artist">
+                      <TextInput value={albumArtist} onChange={(e) => setAlbumArtist(e.target.value)} />
+                    </Field>
+                  </FieldRow>
+                  <Field label="Cover art (all files)" hint={scope === "global" && isAdmin ? "Becomes the album's cover." : "Only you see it."}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <Button variant="ghost" onClick={() => coverRef.current?.click()} disabled={busy}>
+                        <PhotoIcon className="size-3.5" />
+                        {cover ? "Change image" : "Choose image"}
+                      </Button>
+                      {cover && <span className="mono" style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{cover.name}</span>}
+                      <input
+                        ref={coverRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        aria-label="Cover art for all files"
+                        hidden
+                        onChange={(e) => setCover(e.currentTarget.files?.[0] ?? null)}
+                      />
+                    </div>
+                  </Field>
+                  <div style={{ maxHeight: 240, overflowY: "auto", display: "grid", gap: 8 }}>
+                    {files.map((f, i) => (
+                      <div key={i} style={{ display: "grid", gap: 4 }}>
+                        <span className="mono" style={{ fontSize: 12, color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {displayPath(f)}
+                        </span>
+                        <FieldRow>
+                          <TextInput
+                            aria-label={`Title for ${displayPath(f)}`}
+                            placeholder="Title (from tags)"
+                            value={perFile.get(f)?.title ?? ""}
+                            onChange={(e) => setFileField(f, "title", e.target.value)}
+                          />
+                          <TextInput
+                            aria-label={`Artists for ${displayPath(f)}`}
+                            placeholder="Artists, comma-separated (from tags)"
+                            value={perFile.get(f)?.artists ?? ""}
+                            onChange={(e) => setFileField(f, "artists", e.target.value)}
+                          />
+                        </FieldRow>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {results && (

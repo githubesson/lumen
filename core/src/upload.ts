@@ -3,7 +3,7 @@
  * the web dialog and the phone's upload screen.
  */
 
-import type { UploadResult } from "./api";
+import { ApiError, errorMessage, type UploadResult } from "./api";
 
 export type UploadScope = "personal" | "global";
 
@@ -43,6 +43,14 @@ export function isUploadableFile(name: string): boolean {
  */
 export const UPLOAD_REQUEST_MAX_BYTES = 512 << 20;
 
+/**
+ * How much to group into one request. Proxies in front of a server cap
+ * bodies below the server's own limit (Cloudflare's free plan: 100 MB, as
+ * 413 Payload Too Large), so files are grouped under this; a bigger file
+ * still goes alone, up to the server's cap.
+ */
+export const UPLOAD_BATCH_MAX_BYTES = 90 << 20;
+
 // Room for the scope field and the closing boundary, and for each file's part
 // headers (its name included), so a planned batch never meets the cap.
 const UPLOAD_FORM_OVERHEAD_BYTES = 64 << 10;
@@ -66,8 +74,10 @@ export function planUploadBatches<T>(
   files: readonly T[],
   sizeOf: (file: T) => number | null | undefined,
   maxRequestBytes: number = UPLOAD_REQUEST_MAX_BYTES,
+  batchBytes: number = UPLOAD_BATCH_MAX_BYTES,
 ): UploadBatchPlan<T> {
   const budget = maxRequestBytes - UPLOAD_FORM_OVERHEAD_BYTES;
+  const groupBudget = Math.min(batchBytes, maxRequestBytes) - UPLOAD_FORM_OVERHEAD_BYTES;
   const batches: T[][] = [];
   const tooLarge: T[] = [];
   let batch: T[] = [];
@@ -89,12 +99,26 @@ export function planUploadBatches<T>(
       tooLarge.push(file);
       continue;
     }
-    if (used + cost > budget) flush();
+    if (cost > groupBudget) {
+      // Too big to group, small enough for the server: on its own.
+      flush();
+      batches.push([file]);
+      continue;
+    }
+    if (used + cost > groupBudget) flush();
     batch.push(file);
     used += cost;
   }
   flush();
   return { batches, tooLarge };
+}
+
+/** An upload request's error, readable: a 413 is usually a proxy's body cap. */
+export function uploadErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 413) {
+    return "The server (or a proxy in front of it, like Cloudflare) refused a request this large.";
+  }
+  return errorMessage(err, "Upload failed.");
 }
 
 /** The result row for a file refused before sending, worded as the server words it. */

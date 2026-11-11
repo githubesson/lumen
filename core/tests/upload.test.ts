@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UploadResult } from "../src/api";
 import {
+  UPLOAD_BATCH_MAX_BYTES,
   UPLOAD_REQUEST_MAX_BYTES,
   defaultUploadScope,
   isUploadableFile,
@@ -108,8 +109,9 @@ describe("isUploadableFile", () => {
 describe("planUploadBatches", () => {
   const MiB = 1 << 20;
   const file = (name: string, size?: number) => ({ name, size });
-  const plan = (files: { name: string; size?: number }[], max?: number) => {
-    const { batches, tooLarge } = planUploadBatches(files, (f) => f.size, max);
+  // These cases are about the server's cap, so group up to it.
+  const plan = (files: { name: string; size?: number }[], max?: number, batch = max ?? UPLOAD_REQUEST_MAX_BYTES) => {
+    const { batches, tooLarge } = planUploadBatches(files, (f) => f.size, max, batch);
     return {
       batches: batches.map((batch) => batch.map((f) => f.name)),
       tooLarge: tooLarge.map((f) => f.name),
@@ -145,6 +147,18 @@ describe("planUploadBatches", () => {
       batches: [["a"], ["unknown"], ["b"]],
       tooLarge: [],
     });
+  });
+
+  it("groups under a proxy's body cap by default, and sends a bigger file alone", () => {
+    const { batches, tooLarge } = planUploadBatches(
+      [file("a", 40 * MiB), file("b", 40 * MiB), file("c", 40 * MiB), file("big", 200 * MiB), file("d", 1 * MiB)],
+      (f) => f.size,
+    );
+    expect(batches.map((b) => b.map((f) => f.name))).toEqual([["a", "b"], ["c"], ["big"], ["d"]]);
+    expect(tooLarge).toEqual([]);
+    for (const b of batches.filter((b) => b.length > 1)) {
+      expect(b.reduce((n, f) => n + (f.size ?? 0), 0)).toBeLessThan(UPLOAD_BATCH_MAX_BYTES);
+    }
   });
 
   it("takes a smaller cap", () => {
