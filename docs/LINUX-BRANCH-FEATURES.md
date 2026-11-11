@@ -46,6 +46,7 @@ automated tests.
 | 8 | Click title, artist or album in the player bar | Web + desktop | No | Built, tested by Claude; waiting for Bee |
 | 9 | Cancel an upload, with nothing left behind | Server + web + desktop | Partly (see below) | Built, tested on a local server; waiting for Bee |
 | 10 | Home: the round play button on song rows works | Web + desktop | No | Built, tested by Claude; waiting for Bee |
+| 11 | Home: Jump back in's title, cover and artists, and song rows' artists, open their pages | Web + desktop | No | Built, tested by Claude; waiting for Bee |
 
 ### 1. Discord status on Linux
 
@@ -301,6 +302,30 @@ duration before the fix. After it, clicking the button started the song
 (player bar "Nothing playing" → "First Wave"). Hover gives a pointer cursor
 and the button grows. On a ranked row, the play icon now reaches the row's
 play action.
+
+### 11. Home: titles, covers and artists open their pages
+
+On Home's **Jump back in** card:
+
+- the **title** and the **cover** open the album;
+- each **artist** opens their page.
+
+On Home's song lists, each **artist name** opens the artist's page. The rest
+of the row still plays the song, as before. Recently played songs often don't
+include their album, which is also why the card sometimes had no "Open album"
+button. Clicking looks the album up first. These use the same links as the
+player bar (feature 8), now shared in `frontend/src/components/EntityLinks.tsx`.
+
+**Files:** `frontend/src/components/EntityLinks.tsx` (new),
+`frontend/src/components/home/HomePanels.tsx`,
+`frontend/src/components/home/Board.tsx`,
+`frontend/src/components/player/NowPlaying.tsx`,
+`frontend/src/styles/player.css`.
+
+**Tested:** in the real web UI, the card's title, cover and artist each opened
+the right page. A row's artist opened the artist page without starting
+playback, and clicking a row's title still played the song. A Home test
+covers the card's links, including a song with no album id.
 
 ### Not done / limits
 
