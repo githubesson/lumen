@@ -1,24 +1,52 @@
 # Linux branch: added features
 
-Branch `linux-discord-rpc-and-folder-upload`, based on `main` at `38cac55`.
-Every item below was tested on Arch Linux (Hyprland). Each section says what
-was tested and how.
+Branch `linux-discord-rpc-and-folder-upload` on the fork `genres/lumen`,
+based on `main` at `38cac55`. No pull request has been opened.
 
-| # | Feature | Where it runs | Needs a server update? |
-| - | ------- | ------------- | ---------------------- |
-| 1 | Discord "Listening to" status on Linux | Desktop app | No |
-| 2 | Discord status clears when music stops | Desktop app | No |
-| 3 | Upload whole folders, mixed with files | Web + desktop | No |
-| 4 | Edit your own uploads (title, artist, album, cover) | Server + web + desktop | **Yes** |
-| 5 | Personal uploads turned into shared tracks (decision pending) | Server | **Yes** |
-| 6 | Big uploads no longer fail with 413 behind Cloudflare | Web + desktop | No |
-| 7 | Edit details before uploading | Web + desktop | Personal: **yes** · Shared (admin): no |
-| 8 | Click title, artist or album in the player bar | Web + desktop | No |
-| 9 | Cancel an upload, with nothing left behind | Server + web + desktop | Partly (see below) |
+## Confirmed working
+
+These were confirmed by Bee in the real desktop app on Arch Linux,
+connected to musicfiles.net.
+
+| Feature | Confirmed | Evidence |
+| ------- | --------- | -------- |
+| Choosing a whole folder in **Add music**: its files are listed with their folder paths, and files the server can't take (e.g. `cover.jpg`) are left out by name | 2026-11-10 | Bee's screenshot of a 28-file album folder selection. The upload that followed hit the 413 error that feature 6 now fixes. |
+
+Nothing else is confirmed yet. Everything below is built and tested by
+Claude, but not yet confirmed by Bee.
+
+## Checks run
+
+- Frontend: `npm run lint` and `npm run typecheck` pass. In `vitest`, the new
+  and changed tests pass. 48 tests in 5 files (`home-board*`,
+  `startup-home`, `audio-output`) fail the same way on unmodified `main`
+  (`localStorage.clear` is undefined in this Node/jsdom setup). They are
+  unrelated to this branch.
+- Core: 672/672 pass.
+- Backend: `gofmt`, `go vet` and `go test ./...` pass against PostgreSQL 16.
 
 ---
 
-## 1. Discord status on Linux
+## In progress
+
+Built on this branch but not yet confirmed by Bee. Each section says what
+was tested and how. Testing was on Arch Linux (Hyprland), using the real
+app or web UI against a local server built from this branch, plus
+automated tests.
+
+| # | Feature | Where it runs | Needs a server update? | Status |
+| - | ------- | ------------- | ---------------------- | ------ |
+| 1 | Discord "Listening to" status on Linux | Desktop app | No | Built, tested by Claude; waiting for Bee |
+| 2 | Discord status clears when music stops | Desktop app | No | Built, tested by Claude; waiting for Bee |
+| 3 | Upload whole folders, mixed with files | Web + desktop | No | Folder selection confirmed (above); full upload waiting for Bee |
+| 4 | Edit your own uploads (title, artist, album, cover) | Server + web + desktop | **Yes** | Built, tested on a local server; needs the server update |
+| 5 | Personal uploads turned into shared tracks (decision pending) | Server | **Yes** | Decision pending (Bee + developer) |
+| 6 | Big uploads no longer fail with 413 behind Cloudflare | Web + desktop | No | Built, tested by Claude; waiting for Bee's retry |
+| 7 | Edit details before uploading | Web + desktop | Personal: **yes** · Shared (admin): no | Built, tested on a local server; personal uploads need the server update |
+| 8 | Click title, artist or album in the player bar | Web + desktop | No | Built, tested by Claude; waiting for Bee |
+| 9 | Cancel an upload, with nothing left behind | Server + web + desktop | Partly (see below) | Built, tested on a local server; waiting for Bee |
+
+### 1. Discord status on Linux
 
 **What changed:** the `discord-rpc` package only looks for Discord's socket at
 `$XDG_RUNTIME_DIR/discord-ipc-N`. Flatpak, Snap and Vesktop Discord keep it in
@@ -43,7 +71,7 @@ none of those Discord builds are installed on the test machine.
 > get it from CI. Without it, presence stays off. This was the main reason
 > presence "didn't work on Linux" for self-built copies.
 
-## 2. Discord status clears when music stops
+### 2. Discord status clears when music stops
 
 **What was wrong (all platforms, Windows included):** when the queue
 finished, the last song stayed on your Discord profile as a paused card for
@@ -65,7 +93,7 @@ Discord call recorded. Before the fix, the last call was a paused card.
 After the fix, the last call was `clear`. Unit tests cover the real
 pause-then-ended order and the 10-minute expiry.
 
-## 3. Upload folders and files together
+### 3. Upload folders and files together
 
 **What changed in the "Add music" dialog:**
 
@@ -90,7 +118,7 @@ went in as one selection. `notes.txt` was left out, and all 3 tracks were
 added. Unit tests cover folder picks, nested folder drops and duplicate
 skipping.
 
-## 4. Edit your own uploads
+### 4. Edit your own uploads
 
 **What was missing:** editing was admin-only on the server, so people
 couldn't fix the titles, artists or covers of their own uploads.
@@ -127,7 +155,7 @@ A non-admin `album_id` move returned 403. An integration test checks that
 other users can't edit or add a cover, and that the cover never reaches the
 shared album row.
 
-## 5. Personal uploads becoming shared tracks — decision pending
+### 5. Personal uploads becoming shared tracks — decision pending
 
 > **Status:** Bee reports this behaviour may be wanted (uploads ending up in
 > the shared library). The fix stays as its own commit (`5c27cd4`, easy to
@@ -157,7 +185,7 @@ became shared.
 > from the `.users/<user-id>/` file path) is a data change for the server
 > owner to decide on. This branch doesn't do it.
 
-## 6. Big uploads no longer fail with 413
+### 6. Big uploads no longer fail with 413
 
 **What was wrong:** uploads were grouped into requests of up to 512 MB (the
 server's limit). Cloudflare's free plan refuses request bodies over 100 MB
@@ -174,7 +202,7 @@ large." Mobile uses the same planner, so it gets the smaller requests too.
 **Tested:** in the real web UI, a 120 MB folder upload went as 2 requests.
 Unit tests cover the grouping and the 413 message.
 
-## 7. Edit details before uploading
+### 7. Edit details before uploading
 
 In "Add music", turn on **Edit details before uploading** to set:
 
@@ -199,7 +227,7 @@ album artist, cover, and one title and artists line was uploaded. The server
 showed the edited title, album and cover. Unit tests cover new-only edits,
 one cover per album, admin album covers and failure reporting.
 
-## 8. Click title, artist or album in the player bar
+### 8. Click title, artist or album in the player bar
 
 - The **title** opens the song's album.
 - Each **artist** opens that artist's page.
@@ -217,7 +245,7 @@ are off in the mini player.
 **Tested:** in the real web UI, the title, artist and album each opened the
 right page. A unit test checks the links.
 
-## 9. Cancel an upload, with nothing left behind
+### 9. Cancel an upload, with nothing left behind
 
 **What was wrong:** the Cancel button (and the dialog's close) was disabled
 while uploading.
@@ -251,19 +279,7 @@ it removes only what the request added, leaves the user's other tracks
 alone, and never touches files outside the upload folder. A dialog test
 covers the cancel.
 
----
-
-## Checks run
-
-- Frontend: `npm run lint` and `npm run typecheck` pass. In `vitest`, the new
-  and changed tests pass. 48 tests in 5 files (`home-board*`,
-  `startup-home`, `audio-output`) fail the same way on unmodified `main`
-  (`localStorage.clear` is undefined in this Node/jsdom setup). They are
-  unrelated to this branch.
-- Core: 672/672 pass.
-- Backend: `gofmt`, `go vet` and `go test ./...` pass against PostgreSQL 16.
-
-## Not done / limits
+### Not done / limits
 
 - Testing the Flatpak, Snap and Vesktop Discord socket paths on a real
   install.
