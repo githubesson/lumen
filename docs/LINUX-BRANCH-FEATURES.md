@@ -48,6 +48,7 @@ automated tests.
 | 10 | Home: the round play button on song rows works | Web + desktop | No | Built, tested by Claude; waiting for Bee |
 | 11 | Home: Jump back in's title, cover and artists, and song rows' artists, open their pages | Web + desktop | No | Built, tested by Claude; waiting for Bee |
 | 12 | Album pages: every artist opens a page (TIDAL albums included) | Web + desktop | No | Built, unit-tested; TIDAL page not tried in a browser; waiting for Bee |
+| 13 | Playback errors say when a proxy (e.g. Cloudflare) answered instead of Lumen's server | Web + desktop | No | Built, unit-tested; waiting for the next real failure |
 
 ### 1. Discord status on Linux
 
@@ -348,6 +349,25 @@ Mafia" on *Party Pack. Vol 2*) was plain text. Now:
 existing test that expected plain text for an artist without a page was
 updated to expect the search link. **Not tried in a browser:** the local test
 server has no TIDAL connection, so the TIDAL album page needs Bee's check.
+
+### 13. Playback errors name a proxy's answer
+
+**Background (Bee's report, 2026-11-10):** TIDAL track `tidal:555791185`
+("benjamin" by Lex Amarni) failed with `Server: HTTP 502`, and only one song
+on its album played. When Lumen's server can't stream a TIDAL track, it
+answers 502 with a short plain-text reason, and the app already shows that
+reason. A bare "HTTP 502" means an **HTML** page came back instead: a proxy
+in front of the server answered, and Lumen's server never did. The real
+cause is on the server side (musicfiles.net). Its log line `stream: tidal …`
+for that track at 02:50:08 UTC would say what happened.
+
+**What changed:** the error details' **Server** line now says so, for
+example `HTTP 502 · a proxy's error page ("…502: Bad gateway") from
+Cloudflare, not Lumen's server`.
+
+**Files:** `core/src/player/use-player-core.ts`.
+
+**Tested:** player unit tests cover a generic proxy page and Cloudflare's.
 
 ### Not done / limits
 
