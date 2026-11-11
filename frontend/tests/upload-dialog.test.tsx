@@ -22,7 +22,7 @@ function file(name: string, size = 1) {
 
 async function pick(files: File[]) {
   render(<UploadDialog open isAdmin={false} onClose={() => {}} />);
-  const input = await screen.findByLabelText(/Drop files here/);
+  const input = await screen.findByLabelText(/Drop files or folders here/);
   fireEvent.change(input, { target: { files } });
 }
 
@@ -74,4 +74,50 @@ it("keeps the selection to try again when the first batch fails", async () => {
   });
   expect(screen.getByText("Upload failed.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Upload 1" })).toBeTruthy();
+});
+
+it("adds a picked folder to picked files, shows paths, and skips repeats", async () => {
+  await pick([file("single.mp3")]);
+  const inFolder = (path: string) => {
+    const f = file(path.split("/").pop()!);
+    Object.defineProperty(f, "webkitRelativePath", { value: path });
+    return f;
+  };
+  const folder = screen.getByLabelText("Choose a folder") as HTMLInputElement;
+  expect(folder.hasAttribute("webkitdirectory")).toBe(true);
+  const track = inFolder("Album/01.flac");
+  fireEvent.change(folder, { target: { files: [track, inFolder("Album/cover.jpg")] } });
+  fireEvent.change(folder, { target: { files: [track] } });
+  expect(screen.getByText("2 files selected")).toBeTruthy();
+  expect(screen.getByText("Album/01.flac")).toBeTruthy();
+  expect(screen.getByText(/left out.*Album\/cover.jpg/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(screen.queryByText(/selected/)).toBeNull();
+});
+
+it("walks a dropped folder, nested ones included", async () => {
+  render(<UploadDialog open isAdmin={false} onClose={() => {}} />);
+  await screen.findByLabelText(/Drop files or folders here/);
+  const fileEntry = (name: string, fullPath: string) => ({
+    isFile: true, isDirectory: false, name, fullPath,
+    file: (ok: (f: File) => void) => ok(file(name)),
+  });
+  const dirEntry = (fullPath: string, children: unknown[]) => ({
+    isFile: false, isDirectory: true, fullPath,
+    createReader: () => {
+      let pages = [children, []];
+      return { readEntries: (ok: (e: unknown[]) => void) => { ok(pages[0]); pages = pages.slice(1); } };
+    },
+  });
+  const root = dirEntry("/Mix", [
+    fileEntry("a.mp3", "/Mix/a.mp3"),
+    dirEntry("/Mix/Disc 2", [fileEntry("b.opus", "/Mix/Disc 2/b.opus")]),
+  ]);
+  await act(async () => {
+    fireEvent.drop(document.querySelector(".fixed")!, {
+      dataTransfer: { items: [{ kind: "file", webkitGetAsEntry: () => root }], files: [] },
+    });
+  });
+  expect(await screen.findByText("2 files selected")).toBeTruthy();
+  expect(screen.getByText("Mix/Disc 2/b.opus")).toBeTruthy();
 });

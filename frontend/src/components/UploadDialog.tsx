@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Upload as ArrowUpTrayIcon, Check as CheckIcon } from "lucide-react";
+import { Upload as ArrowUpTrayIcon, Check as CheckIcon, FolderOpen as FolderIcon } from "lucide-react";
 import { api, errorMessage, type UploadResult } from "../api";
 import { Button } from "./Button";
 import DialogFooter from "./DialogFooter";
@@ -7,6 +7,7 @@ import ErrorBanner from "./ErrorBanner";
 import Fieldset from "./Fieldset";
 import RadioCardOption from "./RadioCardOption";
 import { DialogShell } from "./DialogShell";
+import { displayPath, filesFromDrop, mergeFiles } from "../lib/droppedFiles";
 import { libraryChanged } from "../lib/events";
 import { pluralize } from "../lib/format";
 import { useTransitionMount } from "../lib/useTransitionMount";
@@ -48,15 +49,25 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  // Files sent so far, for "Uploading 120 of 450".
+  const [progress, setProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
 
+  // Picks and drops add to the selection, so files and folders can be mixed.
   const accept = (list: FileList | File[] | null) => {
     if (!list || list.length === 0) return;
     const all = Array.from(list);
-    setFiles(all.filter((f) => isUploadableFile(f.name)));
-    setLeftOut(all.filter((f) => !isUploadableFile(f.name)).map((f) => f.name));
+    const base = results ? [] : files;
+    setFiles(mergeFiles(base, all.filter((f) => isUploadableFile(f.name))));
+    setLeftOut((prev) => [...(results ? [] : prev), ...all.filter((f) => !isUploadableFile(f.name)).map(displayPath)]);
     setResults(null);
     setError(null);
+  };
+
+  const clear = () => {
+    setFiles([]);
+    setLeftOut([]);
   };
 
   const submit = async () => {
@@ -69,12 +80,14 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     const { batches, tooLarge } = planUploadBatches(files, (f) => f.size);
     const uploaded: UploadResult[] = [];
     let sent = 0;
+    setProgress(0);
     try {
       for (const batch of batches) {
         // Only admins may upload to the shared library; the choice is hidden
         // from everyone else.
         uploaded.push(...(await api.uploadMusic(batch, uploadScope(isAdmin, scope))));
         sent += batch.length;
+        setProgress(sent);
       }
       setResults([...uploaded, ...tooLarge.map((f) => tooLargeUploadResult(f.name))]);
       onComplete?.();
@@ -112,7 +125,8 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       onDrop={(e) => {
         e.preventDefault();
         setDragActive(false);
-        accept(e.dataTransfer.files);
+        if (busy) return;
+        void filesFromDrop(e.dataTransfer).then(accept);
       }}
     >
       <DialogShell
@@ -130,7 +144,9 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                 onClick={submit}
                 disabled={busy || files.length === 0}
               >
-                {busy ? "Uploading…" : `Upload ${files.length || ""}`.trim()}
+                {busy
+                  ? `Uploading ${progress} of ${files.length}…`
+                  : `Upload ${files.length || ""}`.trim()}
               </Button>
             )}
           </DialogFooter>
@@ -183,7 +199,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             <p style={{ marginTop: 10, fontSize: 14, color: "var(--foreground)" }}>
               {dragActive
                 ? "Drop to add"
-                : "Drop files here, or click to choose"}
+                : "Drop files or folders here, or click to choose files"}
             </p>
             <p
               className="mono"
@@ -200,8 +216,35 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             multiple
             accept={ACCEPT}
             className="sr-only"
-            onChange={(e) => accept(e.currentTarget.files)}
+            onChange={(e) => {
+              accept(e.currentTarget.files);
+              e.currentTarget.value = ""; // picking the same files again still fires
+            }}
           />
+          <input
+            ref={folderRef}
+            type="file"
+            multiple
+            // Folder pick (every browser and Electron); its files carry webkitRelativePath.
+            {...{ webkitdirectory: "", directory: "" }}
+            className="sr-only"
+            aria-label="Choose a folder"
+            onChange={(e) => {
+              accept(e.currentTarget.files);
+              e.currentTarget.value = "";
+            }}
+          />
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="ghost" onClick={() => folderRef.current?.click()} disabled={busy}>
+              <FolderIcon className="size-3.5" />
+              Choose folder
+            </Button>
+            {(files.length > 0 || leftOut.length > 0) && !results && (
+              <Button variant="ghost" onClick={clear} disabled={busy}>
+                Clear
+              </Button>
+            )}
+          </div>
 
           {files.length > 0 && !results && (
             <div style={{ marginTop: 12, fontSize: 14, color: "var(--foreground)" }}>
@@ -218,12 +261,12 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                   padding: 0,
                 }}
               >
-                {files.map((f) => (
+                {files.map((f, i) => (
                   <li
-                    key={f.name}
+                    key={i}
                     style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                   >
-                    {f.name}
+                    {displayPath(f)}
                   </li>
                 ))}
               </ul>
