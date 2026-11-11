@@ -14,6 +14,7 @@ was tested and how.
 | 6 | Big uploads no longer fail with 413 behind Cloudflare | Web + desktop | No |
 | 7 | Edit details before uploading | Web + desktop | Personal: **yes** · Shared (admin): no |
 | 8 | Click title, artist or album in the player bar | Web + desktop | No |
+| 9 | Cancel an upload, with nothing left behind | Server + web + desktop | Partly (see below) |
 
 ---
 
@@ -215,6 +216,40 @@ are off in the mini player.
 
 **Tested:** in the real web UI, the title, artist and album each opened the
 right page. A unit test checks the links.
+
+## 9. Cancel an upload, with nothing left behind
+
+**What was wrong:** the Cancel button (and the dialog's close) was disabled
+while uploading.
+
+**What changed:**
+
+- **Cancel upload** works during an upload. It stops the request in flight,
+  sends nothing more, and deletes the tracks this upload had already added.
+  Personal uploads use the owner delete; admin uploads use the admin delete.
+  The selection stays so you can retry, and the dialog says what was removed.
+  Closing the dialog with X or Escape during an upload does the same.
+- **Server:** if the client disconnects mid-request, the upload stops at the
+  next file and undoes the tracks that request had added. It removes the rows
+  first, then the files, and only files inside that upload's own folder.
+  Half-written files were already removed before this branch.
+
+**Server update needed?** The app-side cancel and cleanup work on today's
+server. Undoing a request that had *fully arrived* when the cancel came needs
+the server update. Without it, those few files can stay. If the app is closed
+mid-upload, requests that had already finished stay.
+
+**Files:** `frontend/src/components/UploadDialog.tsx`, `core/src/api.ts`
+(abort signal on `uploadMusic`),
+`backend/internal/httpapi/handlers/library.go`.
+
+**Tested:** in the real web UI with a throttled network, a 3-file folder
+upload was cancelled during its second request. The dialog said "Removed the
+2 tracks it had already added", and the database and disk had the same
+track and file count as before. A DB-backed Go test covers the server undo:
+it removes only what the request added, leaves the user's other tracks
+alone, and never touches files outside the upload folder. A dialog test
+covers the cancel.
 
 ---
 
