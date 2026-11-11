@@ -55,6 +55,16 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const [dragActive, setDragActive] = useState(false);
   // Files sent so far, for "Uploading 120 of 450".
   const [progress, setProgress] = useState(0);
+  // Cancelling stops the request in flight (the server undoes what it had
+  // added) and removes what earlier requests added.
+  const abortRef = useRef<AbortController | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelNote, setCancelNote] = useState<string | null>(null);
+  const cancel = () => {
+    if (!busy) return onClose();
+    setCancelling(true);
+    abortRef.current?.abort();
+  };
   const inputRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
@@ -91,6 +101,9 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     if (files.length === 0) return;
     setBusy(true);
     setError(null);
+    setCancelNote(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     // One request over the server's cap fails whole, so a big selection goes
     // up in batches, one after another. A file too big to send at all is
     // reported with the rest rather than sent.
@@ -104,18 +117,42 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     setProgress(0);
     try {
       for (const batch of batches) {
+        if (ctrl.signal.aborted) break;
         // Only admins may upload to the shared library; the choice is hidden
         // from everyone else.
-        const results = await api.uploadMusic(batch, scopeSent);
+        const results = await api.uploadMusic(batch, scopeSent, { signal: ctrl.signal });
         uploaded.push(
           ...(edits ? await applyUploadEdits(results, batch.map((f) => files.indexOf(f)), edits, scopeSent) : results),
         );
         sent += batch.length;
         setProgress(sent);
       }
+      if (ctrl.signal.aborted) throw new DOMException("cancelled", "AbortError");
       setResults([...uploaded, ...tooLarge.map((f) => tooLargeUploadResult(f.name))]);
       onComplete?.();
     } catch (err) {
+      if (ctrl.signal.aborted) {
+        // Take back what finished before the cancel; nothing half-done stays.
+        let removed = 0;
+        for (const r of uploaded) {
+          if (!r.inserted || !r.track_id) continue;
+          try {
+            await (scopeSent === "global" ? api.deleteGlobalTrack(r.track_id) : api.deleteTrack(r.track_id));
+            removed++;
+          } catch {
+            // Reported in the count below.
+          }
+        }
+        const added = uploaded.filter((r) => r.inserted && r.track_id).length;
+        setCancelNote(
+          added === 0
+            ? "Upload cancelled. Nothing was added."
+            : removed === added
+              ? `Upload cancelled. Removed the ${pluralize(added, "track")} it had already added.`
+              : `Upload cancelled. Removed ${removed} of ${pluralize(added, "track")} it had added; delete the rest from your library.`,
+        );
+        return;
+      }
       const message = uploadErrorMessage(err);
       setError(message);
       // Nothing went in: the selection stays, so Upload tries again. Once a
@@ -130,6 +167,8 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       }
     } finally {
       if (uploadAddedAny(uploaded)) libraryChanged.emit();
+      abortRef.current = null;
+      setCancelling(false);
       setBusy(false);
     }
   };
@@ -156,11 +195,11 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       <DialogShell
         open={open}
         title="Add music"
-        onClose={onClose}
+        onClose={cancel}
         footer={
           <DialogFooter>
-            <Button variant="ghost" onClick={onClose} disabled={busy}>
-              {results ? "Done" : "Cancel"}
+            <Button variant="ghost" onClick={cancel} disabled={cancelling}>
+              {results ? "Done" : cancelling ? "Cancelling…" : busy ? "Cancel upload" : "Cancel"}
             </Button>
             {!results && (
               <Button
@@ -414,6 +453,11 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             </ul>
           )}
 
+          {cancelNote && (
+            <p role="status" style={{ marginTop: 12, fontSize: 13, color: "var(--muted-foreground)" }}>
+              {cancelNote}
+            </p>
+          )}
           {error && <ErrorBanner className="mt-3" message={error} />}
         </div>
       </DialogShell>

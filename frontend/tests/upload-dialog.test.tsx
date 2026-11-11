@@ -151,3 +151,28 @@ it("applies details typed before uploading to what the upload adds", async () =>
   });
   expect(screen.getByText("Added")).toBeTruthy();
 });
+
+it("cancels mid-upload: stops sending and removes what earlier requests added", async () => {
+  const m = mock as unknown as Record<string, ReturnType<typeof vi.fn>>;
+  m.deleteTrack = vi.fn(async () => {});
+  m.deleteGlobalTrack = vi.fn(async () => {});
+  mock.uploadMusic
+    .mockImplementationOnce(async (files: File[]) => files.map((f, i) => ({ file: f.name, inserted: true, track_id: `t${i}` })))
+    .mockImplementationOnce((_files: File[], _scope: string, { signal }: { signal: AbortSignal }) =>
+      new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    );
+  await pick([file("one.flac", 60 * MB), file("two.flac", 60 * MB), file("three.flac", 60 * MB)]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 3" }));
+  });
+  // The first request is done and the second is in flight; Cancel works now.
+  const cancelButton = screen.getByRole("button", { name: "Cancel upload" });
+  expect((cancelButton as HTMLButtonElement).disabled).toBe(false);
+  await act(async () => {
+    fireEvent.click(cancelButton);
+  });
+  expect(m.deleteTrack).toHaveBeenCalledWith("t0");
+  expect(mock.uploadMusic).toHaveBeenCalledTimes(2); // the third file never went
+  expect(screen.getByText(/Upload cancelled\. Removed the 1 track it had already added\./)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Upload 3" })).toBeTruthy(); // selection kept for a retry
+});

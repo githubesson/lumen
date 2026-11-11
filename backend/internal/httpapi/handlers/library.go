@@ -17,6 +17,7 @@ import (
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
 )
@@ -142,7 +143,12 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Tracks this request added, undone if the client goes away mid-request.
+	var added []uuid.UUID
 	for _, fh := range files {
+		if r.Context().Err() != nil {
+			break // the client cancelled: nothing after this file is wanted
+		}
 		name := filepath.Base(fh.Filename)
 		if !ingest.IsSupported(name) {
 			results = append(results, result{File: fh.Filename, Skipped: true})
@@ -207,6 +213,9 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.TrackID != uuid.Nil {
 			rr.TrackID = res.TrackID.String()
+			if res.Inserted && res.Err == nil {
+				added = append(added, res.TrackID)
+			}
 		}
 		if res.Err != nil {
 			h.log().Error("upload: ingest failed after the file was written to disk",
@@ -219,6 +228,13 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		results = append(results, rr)
+	}
+
+	if r.Context().Err() != nil {
+		// Nobody will see the results, so nothing this request added may stay
+		// behind taking up space (and quota) the user didn't mean to use.
+		h.undoCancelledUpload(context.WithoutCancel(r.Context()), u.ID, ownerID, destDir, added)
+		return
 	}
 
 	// Summary line: one glance at the logs shows whether an upload batch went
@@ -331,6 +347,43 @@ func (h *Library) Errors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ingestErrorsResp{Errors: errs, Total: total})
+}
+
+// undoCancelledUpload removes the tracks an upload request added before its
+// client went away: their rows, then their files, but only files inside this
+// upload's own destination directory (never another user's or a library
+// file that a row also points at).
+func (h *Library) undoCancelledUpload(ctx context.Context, userID uuid.UUID, ownerID *uuid.UUID, destDir string, added []uuid.UUID) {
+	removed := 0
+	for _, id := range added {
+		var paths []string
+		if ownerID != nil {
+			p, err := h.Library.DeletePersonalTrack(ctx, id, *ownerID)
+			if err != nil {
+				h.log().Warn("cancelled upload: removing an added personal track failed", "track", id, "user", userID, "err", err)
+				continue
+			}
+			paths = []string{p}
+		} else {
+			ps, err := h.Library.DeleteGlobalTrack(ctx, id)
+			if err != nil {
+				h.log().Warn("cancelled upload: removing an added track failed", "track", id, "user", userID, "err", err)
+				continue
+			}
+			paths = ps
+		}
+		for _, p := range paths {
+			if inDest, _ := pathsafe.WithinRoot(destDir, p); !inDest || p == "" {
+				continue
+			}
+			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+				h.log().Warn("cancelled upload: removing a file failed", "path", p, "err", err)
+			}
+		}
+		removed++
+	}
+	h.log().Info("upload cancelled by the client; undid what it added",
+		"user", userID, "added", len(added), "removed", removed)
 }
 
 // removeFailedUpload deletes a personal upload whose ingest failed. Ingest
