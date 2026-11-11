@@ -45,6 +45,7 @@ automated tests.
 | 7 | Edit details before uploading | Web + desktop | Personal: **yes** · Shared (admin): no | Built, tested on a local server; personal uploads need the server update |
 | 8 | Click title, artist or album in the player bar | Web + desktop | No | Built, tested by Claude; waiting for Bee |
 | 9 | Cancel an upload, with nothing left behind | Server + web + desktop | Partly (see below) | Built, tested on a local server; waiting for Bee |
+| 10 | Home: the round play button on song rows works | Web + desktop | No | Built, tested by Claude; waiting for Bee |
 
 ### 1. Discord status on Linux
 
@@ -278,6 +279,28 @@ track and file count as before. A DB-backed Go test covers the server undo:
 it removes only what the request added, leaves the user's other tracks
 alone, and never touches files outside the upload folder. A dialog test
 covers the cancel.
+
+### 10. Home: the round play button on song rows works
+
+**What was wrong (Bee's report):** on Home's song lists, the white round play
+button that appears on hover did nothing when clicked, and it didn't react to
+the mouse. On hover, the song's length fades out (opacity 0) so the button
+can show in its place. But a see-through element is drawn **above** the row's
+click area, so the invisible duration caught the click. Ranked lists, where
+the number turns into a play icon, had the same trap.
+
+**What changed:** the faded duration and rank number no longer catch clicks.
+The round button is now a real button, as on playlist rows: pointer cursor,
+grows slightly on hover, presses in, and plays the song.
+
+**Files:** `frontend/src/components/home/Board.tsx`,
+`frontend/src/styles/board.css`.
+
+**Tested:** in the real web UI, the element under the pointer was the hidden
+duration before the fix. After it, clicking the button started the song
+(player bar "Nothing playing" → "First Wave"). Hover gives a pointer cursor
+and the button grows. On a ranked row, the play icon now reaches the row's
+play action.
 
 ### Not done / limits
 
