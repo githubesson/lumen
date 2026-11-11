@@ -10,7 +10,10 @@ was tested and how.
 | 2 | Discord status clears when music stops | Desktop app | No |
 | 3 | Upload whole folders, mixed with files | Web + desktop | No |
 | 4 | Edit your own uploads (title, artist, album, cover) | Server + web + desktop | **Yes** |
-| 5 | Fix: personal uploads turned into shared tracks | Server | **Yes** |
+| 5 | Personal uploads turned into shared tracks (decision pending) | Server | **Yes** |
+| 6 | Big uploads no longer fail with 413 behind Cloudflare | Web + desktop | No |
+| 7 | Edit details before uploading | Web + desktop | Personal: **yes** · Shared (admin): no |
+| 8 | Click title, artist or album in the player bar | Web + desktop | No |
 
 ---
 
@@ -123,7 +126,14 @@ A non-admin `album_id` move returned 403. An integration test checks that
 other users can't edit or add a cover, and that the cover never reaches the
 shared album row.
 
-## 5. Fix: personal uploads becoming shared tracks
+## 5. Personal uploads becoming shared tracks — decision pending
+
+> **Status:** Bee reports this behaviour may be wanted (uploads ending up in
+> the shared library). The fix stays as its own commit (`5c27cd4`, easy to
+> drop) until Bee and the main developer decide. The code's own comments say
+> `.users/` is meant to stay outside the watcher (`handlers/library.go` and
+> `handlers/tracks.go`). For an intended "share my upload" path, admins
+> already have the **Global library** choice in the upload dialog.
 
 **What was wrong:** personal uploads are stored in `MUSIC_ROOT/.users/`. The
 first personal upload creates that folder while the server is running. The
@@ -146,6 +156,66 @@ became shared.
 > from the `.users/<user-id>/` file path) is a data change for the server
 > owner to decide on. This branch doesn't do it.
 
+## 6. Big uploads no longer fail with 413
+
+**What was wrong:** uploads were grouped into requests of up to 512 MB (the
+server's limit). Cloudflare's free plan refuses request bodies over 100 MB
+with **413 Payload Too Large**, and the dialog then showed Cloudflare's raw
+HTML page.
+
+**What changed:** files are grouped into requests under **90 MB**. A single
+larger file still goes alone, up to the server's limit. A 413 now reads "The
+server (or a proxy in front of it, like Cloudflare) refused a request this
+large." Mobile uses the same planner, so it gets the smaller requests too.
+
+**Files:** `core/src/upload.ts`, `frontend/src/components/UploadDialog.tsx`.
+
+**Tested:** in the real web UI, a 120 MB folder upload went as 2 requests.
+Unit tests cover the grouping and the 413 message.
+
+## 7. Edit details before uploading
+
+In "Add music", turn on **Edit details before uploading** to set:
+
+- each file's **title** and **artists**
+- one **album**, **album artist** and **cover** for the whole selection
+
+Blank fields keep the file's own tags. The details are saved to each track
+as soon as the upload adds it. A file that matched a track already in the
+library is left unchanged. If saving fails, that file says "Added, but saving
+the details failed".
+
+- Personal uploads use the owner edit and cover from feature 4, so they need
+  the server update.
+- Shared ("Global") uploads by an admin use the existing admin edit, and
+  the cover becomes the album's cover. These work on today's server.
+
+**Files:** `frontend/src/lib/uploadEdits.ts` (new),
+`frontend/src/components/UploadDialog.tsx`.
+
+**Tested:** in the real web UI, a 3-file folder with a new album name,
+album artist, cover, and one title and artists line was uploaded. The server
+showed the edited title, album and cover. Unit tests cover new-only edits,
+one cover per album, admin album covers and failure reporting.
+
+## 8. Click title, artist or album in the player bar
+
+- The **title** opens the song's album.
+- Each **artist** opens that artist's page.
+- The **album** opens the album.
+
+TIDAL albums open their TIDAL page. A TIDAL artist, or a name the track's
+details don't list, opens an artist search instead. The bar only lists the
+track's main artist line, so featured artists may not appear there. Links
+are off in the mini player.
+
+**Files:** `frontend/src/components/player/NowPlaying.tsx`,
+`frontend/src/lib/nowPlayingLinks.ts` (new),
+`frontend/src/components/MiniPlayer.tsx`, `frontend/src/styles/player.css`.
+
+**Tested:** in the real web UI, the title, artist and album each opened the
+right page. A unit test checks the links.
+
 ---
 
 ## Checks run
@@ -155,7 +225,7 @@ became shared.
   `startup-home`, `audio-output`) fail the same way on unmodified `main`
   (`localStorage.clear` is undefined in this Node/jsdom setup). They are
   unrelated to this branch.
-- Core: 671/671 pass.
+- Core: 672/672 pass.
 - Backend: `gofmt`, `go vet` and `go test ./...` pass against PostgreSQL 16.
 
 ## Not done / limits
