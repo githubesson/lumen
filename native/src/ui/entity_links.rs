@@ -41,13 +41,8 @@ pub fn artist(app: &mut App, track: TrackListItem, name: String) {
 
 pub fn artists(track: &TrackListItem, style: rune::TextStyle, color: rune::Color) -> rune::El {
     let label = crate::format::display_text(track.artist.as_deref(), "Unknown artist");
-    artists_label(track, &label, style, color)
-}
-
-/// Keep appended playlist attribution visible, but link only artist credits.
-pub fn artists_label(track: &TrackListItem, label: &str, style: rune::TextStyle, color: rune::Color) -> rune::El {
     let names = crate::format::clean_text(track.artist.as_deref());
-    let mut view = crate::ui::line(label.to_owned(), style, color);
+    let mut view = crate::ui::line(label, style, color);
     let mut start = 0;
     for name in names.split(", ") {
         let end = start + name.len();
@@ -57,40 +52,5 @@ pub fn artists_label(track: &TrackListItem, label: &str, style: rune::TextStyle,
         start = end + 2;
     }
     let track = track.clone();
-    view.on_link(move |app: &mut App, name: &str, tx| {
-        reveal_library(app, tx);
-        artist(app, track.clone(), name.to_owned());
-    })
-}
-
-/// A metadata label opens its source album, keeping playback on its own control.
-pub fn album_label(label: rune::El, track: &TrackListItem, t: &crate::theme::Theme) -> rune::El {
-    let track = track.clone();
-    label.hover(t.c.ghost_hover)
-        .hover_motion(crate::ui::motion::ease(140.0), crate::ui::motion::ease(140.0))
-        .focusable(true).cursor(rune::Cursor::Pointer)
-        .role("link").label(format!("Open album for {}", track.title))
-        .on_press_tx(move |app: &mut App, tx| {
-            reveal_library(app, tx);
-            album(app, track.clone());
-        })
-}
-
-pub fn reveal_library(app: &mut App, tx: &mut rune::Tx) {
-    crate::shell::player::close_popover(app);
-    if app.ui.player.mini.on {
-        crate::shell::player::mini::toggle_mode(app, tx);
-    }
-}
-
-/// Cover navigation uses the same destination as the title, with a fading tint.
-pub fn album_cover(view: rune::El, track: &TrackListItem, t: &crate::theme::Theme) -> rune::El {
-    let track = track.clone();
-    crate::ui::cover_link(t, view)
-        .hover_motion(crate::ui::motion::ease(140.0), crate::ui::motion::ease(140.0))
-        .label(format!("Open album for {}", track.title))
-        .on_press_tx(move |app: &mut App, tx| {
-            reveal_library(app, tx);
-            album(app, track.clone());
-        })
+    view.on_link(move |app: &mut App, name: &str, _| artist(app, track.clone(), name.to_owned()))
 }

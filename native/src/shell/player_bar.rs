@@ -161,27 +161,29 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
     match &d.error {
         Some(summary) => error::line_button(app, t, summary, style, underline_at),
         None => {
-            if let Some(track) = d.current {
+            if let Some(track) = d.current.filter(|_| !app.ui.player.mini.on) {
                 // One bounded text layout gives the whole metadata line one
                 // ellipsis, while keeping each visible artist/album clickable.
-                let artist = crate::format::display_text(track.artist.as_deref(), "—");
                 let mut label = line(d.artist.clone(), style, t.c.muted_foreground)
                     .w_full()
                     .tip_truncated("np-artist", &d.artist, style);
                 let paint = rune::LinkPaint::new().underline(t.c.muted_foreground);
+                // The "—" standing in for a missing artist is no link.
+                let artist = crate::format::clean_text(track.artist.as_deref());
                 let mut start = 0;
                 for name in artist.split(", ") {
                     let end = start + name.len();
-                    label = label.link(rune::Link::new(start..end, format!("artist:{name}")).hover(paint));
+                    if !name.trim().is_empty() {
+                        label = label.link(rune::Link::new(start..end, format!("artist:{name}")).hover(paint));
+                    }
                     start = end + 2;
                 }
-                let album_start = artist.len() + " · ".len();
+                let album_start = crate::format::display_text(track.artist.as_deref(), "—").len() + " · ".len();
                 if album_start < d.artist.len() {
                     label = label.link(rune::Link::new(album_start..d.artist.len(), "album").hover(paint));
                 }
                 let track = track.clone();
-                label.on_link(move |app: &mut App, target: &str, tx| {
-                    ui::entity_links::reveal_library(app, tx);
+                label.on_link(move |app: &mut App, target: &str, _| {
                     if target == "album" {
                         ui::entity_links::album(app, track.clone());
                     } else if let Some(name) = target.strip_prefix("artist:") {
