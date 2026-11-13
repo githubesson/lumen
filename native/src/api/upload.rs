@@ -212,21 +212,9 @@ fn send_form<T: serde::de::DeserializeOwned>(
 
 /// `uploadMusic`: files into the personal or shared library (see
 /// `core::upload::plan_upload_batches` for staying under the server's cap).
+/// `cancel` stops the request mid-body, as the web's `AbortSignal` does; the
+/// server then undoes what that request had added.
 pub fn upload_music(
-    c: &Client,
-    files: &[PathBuf],
-    scope: crate::core::upload::UploadScope,
-    progress: Option<Progress>,
-) -> ApiResult<Vec<UploadResult>> {
-    let mut parts = vec![Part::text("scope", scope.as_str())];
-    parts.extend(files.iter().map(|f| Part::file("files", f)));
-    let results: Option<Vec<UploadResult>> = send_form(c, "POST", "/api/library/upload", Multipart::new(parts), progress)?;
-    Ok(results.unwrap_or_default())
-}
-
-/// Upload with cancellation checked before every body read. Completed responses
-/// still return their track IDs so the caller can undo only this operation's inserts.
-pub fn upload_music_cancellable(
     c: &Client,
     files: &[PathBuf],
     scope: crate::core::upload::UploadScope,
@@ -235,15 +223,13 @@ pub fn upload_music_cancellable(
     cancel.check()?;
     let mut parts = vec![Part::text("scope", scope.as_str())];
     parts.extend(files.iter().map(|f| Part::file("files", f)));
-    let body = Multipart::new(parts).into_body(None).map_err(|e| ApiError::local(0, e.to_string()))?;
-    let body = match body {
-        Body::Stream { content_type, len, reader } => Body::Stream {
-            content_type, len, reader: Box::new(CancellableReader { reader, cancel: cancel.clone() }),
-        },
+    let body = match Multipart::new(parts).into_body(None).map_err(|e| ApiError::local(0, e.to_string()))? {
+        Body::Stream { content_type, len, reader } => {
+            Body::Stream { content_type, len, reader: Box::new(CancellableReader { reader, cancel: cancel.clone() }) }
+        }
         body => body,
     };
-    let reply = c.request("POST", "/api/library/upload", body, &[], &Behavior { timeout: None, ..Default::default() });
-    match reply {
+    match c.request("POST", "/api/library/upload", body, &[], &Behavior { timeout: None, ..Default::default() }) {
         Ok(reply) => {
             let results: Option<Vec<UploadResult>> = reply.json()?;
             Ok(results.unwrap_or_default())
@@ -253,6 +239,7 @@ pub fn upload_music_cancellable(
     }
 }
 
+/// A body that stops being read once `cancel` fires.
 struct CancellableReader {
     reader: Box<dyn Read + Send>,
     cancel: super::Cancel,
@@ -261,30 +248,22 @@ struct CancellableReader {
 impl Read for CancellableReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.cancel.is_cancelled() {
-            // Interrupted is retried by Read helpers; use a terminal error instead.
+            // Not `Interrupted`, which `Read` helpers retry.
             return Err(io::Error::other("Upload cancelled"));
         }
         self.reader.read(buf)
     }
 }
 
-#[cfg(test)]
-mod cancellation_tests {
-    use super::*;
-    #[test]
-    fn cancelling_stops_consumption_of_the_upload_body() {
-        let cancel = super::super::Cancel::new();
-        let mut reader = CancellableReader { reader: Box::new(io::Cursor::new(vec![1, 2, 3, 4])), cancel: cancel.clone() };
-        let mut bytes = [0; 2];
-        assert_eq!(reader.read(&mut bytes).unwrap(), 2);
-        cancel.cancel();
-        assert!(reader.read(&mut bytes).is_err());
-    }
-}
-
 /// Admin: replace an album's cover with an image file.
 pub fn set_album_cover(c: &Client, id: &str, image: &Path) -> ApiResult<Album> {
     send_form(c, "PUT", &format!("/api/albums/{}/cover", seg(id)), Multipart::new(vec![Part::file("file", image)]), None)
+}
+
+/// `setTrackCover`: the uploader's own cover for a track they own (only
+/// they see it); the server checks the ownership.
+pub fn set_track_cover(c: &Client, id: &str, image: &Path) -> ApiResult<super::TrackDetail> {
+    send_form(c, "PUT", &format!("/api/tracks/{}/cover", seg(id)), Multipart::new(vec![Part::file("file", image)]), None)
 }
 
 /// Owner: give a playlist its own cover (see
@@ -315,19 +294,12 @@ mod tests {
     }
 
     #[test]
-    fn streams_files_with_progress() {
-        let server = MockServer::start(vec![Res::json(r#"[{"file":"a.mp3","inserted":true}]"#)]);
+    fn streams_files() {
+        let server = MockServer::start(vec![Res::json(r#"[{"file":"a.mp3","inserted":true,"promoted":true}]"#)]);
         let path = temp_file("a.mp3", b"ID3audio");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let s2 = seen.clone();
-        let results = upload_music(
-            &server.client(),
-            &[path],
-            crate::core::upload::UploadScope::Personal,
-            Some(progress(move |sent, total| s2.lock().unwrap().push((sent, total)))),
-        )
-        .unwrap();
-        assert!(results[0].inserted);
+        let cancel = crate::api::Cancel::new();
+        let results = upload_music(&server.client(), &[path], crate::core::upload::UploadScope::Personal, &cancel).unwrap();
+        assert!(results[0].inserted && results[0].promoted);
         let req = &server.requests()[0];
         assert_eq!((req.method.as_str(), req.path.as_str()), ("POST", "/api/library/upload"));
         let ct = req.header("content-type").unwrap();
@@ -336,10 +308,37 @@ mod tests {
         assert!(body.starts_with(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"scope\"\r\n\r\npersonal\r\n")));
         assert!(body.contains("name=\"files\"; filename=\"a.mp3\"\r\nContent-Type: audio/mpeg\r\n\r\nID3audio\r\n"));
         assert!(body.ends_with(&format!("--{boundary}--\r\n")));
-        let seen = seen.lock().unwrap();
-        let (sent, total) = *seen.last().unwrap();
-        assert_eq!(sent, total);
-        assert_eq!(total, req.body.len() as u64);
+    }
+
+    #[test]
+    fn a_body_reports_its_progress() {
+        let path = temp_file("b.mp3", b"ID3audio");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s2 = seen.clone();
+        let form = Multipart::new(vec![Part::text("scope", "personal"), Part::file("files", &path)]);
+        let Body::Stream { len, mut reader, .. } = form.into_body(Some(progress(move |sent, total| s2.lock().unwrap().push((sent, total))))).unwrap() else {
+            panic!("a form streams")
+        };
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        let (sent, total) = *seen.lock().unwrap().last().unwrap();
+        assert_eq!((sent, total), (len, len));
+        assert_eq!(bytes.len() as u64, len);
+    }
+
+    #[test]
+    fn cancelling_stops_the_body_and_a_cancelled_upload_never_starts() {
+        let cancel = crate::api::Cancel::new();
+        let mut reader = CancellableReader { reader: Box::new(io::Cursor::new(vec![1, 2, 3, 4])), cancel: cancel.clone() };
+        let mut bytes = [0; 2];
+        assert_eq!(reader.read(&mut bytes).unwrap(), 2);
+        cancel.cancel();
+        assert!(reader.read(&mut bytes).is_err());
+        let server = MockServer::start(vec![]);
+        let path = temp_file("c.mp3", b"ID3audio");
+        let err = upload_music(&server.client(), &[path], crate::core::upload::UploadScope::Personal, &cancel).unwrap_err();
+        assert!(err.is_aborted());
+        assert!(server.requests().is_empty());
     }
 
     // api.test.ts: form upload fetch
@@ -363,9 +362,4 @@ mod tests {
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("filename=\"a%22b%0Ac.png\""));
     }
-}
-
-/// Set a personal cover for an owned upload; server enforces ownership.
-pub fn set_track_cover(c: &Client, id: &str, image: &Path) -> ApiResult<super::TrackDetail> {
-    send_form(c, "PUT", &format!("/api/tracks/{}/cover", seg(id)), Multipart::new(vec![Part::file("file", image)]), None)
 }
