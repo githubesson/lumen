@@ -156,7 +156,8 @@ pub fn fill(app: &App, t: &Theme) -> El {
 }
 
 /// The seek bar's thumb (12 px, centred on the value), bound to the live
-/// clock. `h` is the track's height.
+/// clock; grown 1.25× while dragged (`.bar.dragging .bar-thumb`). `h` is
+/// the track's height.
 pub fn thumb(app: &App, t: &Theme, h: f32, dragging: bool) -> El {
     el().key("seek-thumb").absolute(-6.0, (h - 12.0) / 2.0)
         .size(12.0, 12.0)
@@ -164,6 +165,7 @@ pub fn thumb(app: &App, t: &Theme, h: f32, dragging: bool) -> El {
         .fill(t.c.background)
         .border(1.0, t.c.primary)
         .inert()
+        .scale(if dragging { 1.25 } else { 1.0 })
         .group_opacity(if dragging { 1.0 } else { 0.0 }, 1.0)
         .live_offset(&app.ui.player.progress.thumb)
 }
