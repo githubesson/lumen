@@ -96,3 +96,11 @@ it("stops at a cancel instead of reporting the aborted save as a failure", async
   expect(mock.updateTrack).toHaveBeenCalledTimes(1);
   expect(mock.updateTrack).toHaveBeenCalledWith("t1", { album_title: "A" }, { signal: ctrl.signal });
 });
+
+it("says when a cover couldn't go on a track with no album", async () => {
+  mock.getTrack.mockResolvedValueOnce({ id: "t1", album_id: null });
+  const edits = { ...emptyUploadEdits(1), cover: new File(["x"], "c.png") };
+  const out = await applyUploadEdits([{ file: "1.flac", inserted: true, track_id: "t1" }], [0], edits, "personal");
+  expect(out[0].error).toMatch(/cover art wasn't saved: the track has no album/);
+  expect(mock.setTrackCover).not.toHaveBeenCalled();
+});

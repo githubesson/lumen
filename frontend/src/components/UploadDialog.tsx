@@ -92,8 +92,10 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const accept = (list: FileList | File[] | null) => {
     if (!list || list.length === 0) return;
     const all = Array.from(list);
-    const base = results ? [] : files;
-    setFiles(mergeFiles(base, all.filter((f) => isUploadableFile(f.name))));
+    // Against the selection as it is now: two folder walks can finish in
+    // either order, and each must add to what the other added.
+    const fresh = !!results;
+    setFiles((prev) => mergeFiles(fresh ? [] : prev, all.filter((f) => isUploadableFile(f.name))));
     setLeftOut((prev) => [...(results ? [] : prev), ...all.filter((f) => !isUploadableFile(f.name)).map(displayPath)]);
     setResults(null);
     setError(null);
@@ -106,6 +108,11 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
 
   const submit = async () => {
     if (files.length === 0) return;
+    if (editing && albumArtist.trim() && !album.trim()) {
+      // The album artist belongs to an album; on its own it would be dropped.
+      setError("Add an album title to set its album artist.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setCancelNote(null);
@@ -369,11 +376,13 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
           {files.length > 0 && !results && (
             <div style={{ marginTop: 12 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-                <Switch checked={editing} onChange={setEditing} aria-labelledby="upload-edit-label" />
+                <Switch checked={editing} onChange={setEditing} disabled={busy} aria-labelledby="upload-edit-label" />
                 <span id="upload-edit-label">Edit details before uploading</span>
               </label>
               {editing && (
-                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                // What was typed is read once, as the upload starts: it can't
+                // change underneath it.
+                <fieldset disabled={busy} style={{ margin: "10px 0 0", padding: 0, border: 0, minWidth: 0, display: "grid", gap: 10 }}>
                   <p style={{ margin: 0, fontSize: 12, color: "var(--muted-foreground)" }}>
                     Blank fields keep what the file's own tags say. Applied as each track is added;
                     tracks already in the library aren't changed.
@@ -426,7 +435,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
                       </div>
                     ))}
                   </div>
-                </div>
+                </fieldset>
               )}
             </div>
           )}

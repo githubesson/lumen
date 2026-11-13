@@ -63,6 +63,11 @@ export async function applyUploadEdits(
         ? await api.updateTrack(trackId, patch, { signal })
         : await api.getTrack(trackId, { signal });
       const cover = edits.cover;
+      if (cover && !track.album_id) {
+        // Cover art hangs on an album; the server refuses it for a loose track.
+        out.push({ ...result, error: "Added, but the cover art wasn't saved: the track has no album. Set an album to add it." });
+        continue;
+      }
       if (cover && track.album_id && !coveredAlbums.has(track.album_id)) {
         const albumId = track.album_id;
         await waitOutRateLimit<unknown>(

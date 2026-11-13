@@ -215,3 +215,25 @@ it("keeps uploading through Escape and the close button, and a cancel leaves a p
   expect(m.deleteGlobalTrack).not.toHaveBeenCalled();
   expect(screen.getByText("Upload cancelled. Nothing was added.")).toBeTruthy();
 });
+
+it("asks for an album title before an album artist, instead of dropping it", async () => {
+  await pick([file("one.flac")]);
+  fireEvent.click(screen.getByRole("switch", { name: "Edit details before uploading" }));
+  fireEvent.change(screen.getByLabelText("Album artist"), { target: { value: "Baby Smoove" } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect(screen.getByText("Add an album title to set its album artist.")).toBeTruthy();
+  expect(mock.uploadMusic).not.toHaveBeenCalled();
+});
+
+it("adds two folder walks that finish out of order to each other", async () => {
+  render(<UploadDialog open isAdmin={false} onClose={() => {}} />);
+  const input = await screen.findByLabelText(/Drop files or folders here/);
+  // Both change events read the same render's selection.
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [file("a.flac")] } });
+    fireEvent.change(input, { target: { files: [file("b.flac")] } });
+  });
+  expect(screen.getByRole("button", { name: "Upload 2" })).toBeTruthy();
+});
