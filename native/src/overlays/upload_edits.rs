@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::api::{ApiError, Cancel, Client, TrackPatch, UploadResult};
+use crate::api::{ApiError, Cancel, Client, TrackPatch, UploadResult, error_message};
 use crate::core::upload::{UploadScope, wait_out_rate_limit};
 
 /// `UploadEdits` for one request: each file's patch (files with nothing
@@ -44,9 +44,14 @@ pub fn details_error(album: &str, album_artist: &str) -> Option<&'static str> {
     (!album_artist.trim().is_empty() && album.trim().is_empty()).then_some("Add an album title to set its album artist.")
 }
 
-/// What a track without an album says when a cover was chosen: cover art
-/// hangs on an album, and the server refuses it for a loose track.
-const NO_ALBUM_FOR_COVER: &str = "Added, but the cover art wasn't saved: the track has no album. Set an album to add it.";
+/// What a track says when its details went in but the cover didn't.
+fn cover_not_saved(why: &str) -> String {
+    format!("Added, but the cover art wasn't saved: {why}")
+}
+
+/// Why a track without an album gets no cover: cover art hangs on an album,
+/// and the server refuses it for a loose track.
+const NO_ALBUM_FOR_COVER: &str = "the track has no album. Set an album to add it.";
 
 /// Whether a cover's failure may pass next time (the network, the server, a
 /// rate limit outlasted), so the album's next track tries again. An image
@@ -62,8 +67,9 @@ fn cover_worth_retrying(e: &ApiError) -> bool {
 /// `covered` is the albums tried so far, shared by every batch of one
 /// upload, so an album that spans batches gets its cover once. A track left
 /// without an album gets no cover and says so. A failure marks that file's
-/// result. Once `cancel` fires the request in flight is cut off and the
-/// rest are left (what was added is then taken back anyway).
+/// result, the details' or the cover's. Once `cancel` fires the request in
+/// flight is cut off and the rest are left (what was added is then taken
+/// back anyway).
 pub fn apply(
     client: &Client,
     files: &[PathBuf],
@@ -83,14 +89,14 @@ pub fn apply(
         if patch.is_none() && edits.cover.is_none() {
             continue;
         }
-        // `Some(note)`: saved, but the cover couldn't go.
-        let saved = (|| -> Result<Option<&'static str>, ApiError> {
+        // `Some(note)`: the details went in, but the cover didn't.
+        let saved = (|| -> Result<Option<String>, ApiError> {
             let track = match patch {
                 Some(patch) => crate::api::library::update_track(client, &id, patch)?,
                 None => crate::api::library::get_track(client, &id)?,
             };
             let Some(cover) = &edits.cover else { return Ok(None) };
-            let Some(album) = track.album_id.filter(|a| !a.is_empty()) else { return Ok(Some(NO_ALBUM_FOR_COVER)) };
+            let Some(album) = track.album_id.filter(|a| !a.is_empty()) else { return Ok(Some(cover_not_saved(NO_ALBUM_FOR_COVER))) };
             // Marked before it's sent, so the album's other tracks don't
             // try it too; a failure that may pass next time unmarks it.
             if !covered.lock().unwrap().insert(album.clone()) {
@@ -104,7 +110,7 @@ pub fn apply(
                 if cover_worth_retrying(&e) {
                     covered.lock().unwrap().remove(&album);
                 }
-                return Err(e);
+                return Ok(Some(cover_not_saved(&error_message(&e, "unknown error"))));
             }
             Ok(None)
         })();
@@ -113,10 +119,8 @@ pub fn apply(
         }
         match saved {
             Ok(None) => {}
-            Ok(Some(note)) => result.error = Some(note.to_string()),
-            Err(e) => {
-                result.error = Some(format!("Added, but saving the details failed: {}", crate::api::error_message(&e, "unknown error")));
-            }
+            Ok(Some(note)) => result.error = Some(note),
+            Err(e) => result.error = Some(format!("Added, but saving the details failed: {}", error_message(&e, "unknown error"))),
         }
     }
 }
@@ -254,7 +258,7 @@ mod tests {
             let (files, mut results) = one(n);
             apply(&s.client(), &files, &mut results, &edits, UploadScope::Personal, &Cancel::new(), &shared);
             if n == "t1" {
-                assert_eq!(results[0].error.as_deref(), Some("Added, but saving the details failed: not an image"));
+                assert_eq!(results[0].error.as_deref(), Some("Added, but the cover art wasn't saved: not an image"));
             }
         }
         assert_eq!(puts(&s), 1);
