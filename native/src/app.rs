@@ -333,6 +333,7 @@ fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     // Overlay work that finished off the UI thread and needs a `Tx` (a copy, a save dialog).
     changed |= crate::overlays::poll(app, tx);
     changed |= crate::shell::player::poll(app, clock, tx);
+    changed |= crate::shell::panes::poll(app);
     changed
 }
 

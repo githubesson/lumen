@@ -4,9 +4,11 @@
 //! macOS), so a move from the Electron build keeps the server, tweaks and
 //! integrations. Unknown keys are kept on save.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 use crate::theme::{Density, Layout, Mode};
@@ -15,10 +17,11 @@ use crate::theme::{Density, Layout, Mode};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tweaks {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sidebar_width: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lyrics_width: Option<f32>,
+    /// Pane widths a divider saved, per layout (`shell::panes`; native only).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "lenient")]
+    pub sidebar_width: BTreeMap<Layout, f32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "lenient")]
+    pub lyrics_width: BTreeMap<Layout, f32>,
     #[serde(default)]
     pub theme: Mode,
     #[serde(default = "default_radius")]
@@ -31,7 +34,7 @@ pub struct Tweaks {
     pub home_board: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smooth_mix: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub equalizer: crate::player::engine::equalizer::Settings,
 }
 
@@ -39,9 +42,15 @@ fn default_radius() -> u32 {
     10
 }
 
+/// A native-only tweak in a shape this build doesn't read (a hand edit, another build's)
+/// falls back to its default instead of failing every tweak with it.
+fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned + Default>(d: D) -> Result<T, D::Error> {
+    Ok(serde_json::from_value(Value::deserialize(d)?).unwrap_or_default())
+}
+
 impl Default for Tweaks {
     fn default() -> Self {
-        Tweaks { sidebar_width: None, lyrics_width: None, theme: Mode::Dark, radius: 10, density: Density::Balanced, layout: Layout::Sidebar, home_board: None, smooth_mix: None, equalizer: Default::default() }
+        Tweaks { sidebar_width: BTreeMap::new(), lyrics_width: BTreeMap::new(), theme: Mode::Dark, radius: 10, density: Density::Balanced, layout: Layout::Sidebar, home_board: None, smooth_mix: None, equalizer: Default::default() }
     }
 }
 
@@ -146,4 +155,31 @@ pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
     };
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_malformed_native_tweak_keeps_the_others() {
+        let t: Tweaks = serde_json::from_value(serde_json::json!({
+            "theme": "light", "radius": 6, "smoothMix": 4.0, "homeBoard": { "v": 1 },
+            "equalizer": "loud", "sidebarWidth": 300, "lyricsWidth": { "wide": "x" },
+        })).unwrap();
+        assert_eq!((t.theme, t.radius, t.smooth_mix), (Mode::Light, 6, Some(4.0)));
+        assert!(t.home_board.is_some());
+        assert_eq!(t.equalizer, Default::default());
+        assert!(t.sidebar_width.is_empty() && t.lyrics_width.is_empty());
+    }
+
+    #[test]
+    fn pane_widths_save_per_layout() {
+        let mut t = Tweaks::default();
+        t.sidebar_width.insert(Layout::Wide, 340.0);
+        let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v["sidebarWidth"], serde_json::json!({ "wide": 340.0 }));
+        assert!(v.get("lyricsWidth").is_none());
+        assert_eq!(serde_json::from_value::<Tweaks>(v).unwrap(), t);
+    }
 }
