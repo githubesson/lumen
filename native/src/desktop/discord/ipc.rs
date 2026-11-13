@@ -257,8 +257,9 @@ impl Rpc for Conn {
 /// Connects to the Discord client running on this machine.
 pub struct IpcConnector;
 
-fn allow_live_rpc(headless: bool, args: impl IntoIterator<Item = String>, opt_in: bool) -> bool {
-    opt_in || (!headless && !args.into_iter().any(|arg| arg == "--scene" || arg.starts_with("--scene=")))
+fn allow_live_rpc(headless: bool, args: impl IntoIterator<Item = std::ffi::OsString>, opt_in: bool) -> bool {
+    // `args_os`: an argument that isn't UTF-8 isn't `--scene`, and mustn't panic.
+    opt_in || (!headless && !args.into_iter().any(|arg| arg.to_str().is_some_and(|a| a == "--scene" || a.starts_with("--scene="))))
 }
 
 impl Connector for IpcConnector {
@@ -266,7 +267,7 @@ impl Connector for IpcConnector {
         // Fixture windows share the desktop's IPC socket unless explicitly
         // isolated. Never let their fake songs replace the user's activity.
         // Deliberate integration checks can opt in with an isolated account.
-        if !allow_live_rpc(rune::is_headless(), std::env::args(), std::env::var("LUMEN_TEST_DISCORD").as_deref() == Ok("1")) {
+        if !allow_live_rpc(rune::is_headless(), std::env::args_os(), std::env::var("LUMEN_TEST_DISCORD").as_deref() == Ok("1")) {
             return Err("Discord disabled for test scenes (LUMEN_TEST_DISCORD=1 to opt in)".into());
         }
         let stream = open().ok_or("Could not connect")?;
@@ -283,12 +284,14 @@ mod tests {
 
     #[test]
     fn test_runs_cannot_publish_live_activity_without_opt_in() {
-        let args = |values: &[&str]| values.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let args = |values: &[&str]| values.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
         assert!(allow_live_rpc(false, args(&["lumen"]), false));
         assert!(!allow_live_rpc(true, args(&["lumen"]), false));
         assert!(!allow_live_rpc(false, args(&["lumen", "--scene", "library"]), false));
         assert!(!allow_live_rpc(false, args(&["lumen", "--scene=library"]), false));
         assert!(allow_live_rpc(true, args(&["lumen", "--scene", "library"]), true));
+        let not_utf8 = <std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(vec![0xff, 0xfe]);
+        assert!(allow_live_rpc(false, vec!["lumen".into(), not_utf8], false));
     }
 
     fn read_frame(s: &mut UnixStream) -> (u32, Value) {

@@ -424,33 +424,6 @@ fn a_failed_next_track_isnt_handed_off() {
     assert!(!r.has(AdapterEvent::Error), "a prepared track's failure isn't the current track's");
 }
 
-/// Explicit, read-only opt-in diagnostic; credentials stay in the supplied local file.
-#[test]
-#[ignore]
-fn hosted_startup_diagnostic() {
-    let file = std::env::var("LUMEN_PLAYBACK_PROBE").expect("private JSON with url, base and session_path");
-    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
-    let mut r = rig();
-    r.a.client = Arc::new(Mutex::new(Some(Client::new(v["base"].as_str().unwrap(), Some(v["session_path"].as_str().unwrap().into())))));
-    let started = Instant::now();
-    r.a.load(v["url"].as_str().unwrap());
-    r.a.play();
-    let mut metadata = false;
-    while started.elapsed() < Duration::from_secs(45) {
-        r.a.render(&mut []);
-        r.pump();
-        if !metadata && r.has(AdapterEvent::LoadedMetadata) {
-            eprintln!("metadata after {:?}, duration {}", started.elapsed(), r.a.duration());
-            metadata = true;
-        }
-        if r.ready() { eprintln!("first decoded audio after {:?}", started.elapsed()); return; }
-        assert!(!r.has(AdapterEvent::Error), "playback error");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    panic!("no audio within 45 seconds");
-}
-
-
 #[test]
 fn equalizer_shapes_decoded_audio_and_survives_seek_and_next() {
     let mut r = rig();
