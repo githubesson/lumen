@@ -30,7 +30,7 @@ use crate::ui::kit::{Dialog, dialog_footer, error_banner, eyebrow, scroll_area_f
 use crate::ui::{Btn, font, ico, icons as i, line, tnum};
 
 use crate::core::upload::{
-    UPLOAD_EXTENSIONS, UPLOAD_REQUEST_MAX_BYTES, UploadScope as Scope, UploadStatus, cancel_cleanup_ids, default_upload_scope as default_scope,
+    UPLOAD_EXTENSIONS, UPLOAD_REQUEST_MAX_BYTES, UploadScope as Scope, UploadStatus, cancel_cleanup, default_upload_scope as default_scope,
     plan_upload_batches, too_large_upload_result, upload_added_any, upload_cancel_note, upload_error_message, upload_result_detail,
     upload_result_status, upload_scope,
 };
@@ -370,18 +370,23 @@ fn send_batch(app: &mut App, mut run: Run) {
 
 /// A cancelled upload: take back what its finished requests added (the
 /// request in flight the server undoes itself), then say how that went.
+/// The library refreshes either way: a batch the server finished as the
+/// cancel went out never reached `uploaded`, and its tracks stay.
 fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
-    let ids = cancel_cleanup_ids(&uploaded);
-    let (added, changed) = (ids.len(), upload_added_any(&uploaded));
+    let cleanup = cancel_cleanup(&uploaded, scope);
+    let added = cleanup.added;
     let Some(client) = app.client.clone() else {
         let s = &mut app.overlays.upload;
         s.cancel_note = Some(upload_cancel_note(added, 0));
-        return s.finish();
+        s.finish();
+        return crate::pages::library_changed(app);
     };
     let session = app.overlays.upload.session;
     app.net.run(
         move || {
-            ids.iter()
+            cleanup
+                .remove
+                .iter()
                 .filter(|id| match scope {
                     Scope::Personal => crate::api::library::delete_track(&client, id).is_ok(),
                     Scope::Global => crate::api::admin::delete_global_track(&client, id).is_ok(),
@@ -395,9 +400,7 @@ fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
             }
             s.cancel_note = Some(upload_cancel_note(added, removed));
             s.finish();
-            if changed {
-                crate::pages::library_changed(app);
-            }
+            crate::pages::library_changed(app);
         },
     );
 }

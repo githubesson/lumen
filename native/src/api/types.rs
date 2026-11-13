@@ -563,9 +563,11 @@ pub struct UploadResult {
     pub inserted: bool,
     /// A shared upload that took over someone's personal copy of the same
     /// audio: inserted into the shared library, but the track (its id) isn't
-    /// new, so a cancel must not delete it.
+    /// new, so a cancel must not delete it. Servers older than the field
+    /// leave it out (`None`): a shared upload's result there can't be told
+    /// apart, so it isn't undone.
     #[serde(default)]
-    pub promoted: bool,
+    pub promoted: Option<bool>,
     #[serde(default)]
     pub dedup: Option<bool>,
     #[serde(default)]

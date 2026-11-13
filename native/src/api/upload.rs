@@ -299,7 +299,7 @@ mod tests {
         let path = temp_file("a.mp3", b"ID3audio");
         let cancel = crate::api::Cancel::new();
         let results = upload_music(&server.client(), &[path], crate::core::upload::UploadScope::Personal, &cancel).unwrap();
-        assert!(results[0].inserted && results[0].promoted);
+        assert!(results[0].inserted && results[0].promoted == Some(true));
         let req = &server.requests()[0];
         assert_eq!((req.method.as_str(), req.path.as_str()), ("POST", "/api/library/upload"));
         let ct = req.header("content-type").unwrap();
