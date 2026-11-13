@@ -1174,7 +1174,8 @@ export interface UploadResult {
   /**
    * A shared upload that took over someone's personal copy of the same
    * audio: inserted into the shared library, but not a new track, so undoing
-   * the upload must leave it.
+   * the upload must leave it. Missing from servers older than the field: a
+   * shared upload's result there can't be told apart, so it isn't undone.
    */
   promoted?: boolean;
   dedup?: boolean;

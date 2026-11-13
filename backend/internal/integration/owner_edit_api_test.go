@@ -135,6 +135,9 @@ func TestSharedUploadReportsPromotion(t *testing.T) {
 		Promoted bool   `json:"promoted"`
 		TrackID  string `json:"track_id"`
 		Error    string `json:"error"`
+		// Whether the field was there at all: clients tell an older server,
+		// which never sends it, by its absence.
+		saidPromoted bool
 	}
 	upload := func(as uuid.UUID, scope string) uploadResult {
 		t.Helper()
@@ -157,9 +160,12 @@ func TestSharedUploadReportsPromotion(t *testing.T) {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		var results []uploadResult
-		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &results) != nil || len(results) != 1 {
+		var raw []map[string]json.RawMessage
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &results) != nil || len(results) != 1 ||
+			json.Unmarshal(rec.Body.Bytes(), &raw) != nil {
 			t.Fatalf("upload as %s = %d %s", scope, rec.Code, rec.Body)
 		}
+		_, results[0].saidPromoted = raw[0]["promoted"]
 		return results[0]
 	}
 
@@ -176,7 +182,7 @@ func TestSharedUploadReportsPromotion(t *testing.T) {
 	if data, err = os.ReadFile(fresh); err != nil {
 		t.Fatal(err)
 	}
-	if got := upload(admin, "global"); !got.Inserted || got.Promoted {
-		t.Fatalf("shared upload of new audio = %+v, want inserted, not promoted", got)
+	if got := upload(admin, "global"); !got.Inserted || got.Promoted || !got.saidPromoted {
+		t.Fatalf("shared upload of new audio = %+v, want inserted, and \"promoted\": false said outright", got)
 	}
 }

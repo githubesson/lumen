@@ -170,10 +170,13 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       if (ctrl.signal.aborted) {
         // Take back what finished before the cancel; nothing half-done stays.
         // A promoted track was someone's personal upload before this one
-        // shared it: not new, so it stays.
+        // shared it: not new, so it stays. A server too old to say leaves a
+        // shared upload's tracks in doubt, so those stay too (counted below
+        // as left for the user to delete).
         const addedHere = uploaded.filter((r) => r.inserted && !r.promoted && r.track_id);
+        const removable = addedHere.filter((r) => scopeSent !== "global" || r.promoted === false);
         let removed = 0;
-        for (const r of addedHere) {
+        for (const r of removable) {
           if (!r.track_id) continue;
           try {
             await (scopeSent === "global" ? api.deleteGlobalTrack(r.track_id) : api.deleteTrack(r.track_id));

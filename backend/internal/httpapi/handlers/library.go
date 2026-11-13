@@ -125,8 +125,10 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		Inserted bool   `json:"inserted"`
 		// Promoted: a shared upload that took over someone's personal copy
 		// of the same audio. Inserted into the shared library, but the track
-		// isn't new, so a cancel must not delete it.
-		Promoted bool   `json:"promoted,omitempty"`
+		// isn't new, so a cancel must not delete it. Always sent, false
+		// included: a client can then tell this server from an older one
+		// that doesn't say, and leave a shared upload's tracks alone there.
+		Promoted bool   `json:"promoted"`
 		Dedup    bool   `json:"dedup,omitempty"`
 		Skipped  bool   `json:"skipped,omitempty"`
 		Error    string `json:"error,omitempty"`

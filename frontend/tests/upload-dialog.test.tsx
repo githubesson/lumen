@@ -267,3 +267,28 @@ it("starts a new selection once after results, then adds the next walk to it", a
   });
   expect(screen.getByRole("button", { name: "Upload 2" })).toBeTruthy();
 });
+
+it("leaves a shared upload's tracks when the server is too old to say which it promoted", async () => {
+  const m = mock as unknown as Record<string, ReturnType<typeof vi.fn>>;
+  m.deleteGlobalTrack = vi.fn(async () => {});
+  mock.uploadMusic
+    .mockImplementationOnce(async (files: File[]) => files.map((f, i) => ({ file: f.name, inserted: true, track_id: `old-${i}` })))
+    .mockImplementationOnce(async (files: File[]) => files.map((f, i) => ({ file: f.name, inserted: true, promoted: false, track_id: `new-${i}` })))
+    .mockImplementationOnce((_files: File[], _scope: string, { signal }: { signal: AbortSignal }) =>
+      new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    );
+  render(<UploadDialog open isAdmin onClose={() => {}} />);
+  fireEvent.change(await screen.findByLabelText(/Drop files or folders here/), {
+    target: { files: [file("one.flac", 60 * MB), file("two.flac", 60 * MB), file("three.flac", 60 * MB)] },
+  });
+  fireEvent.click(screen.getByRole("radio", { name: /Global/ }));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 3" }));
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Cancel upload" }));
+  });
+  // Only the one the server said is new goes; the unknown one stays, and the note says so.
+  expect(m.deleteGlobalTrack.mock.calls.map(([id]) => id)).toEqual(["new-0"]);
+  expect(screen.getByText(/Removed 1 of 2 tracks it had added; delete the rest from your library\./)).toBeTruthy();
+});
