@@ -197,10 +197,11 @@ pub fn probe_from_status(status: u16, text: &str) -> StreamProbe {
     StreamProbe { reason, answer: detail_line(Some(&format!("HTTP {status}{said}"))).unwrap_or_default() }
 }
 
-/// `proxyPageNote`: an HTML error page instead of Lumen's plain-text answer
-/// means the server never answered: a proxy in front of it did. Say so, with
-/// the page's title and whose page it is when it says, so a report points the
-/// right way.
+/// `proxyPageNote`: Lumen's server answers a failure in plain text, so an
+/// HTML error page likely came from something in front of it. Say what it
+/// was, with the page's title, and name the proxy only when the page names
+/// itself, so a report points the right way without blaming a proxy that
+/// isn't there.
 fn proxy_page_note(text: &str) -> String {
     if !text.trim_start().starts_with('<') {
         return String::new();
@@ -208,13 +209,16 @@ fn proxy_page_note(text: &str) -> String {
     let lower = text.to_ascii_lowercase();
     let title = page_title(text, &lower).map(|t| format!(" (\"{t}\")")).unwrap_or_default();
     let from = if lower.contains("cloudflare") {
-        " from Cloudflare"
+        Some("Cloudflare")
     } else if lower.contains("nginx") {
-        " from nginx"
+        Some("nginx")
     } else {
-        ""
+        None
     };
-    format!(" · a proxy's error page{title}{from}, not Lumen's server")
+    match from {
+        Some(from) => format!(" · a proxy's error page{title} from {from}, not Lumen's server"),
+        None => format!(" · an HTML error page{title}, likely from a proxy in front of Lumen's server"),
+    }
 }
 
 /// `/<title[^>]*>([^<]{1,120})<\/title>/i`, trimmed; `lower` is `text` in ASCII
@@ -268,7 +272,7 @@ mod tests {
         let p = probe_from_status(503, "TIDAL refused this track in your region");
         assert_eq!(p.reason.as_deref(), Some("TIDAL refused this track in your region"));
         let p = probe_from_status(502, "<html>bad gateway</html>");
-        assert_eq!(p, StreamProbe { reason: None, answer: "HTTP 502 · a proxy's error page, not Lumen's server".into() });
+        assert_eq!(p, StreamProbe { reason: None, answer: "HTTP 502 · an HTML error page, likely from a proxy in front of Lumen's server".into() });
     }
 
     #[test]
@@ -279,8 +283,14 @@ mod tests {
         assert_eq!(probe_from_status(504, page).answer, "HTTP 504 · a proxy's error page (\"Error\") from nginx, not Lumen's server");
         // A title that's empty, too long or unclosed isn't one.
         for page in ["<html><title> </title>", &format!("<title>{}</title>", "x".repeat(121)), "<title>Bad"] {
-            assert_eq!(probe_from_status(500, page).answer, "HTTP 500 · a proxy's error page, not Lumen's server", "{page}");
+            assert_eq!(probe_from_status(500, page).answer, "HTTP 500 · an HTML error page, likely from a proxy in front of Lumen's server", "{page}");
         }
+        // A page that doesn't say whose it is names no proxy.
+        let page = "<html><head><title>503 Service Unavailable</title></head><body>Try again later.</body></html>";
+        assert_eq!(
+            probe_from_status(503, page).answer,
+            "HTTP 503 · an HTML error page (\"503 Service Unavailable\"), likely from a proxy in front of Lumen's server"
+        );
         // Plain text too long to show isn't a page.
         assert_eq!(probe_from_status(500, &"x".repeat(301)).answer, "HTTP 500");
     }
