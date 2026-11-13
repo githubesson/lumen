@@ -1,5 +1,5 @@
 import type { CoverUploadFile, TrackPatch, UploadResult } from "@music-library/core";
-import { api, errorMessage } from "../api";
+import { ApiError, api, errorMessage } from "../api";
 import { waitOutRateLimit, type UploadScope } from "@music-library/core/upload";
 
 /** Details typed in before uploading; blank fields keep the file's tags. */
@@ -70,14 +70,23 @@ export async function applyUploadEdits(
       }
       if (cover && track.album_id && !coveredAlbums.has(track.album_id)) {
         const albumId = track.album_id;
-        await waitOutRateLimit<unknown>(
-          () =>
-            scope === "global"
-              ? api.setAlbumCover(albumId, cover, { signal })
-              : api.setTrackCover(trackId, cover, { signal }),
-          signal,
-        );
+        // Tried once per album: an image the server refuses (too big, not an
+        // image) would be refused for every other track of it too. Only a
+        // failure that may pass next time (the network, the server, a rate
+        // limit outlasted) leaves the album for its next track to try.
         coveredAlbums.add(albumId);
+        try {
+          await waitOutRateLimit<unknown>(
+            () =>
+              scope === "global"
+                ? api.setAlbumCover(albumId, cover, { signal })
+                : api.setTrackCover(trackId, cover, { signal }),
+            signal,
+          );
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status === 429 || err.status >= 500) coveredAlbums.delete(albumId);
+          throw err;
+        }
       }
       out.push(result);
     } catch (err) {

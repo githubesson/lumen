@@ -237,3 +237,17 @@ it("adds two folder walks that finish out of order to each other", async () => {
   });
   expect(screen.getByRole("button", { name: "Upload 2" })).toBeTruthy();
 });
+
+it("doesn't take more files while an upload is going", async () => {
+  mock.uploadMusic.mockImplementationOnce(() => new Promise(() => {}));
+  await pick([file("one.flac")]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  const input = screen.getByLabelText(/Drop files or folders here/) as HTMLInputElement;
+  expect(input.disabled).toBe(true);
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [file("late.flac")] } });
+  });
+  expect(screen.getByRole("button", { name: "Uploading 0 of 1…" })).toBeTruthy();
+});

@@ -90,7 +90,9 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
 
   // Picks and drops add to the selection, so files and folders can be mixed.
   const accept = (list: FileList | File[] | null) => {
-    if (!list || list.length === 0) return;
+    // An upload reads the selection once, as it starts: files added during
+    // it would show as selected but never go.
+    if (busy || !list || list.length === 0) return;
     const all = Array.from(list);
     // Against the selection as it is now: two folder walks can finish in
     // either order, and each must add to what the other added.
@@ -193,7 +195,10 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
         ]);
       }
     } finally {
-      if (uploadAddedAny(uploaded)) libraryChanged.emit();
+      // After a cancel too: a batch the server finished as the cancel went
+      // out never reached `uploaded`, and its tracks stay; the library shows
+      // them rather than looking unchanged.
+      if (ctrl.signal.aborted || uploadAddedAny(uploaded)) libraryChanged.emit();
       abortRef.current = null;
       setCancelling(false);
       setBusy(false);
@@ -306,6 +311,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             type="file"
             multiple
             accept={ACCEPT}
+            disabled={busy}
             className="sr-only"
             onChange={(e) => {
               accept(e.currentTarget.files);
