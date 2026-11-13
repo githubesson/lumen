@@ -292,3 +292,28 @@ it("leaves a shared upload's tracks when the server is too old to say which it p
   expect(m.deleteGlobalTrack.mock.calls.map(([id]) => id)).toEqual(["new-0"]);
   expect(screen.getByText(/Removed 1 of 2 tracks it had added; delete the rest from your library\./)).toBeTruthy();
 });
+
+it("doesn't add a dropped folder whose walk ends after the upload started", async () => {
+  mock.uploadMusic.mockImplementationOnce(() => new Promise(() => {}));
+  await pick([file("one.flac")]);
+  // A folder whose one file is still being read.
+  let finish: (f: File) => void = () => {};
+  const root = {
+    isFile: false, isDirectory: true, fullPath: "/Late",
+    createReader: () => {
+      let pages: unknown[][] = [[{ isFile: true, isDirectory: false, name: "late.flac", fullPath: "/Late/late.flac", file: (ok: (f: File) => void) => { finish = ok; } }], []];
+      return { readEntries: (ok: (e: unknown[]) => void) => { ok(pages[0]); pages = pages.slice(1); } };
+    },
+  };
+  await act(async () => {
+    fireEvent.drop(document.querySelector(".fixed")!, {
+      dataTransfer: { items: [{ kind: "file", webkitGetAsEntry: () => root }], files: [] },
+    });
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  await act(async () => { finish(file("late.flac")); });
+  expect(screen.getByRole("button", { name: "Uploading 0 of 1…" })).toBeTruthy();
+  expect(screen.queryByText("Late/late.flac")).toBeNull();
+});

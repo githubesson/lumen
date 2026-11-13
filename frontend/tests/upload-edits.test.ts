@@ -112,6 +112,8 @@ it("doesn't send a refused cover again for each of the album's tracks, but retri
   let out = await applyUploadEdits(three, [0, 1, 2], edits, "personal");
   expect(mock.setTrackCover).toHaveBeenCalledTimes(1);
   expect(out.map((r) => !!r.error)).toEqual([true, false, false]);
+  // The details went in; the message says only the art didn't.
+  expect(out[0].error).toBe("Added, but the cover art wasn't saved: image too large");
 
   mock.setTrackCover.mockReset();
   mock.setTrackCover.mockRejectedValueOnce(new ApiError(502, "bad gateway")).mockResolvedValue({});

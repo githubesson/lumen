@@ -44,6 +44,9 @@ interface Props {
  * so the modal itself still benefits from the shared scrim / header / footer
  * / transition / Escape-to-close behavior.
  */
+/** How long after a cancel the library reloads again, once the server has undone it. */
+const CANCEL_SETTLE_MS = 2000;
+
 export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Props) {
   const { mounted } = useTransitionMount(open, 200);
   const [scope, setScope] = useState<UploadScope>(() => defaultUploadScope(isAdmin));
@@ -88,9 +91,11 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       return next;
     });
 
-  // Whether results are up, as of the last pick (state would be stale in a
-  // walk that finishes after another one).
+  // Whether results are up, as of the last pick, and whether an upload is
+  // going: refs, since a folder walk that finishes later calls the `accept`
+  // of the render it started in.
   const resultsShownRef = useRef(false);
+  const busyRef = useRef(false);
   useEffect(() => {
     resultsShownRef.current = results !== null;
   }, [results]);
@@ -99,7 +104,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const accept = (list: FileList | File[] | null) => {
     // An upload reads the selection once, as it starts: files added during
     // it would show as selected but never go.
-    if (busy || !list || list.length === 0) return;
+    if (busyRef.current || !list || list.length === 0) return;
     const all = Array.from(list);
     // Against the selection as it is now: two folder walks can finish in
     // either order, and each must add to what the other added. Picking after
@@ -125,6 +130,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       setError("Add an album title to set its album artist.");
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     setCancelNote(null);
@@ -208,10 +214,18 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
         ]);
       }
     } finally {
-      // After a cancel too: a batch the server finished as the cancel went
-      // out never reached `uploaded`, and its tracks stay; the library shows
-      // them rather than looking unchanged.
-      if (ctrl.signal.aborted || uploadAddedAny(uploaded)) libraryChanged.emit();
+      if (ctrl.signal.aborted) {
+        // After a cancel too: a batch the server finished as the cancel went
+        // out never reached `uploaded`, and its tracks stay; the library
+        // shows them rather than looking unchanged. Again a moment later:
+        // the server undoes the request in flight only once it notices the
+        // cancel, so a reload right away can still list what it removes.
+        libraryChanged.emit();
+        setTimeout(() => libraryChanged.emit(), CANCEL_SETTLE_MS);
+      } else if (uploadAddedAny(uploaded)) {
+        libraryChanged.emit();
+      }
+      busyRef.current = false;
       abortRef.current = null;
       setCancelling(false);
       setBusy(false);
@@ -337,6 +351,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             multiple
             // Folder pick (every browser and Electron); its files carry webkitRelativePath.
             {...{ webkitdirectory: "", directory: "" }}
+            disabled={busy}
             className="sr-only"
             aria-label="Choose a folder"
             onChange={(e) => {

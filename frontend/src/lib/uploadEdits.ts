@@ -85,7 +85,10 @@ export async function applyUploadEdits(
           );
         } catch (err) {
           if (!(err instanceof ApiError) || err.status === 429 || err.status >= 500) coveredAlbums.delete(albumId);
-          throw err;
+          if (signal?.aborted) throw err;
+          // The details went in; only the art didn't.
+          out.push({ ...result, error: `Added, but the cover art wasn't saved: ${errorMessage(err, "unknown error")}` });
+          continue;
         }
       }
       out.push(result);
