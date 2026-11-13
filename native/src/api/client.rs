@@ -438,7 +438,9 @@ impl Client {
         }
         .map_err(|e| cut(transport_error(&e)))?;
 
-        if self.own.is_some() {
+        // An answer to a request sent before the session changed sets
+        // nothing: its clearing `Set-Cookie` would end the new session.
+        if self.own.is_some() && generation == self.inner.auth_generation.load(Ordering::Acquire) {
             self.keep_cookies(&response);
         }
         self.save_jar(false);
@@ -892,6 +894,30 @@ mod tests {
         assert_eq!(server.requests().len(), 3);
         // The shared connections stay up.
         shared.send("GET", "/api/four", Body::None).unwrap();
+    }
+
+    #[test]
+    fn a_cancellable_answer_from_before_the_session_changed_sets_no_cookies() {
+        use crate::api::testing::{MockServer, Res};
+        let shared: Arc<Mutex<Option<Client>>> = Arc::default();
+        let handle = shared.clone();
+        let server = MockServer::with_handler(move |req| match req.path.as_str() {
+            "/api/old" => Res::json("{}").header("Set-Cookie", "session=old; Path=/"),
+            "/api/new" => Res::json("{}").header("Set-Cookie", "session=new; Path=/"),
+            // A sign-out and a sign-in while this request waits on the
+            // server, which then clears the session it was sent with.
+            _ => {
+                let shared = handle.lock().unwrap().clone().unwrap();
+                shared.send("GET", "/api/new", Body::None).unwrap();
+                shared.advance_auth_generation();
+                Res::json("{}").header("Set-Cookie", "session=; Max-Age=0; Path=/")
+            }
+        });
+        let client = server.client();
+        *shared.lock().unwrap() = Some(client.clone());
+        client.send("GET", "/api/old", Body::None).unwrap();
+        client.with_cancel(&Cancel::new()).send("GET", "/api/logout", Body::None).unwrap();
+        assert_eq!(client.cookie_header().as_deref(), Some("session=new"));
     }
 
     #[test]
