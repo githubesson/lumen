@@ -142,6 +142,10 @@ fn serve(stream: TcpStream, handler: &Handler, seen: &Mutex<Vec<Req>>) {
         .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, v)| v.parse().ok())
         .unwrap_or(0);
+    // As Go's server does once a handler reads the body.
+    if headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("expect") && v.eq_ignore_ascii_case("100-continue")) {
+        let _ = (&stream).write_all(b"HTTP/1.1 100 Continue\r\n\r\n");
+    }
     let mut body = vec![0; len];
     let _ = reader.read_exact(&mut body);
     let req = Req { method, path, headers, body };

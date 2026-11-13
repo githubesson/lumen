@@ -3,9 +3,9 @@
 //! details if wanted, and send them to the library (admins choose the shared
 //! library or their own) in batches that stay under the server's request
 //! cap, one after another, each waiting out the server's rate limit. The
-//! footer's "Cancel upload" gives up the request in flight at once (the
-//! server undoes what it had added, if it hadn't finished) and deletes what
-//! the earlier requests added; nothing else closes the dialog while an
+//! footer's "Cancel upload" closes the connection of the request in flight
+//! (the server undoes what it had added, if it hadn't finished) and deletes
+//! what the earlier requests added; nothing else closes the dialog while an
 //! upload runs, and nothing in it changes.
 //!
 //! Drops land anywhere in the window while the dialog is open. Rune's open
@@ -17,6 +17,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rune::{Color, Cursor, Cx, El, GrowthSpec, TextEdit, col, el, row, text};
 
@@ -341,6 +342,9 @@ fn send_batch(app: &mut App, mut run: Run) {
     let (cancel, edits, scope, covered) = (run.cancel.clone(), run.edits.clone(), run.scope, run.covered.clone());
     app.net.run(
         move || -> ApiResult<Vec<UploadResult>> {
+            // One set of connections for the batch and its edits, which the
+            // cancel closes.
+            let client = client.with_cancel(&cancel);
             let mut results = wait_out_rate_limit(&cancel, || crate::api::upload::upload_music(&client, &files, scope, &cancel))?;
             upload_edits::apply(&client, &files, &mut results, &edits, scope, &cancel, &covered);
             Ok(results)
@@ -384,10 +388,15 @@ fn send_batch(app: &mut App, mut run: Run) {
     );
 }
 
+/// How long after a cancel the library reloads again, once the server has
+/// undone the request in flight (`CANCEL_SETTLE_MS`).
+const CANCEL_SETTLE: Duration = Duration::from_secs(2);
+/// And once more for a shared upload, which first finishes the file it was
+/// reading (`CANCEL_SETTLE_SHARED_MS`).
+const CANCEL_SETTLE_SHARED: Duration = Duration::from_secs(30);
+
 /// A cancelled upload: take back what its finished requests added (the
 /// request in flight the server undoes itself), then say how that went.
-/// The library refreshes either way: a batch the server finished as the
-/// cancel went out never reached `uploaded`, and its tracks stay.
 fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
     let cleanup = cancel_cleanup(&uploaded, scope);
     let added = cleanup.added;
@@ -395,7 +404,7 @@ fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
         let s = &mut app.overlays.upload;
         s.cancel_note = Some(upload_cancel_note(added, 0));
         s.finish();
-        return crate::pages::library_changed(app);
+        return settle(app, scope);
     };
     let session = app.overlays.upload.session;
     app.net.run(
@@ -416,9 +425,24 @@ fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
             }
             s.cancel_note = Some(upload_cancel_note(added, removed));
             s.finish();
-            crate::pages::library_changed(app);
+            settle(app, scope);
         },
     );
+}
+
+/// The library after a cancel: a batch the server finished as the cancel
+/// went out never reached `uploaded`, and its tracks stay, so it shows them
+/// rather than looking unchanged. Again a moment later: the server undoes
+/// the request in flight only once it notices the closed connection, so a
+/// reload right away can still list what it removes; and for a shared
+/// upload once more, after the file it was reading (a long one can take
+/// past that).
+fn settle(app: &mut App, scope: Scope) {
+    crate::pages::library_changed(app);
+    app.net.after(CANCEL_SETTLE, crate::pages::library_changed);
+    if scope == Scope::Global {
+        app.net.after(CANCEL_SETTLE_SHARED, crate::pages::library_changed);
+    }
 }
 
 /// `RadioCardOption` for one of the upload's scopes.
@@ -628,9 +652,11 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .items_center()
         .role("button")
         .label("Drop files or folders here, or click to choose files")
+        // While uploading the zone takes no picks (web disables its input):
+        // no focus and no hand cursor either.
         .disabled(s.busy)
-        .cursor(Cursor::Pointer)
-        .focusable(true)
+        .cursor(if s.busy { Cursor::Default } else { Cursor::Pointer })
+        .focusable(!s.busy)
         .on_press_tx(pick)
         .child(
             col()
@@ -757,3 +783,59 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::testing::{MockServer, Res};
+
+    fn server() -> MockServer {
+        MockServer::with_handler(|req| match (req.method.as_str(), req.path.as_str()) {
+            ("POST", "/api/library/upload") => Res::json(
+                r#"[{"file":"a.mp3","inserted":true,"track_id":"t1"},{"file":"b.mp3","inserted":true,"track_id":"t2"}]"#,
+            ),
+            ("DELETE", _) => Res::new(204),
+            _ => Res::json("[]"),
+        })
+    }
+
+    /// Times the library reloaded (Home, where tests start, reads its recent tracks).
+    fn reloads(s: &MockServer) -> usize {
+        s.requests().iter().filter(|r| r.method == "GET" && r.path.starts_with("/api/recent")).count()
+    }
+
+    /// An answer read whole as the cancel went out still counts: what it
+    /// added is taken back, so "nothing was added" stays true.
+    #[test]
+    fn an_answer_that_lands_after_the_cancel_is_taken_back() {
+        let s = server();
+        let mut app = App::for_tests(Some(s.client()));
+        for name in ["a.mp3", "b.mp3"] {
+            let path = crate::api::testing::temp_path(&format!("upload-dialog-{name}"));
+            std::fs::write(&path, b"ID3audio").unwrap();
+            app.overlays.upload.files.push(Picked { display: name.into(), size: Some(8), key: path.clone(), path });
+        }
+        // Headless, the request runs inline and its answer waits for the drain.
+        submit(&mut app);
+        cancel_or_close(&mut app);
+        while crate::net::Net::drain(&mut app) {}
+        let deleted: Vec<String> = s.requests().iter().filter(|r| r.method == "DELETE").map(|r| r.path.clone()).collect();
+        assert_eq!(deleted, ["/api/tracks/t1", "/api/tracks/t2"]);
+        let u = &app.overlays.upload;
+        assert_eq!(u.cancel_note.as_deref(), Some("Upload cancelled. Removed the 2 tracks it had already added."));
+        assert!(!u.busy && u.results.is_none());
+        // At once and once the server has undone the request in flight.
+        assert_eq!(reloads(&s), 2);
+    }
+
+    #[test]
+    fn a_cancelled_shared_upload_reloads_once_more_after_the_file_in_progress() {
+        let s = server();
+        let mut app = App::for_tests(Some(s.client()));
+        settle(&mut app, Scope::Personal);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(reloads(&s), 2);
+        settle(&mut app, Scope::Global);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(reloads(&s), 5);
+    }
+}
