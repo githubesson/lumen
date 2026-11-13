@@ -60,6 +60,10 @@ pub struct Configure {
     pub card: Option<DiscordCard>,
 }
 
+/// A paused card comes down after this long, as Spotify's does, so a track
+/// left paused (or a finished queue) doesn't sit on the profile for hours.
+pub const PAUSED_CARD_TTL_MS: f64 = 10.0 * 60_000.0;
+
 /// The presence state machine. Times are milliseconds since the epoch.
 pub struct Engine {
     connector: Box<dyn Connector>,
@@ -70,7 +74,8 @@ pub struct Engine {
     card: DiscordCard,
     last_activity: Option<Activity>,
     last_start_ms: f64,
-    paused_since: Option<f64>,
+    /// When the paused card on show comes down (`expirePausedCard`).
+    paused_expiry: Option<f64>,
     /// The newest update asked for, confirmed by Discord or not. A card
     /// change or a reconnect redraws this one.
     requested: Option<(Activity, f64)>,
@@ -102,7 +107,7 @@ impl Engine {
             card: DiscordCard::default(),
             last_activity: None,
             last_start_ms: 0.0,
-            paused_since: None,
+            paused_expiry: None,
             requested: None,
             retry_after: 0.0,
             failures: 0,
@@ -118,7 +123,10 @@ impl Engine {
 
     /// When the engine next has something to do on its own.
     pub fn next_wake(&self) -> Option<f64> {
-        self.retry_at
+        match (self.retry_at, self.paused_expiry) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     fn cancel_retry(&mut self) {
@@ -283,10 +291,10 @@ impl Engine {
 
     /// `pushDiscordActivity`.
     pub fn push(&mut self, payload: Activity, now: f64) -> Result<(), String> {
-        if payload.is_playing { self.paused_since = None; }
-        else if self.paused_since.is_none() { self.paused_since = Some(now); }
-        // A newer update supersedes one waiting to be retried.
+        // A newer update supersedes one waiting to be retried, and restarts
+        // a paused card's time on show.
         self.cancel_retry();
+        self.paused_expiry = None;
         self.requested = Some((payload.clone(), now));
         if !self.ensure(now) {
             self.schedule_retry(payload, now);
@@ -321,6 +329,9 @@ impl Engine {
         let result = self.client.as_mut().expect("connected").set_activity(pid, Some(activity));
         match result {
             Ok(()) => {
+                if !payload.is_playing {
+                    self.paused_expiry = Some(now + PAUSED_CARD_TTL_MS);
+                }
                 self.last_activity = Some(payload);
                 self.last_start_ms = start;
                 Ok(())
@@ -335,7 +346,7 @@ impl Engine {
         // Forgotten first: a disconnect during the clear mustn't queue it to
         // be restored after the reconnect backoff.
         self.last_activity = None;
-        self.paused_since = None;
+        self.paused_expiry = None;
         self.last_start_ms = 0.0;
         self.requested = None;
     }
@@ -363,9 +374,16 @@ impl Engine {
 
     /// The retry timer, and a look at the connection for pings or a disconnect.
     pub fn tick(&mut self, now: f64) {
-        if self.paused_since.is_some_and(|at| now - at >= 600_000.0) {
-            self.clear(now);
-            return;
+        if self.paused_expiry.is_some_and(|at| at <= now) {
+            self.paused_expiry = None;
+            // Forgotten too, so a reconnect or a card change doesn't put it back.
+            self.requested = None;
+            let pid = self.pid;
+            if let Some(client) = self.client.as_mut()
+                && let Err(RpcError::Closed(_)) = client.set_activity(pid, None)
+            {
+                self.disconnected(now);
+            }
         }
         if let Some(client) = self.client.as_mut()
             && let Err(RpcError::Closed(_)) = client.poll()

@@ -109,8 +109,11 @@ END
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    // Watch creation as well as edits: a first-time local .env must rebuild settings.
-    println!("cargo:rerun-if-changed=.env");
+    // Only when it exists: Cargo counts a missing path as changed, which would
+    // rerun this script (and relink) on every build.
+    if Path::new(".env").exists() {
+        println!("cargo:rerun-if-changed=.env");
+    }
     let version = setting("LUMEN_BUILD_VERSION").unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").expect("cargo sets it"));
     let valid = {
         let (core, _) = version.split_once('-').unwrap_or((&version, ""));

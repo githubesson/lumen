@@ -87,14 +87,23 @@ fn dismiss(app: &mut App) {
 /// Save the open form with `send`: on success the library changed and the
 /// dialog closes; a failure shows under the form.
 fn submit(app: &mut App, send: impl FnOnce(&Client) -> ApiResult<()> + Send + 'static) {
+    submit_steps(app, move |client, _| send(client));
+}
+
+/// [`submit`] for a save of several requests: `send` sets `saved` once one
+/// has gone through, so a later failure still reloads the library.
+fn submit_steps(app: &mut App, send: impl FnOnce(&Client, &mut bool) -> ApiResult<()> + Send + 'static) {
     let Some(client) = app.client.clone() else { return };
     let s = &mut app.overlays.edit;
     s.busy = true;
     s.error = None;
     let nonce = s.nonce;
     app.net.run(
-        move || send(&client),
-        move |app, result| {
+        move || {
+            let mut saved = false;
+            (send(&client, &mut saved), saved)
+        },
+        move |app, (result, saved)| {
             let s = &mut app.overlays.edit;
             if s.nonce != nonce {
                 return;
@@ -105,7 +114,12 @@ fn submit(app: &mut App, send: impl FnOnce(&Client) -> ApiResult<()> + Send + 's
                     crate::pages::library_changed(app);
                     close(app);
                 }
-                Err(e) => s.error = Some(crate::overlays::error_message(&e, "Save failed.")),
+                Err(e) => {
+                    s.error = Some(crate::overlays::error_message(&e, "Save failed."));
+                    if saved {
+                        crate::pages::library_changed(app);
+                    }
+                }
             }
         },
     );

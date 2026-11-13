@@ -496,6 +496,18 @@ pub fn artist_link(app: &mut App, artist_id: &str) {
     app.navigate(next);
 }
 
+/// `AlbumCredits`' link for a credit with no library page: the TIDAL
+/// artist's page when known, else an artist search. The rest of the
+/// library's state stays, so the Library crumb returns there.
+pub fn credit_link(app: &mut App, name: &str, tidal_artist: Option<&str>) {
+    let next = super::library_drill::without_drill(&library_loc(app));
+    let next = match tidal_artist {
+        Some(id) => next.with("tidalArtist", Some(id)).with("artistName", Some(name)),
+        None => next.with("view", Some("artists")).with("q", Some(name)),
+    };
+    app.navigate(next);
+}
+
 /// The open album's or artist's tracks (a TIDAL album's from its payload).
 pub fn detail_tracks(app: &App) -> &[TrackListItem] {
     let d = &app.pages.library.detail;

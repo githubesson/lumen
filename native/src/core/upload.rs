@@ -153,6 +153,41 @@ pub fn upload_added_any(results: &[UploadResult]) -> bool {
     results.iter().any(|r| r.inserted)
 }
 
+/// `uploadErrorMessage`: an upload request's error, readable. A 413 is
+/// usually a proxy's body cap.
+pub fn upload_error_message(err: &crate::api::ApiError) -> String {
+    if err.status == 413 {
+        return "The server (or a proxy in front of it, like Cloudflare) refused a request this large.".into();
+    }
+    crate::api::error_message(err, "Upload failed.")
+}
+
+/// The tracks a cancelled upload takes back: what its finished requests
+/// added, each once. A promoted track (a shared upload that took over
+/// someone's personal copy) keeps its id and its owner, so it stays.
+pub fn cancel_cleanup_ids(results: &[UploadResult]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    results
+        .iter()
+        .filter(|r| r.inserted && !r.promoted)
+        .filter_map(|r| r.track_id.clone().filter(|id| !id.is_empty()))
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
+}
+
+/// What a cancelled upload says once it has taken back the `added` tracks
+/// its finished requests added, `removed` of them successfully.
+pub fn upload_cancel_note(added: usize, removed: usize) -> String {
+    use crate::format::pluralize;
+    if added == 0 {
+        "Upload cancelled. Nothing was added.".into()
+    } else if removed == added {
+        format!("Upload cancelled. Removed the {} it had already added.", pluralize(added as u64, "track"))
+    } else {
+        format!("Upload cancelled. Removed {removed} of {} it had added; delete the rest from your library.", pluralize(added as u64, "track"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +241,46 @@ mod tests {
         assert!(!upload_added_any(&[result(|r| r.error = Some("boom".into()))]));
         assert!(upload_added_any(&[result(|r| r.dedup = Some(true)), result(|r| r.inserted = true)]));
         assert!(!upload_added_any(&[]));
+    }
+
+    #[test]
+    fn a_cancel_takes_back_only_new_tracks() {
+        let results = [
+            result(|r| { r.inserted = true; r.track_id = Some("new".into()); }),
+            // Took over someone's personal copy: not ours to delete.
+            result(|r| { r.inserted = true; r.promoted = true; r.track_id = Some("theirs".into()); }),
+            result(|r| { r.dedup = Some(true); r.track_id = Some("old".into()); }),
+            result(|r| { r.inserted = true; r.track_id = Some(String::new()); }),
+            result(|r| r.inserted = true),
+            // The same track twice (two copies of one file) is deleted once.
+            result(|r| { r.inserted = true; r.track_id = Some("new".into()); }),
+            result(|r| { r.inserted = true; r.track_id = Some("new2".into()); }),
+        ];
+        assert_eq!(cancel_cleanup_ids(&results), vec!["new", "new2"]);
+        assert!(cancel_cleanup_ids(&[]).is_empty());
+        let promoted: UploadResult = serde_json::from_str(r#"{"file":"a.mp3","inserted":true,"promoted":true,"track_id":"t"}"#).unwrap();
+        assert!(cancel_cleanup_ids(&[promoted]).is_empty());
+        let plain: UploadResult = serde_json::from_str(r#"{"file":"a.mp3","inserted":true,"track_id":"t"}"#).unwrap();
+        assert_eq!(cancel_cleanup_ids(&[plain]), vec!["t"]);
+    }
+
+    #[test]
+    fn cancel_notes() {
+        assert_eq!(upload_cancel_note(0, 0), "Upload cancelled. Nothing was added.");
+        assert_eq!(upload_cancel_note(1, 1), "Upload cancelled. Removed the 1 track it had already added.");
+        assert_eq!(upload_cancel_note(3, 3), "Upload cancelled. Removed the 3 tracks it had already added.");
+        assert_eq!(upload_cancel_note(3, 1), "Upload cancelled. Removed 1 of 3 tracks it had added; delete the rest from your library.");
+    }
+
+    #[test]
+    fn upload_errors() {
+        use crate::api::ApiError;
+        assert_eq!(
+            upload_error_message(&ApiError::http(413, "<html>413</html>")),
+            "The server (or a proxy in front of it, like Cloudflare) refused a request this large."
+        );
+        assert_eq!(upload_error_message(&ApiError::http(507, "storage quota exceeded")), "storage quota exceeded");
+        assert_eq!(upload_error_message(&ApiError::transport("connection reset")), "Upload failed.");
     }
 
     #[test]

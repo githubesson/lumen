@@ -317,14 +317,35 @@ fn turning_presence_off_clears_and_disconnects() {
 }
 
 #[test]
-fn paused_card_expires_after_ten_minutes_and_play_restores_it() {
+fn a_paused_card_comes_down_ten_minutes_after_its_last_update() {
+    let fake = Fake::default();
+    let mut e = engine(&fake, Some(default_card()));
+    let paused = || Activity { is_playing: false, ..track("t1", "Song") };
+    e.push(paused(), 0.0).unwrap();
+    assert_eq!(e.next_wake(), Some(PAUSED_CARD_TTL_MS));
+    // Another update while paused (a seek, a card change) starts it again.
+    e.push(paused(), 300_000.0).unwrap();
+    e.tick(PAUSED_CARD_TTL_MS);
+    assert_eq!(fake.log().clears, 0);
+    e.tick(300_000.0 + PAUSED_CARD_TTL_MS);
+    assert_eq!((fake.log().clears, e.next_wake()), (1, None));
+    // Forgotten: a card change doesn't put it back.
+    e.configure(Configure { card: Some(DiscordCard { cover: !default_card().cover, ..default_card() }), ..Configure::default() }, 1_000_000.0);
+    assert_eq!(fake.log().requests.len(), 2);
+    // Playing again shows the card, with no expiry.
+    e.push(track("t1", "Song"), 1_001_000.0).unwrap();
+    assert_eq!((fake.log().requests.len(), e.next_wake()), (3, None));
+}
+
+#[test]
+fn playing_or_clearing_cancels_the_paused_expiry() {
     let fake = Fake::default();
     let mut e = engine(&fake, Some(default_card()));
     e.push(Activity { is_playing: false, ..track("t1", "Song") }, 0.0).unwrap();
-    e.tick(599_999.0);
+    e.push(track("t1", "Song"), 1_000.0).unwrap();
+    e.tick(PAUSED_CARD_TTL_MS + 1_000.0);
     assert_eq!(fake.log().clears, 0);
-    e.tick(600_000.0);
-    assert_eq!(fake.log().clears, 1);
-    e.push(track("t1", "Song"), 601_000.0).unwrap();
-    assert_eq!(fake.log().requests.len(), 2);
+    e.push(Activity { is_playing: false, ..track("t1", "Song") }, 2_000.0).unwrap();
+    e.clear(3_000.0);
+    assert_eq!(e.next_wake(), None);
 }

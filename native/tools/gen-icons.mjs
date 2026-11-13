@@ -36,7 +36,7 @@ for (const f of files) {
   }
 }
 // Used by the Rust port beyond the web imports.
-for (const extra of ["Square", "Maximize", "Copy"]) names.add(extra);
+for (const extra of ["Square", "Maximize", "Copy", "FolderOpen"]) names.add(extra);
 
 const FILLED = new Set(["Play", "Pause", "SkipBack", "SkipForward", "Heart"]);
 

@@ -561,6 +561,11 @@ pub struct UploadResult {
     pub file: String,
     #[serde(default)]
     pub inserted: bool,
+    /// A shared upload that took over someone's personal copy of the same
+    /// audio: inserted into the shared library, but the track (its id) isn't
+    /// new, so a cancel must not delete it.
+    #[serde(default)]
+    pub promoted: bool,
     #[serde(default)]
     pub dedup: Option<bool>,
     #[serde(default)]
