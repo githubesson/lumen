@@ -158,7 +158,7 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
                     b.disabled(true)
                 } else {
                     let album = a.clone();
-                    b.hover(t.c.ghost_hover).cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| move_to(app, album.clone()))
+                    b.cursor(Cursor::Pointer).focusable(true).on_press(move |app: &mut App| move_to(app, album.clone()))
                 };
                 list = list.child(b);
             }

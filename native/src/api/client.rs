@@ -50,21 +50,24 @@ pub struct ApiError {
     pub status: u16,
     pub message: String,
     pub kind: ErrorKind,
+    /// `retryAfterSeconds`: a failed answer's Retry-After, when it gave one
+    /// in seconds (a 429's or a 503's).
+    pub retry_after_seconds: Option<u64>,
 }
 
 impl ApiError {
     pub fn http(status: u16, message: impl Into<String>) -> ApiError {
-        ApiError { status, message: message.into(), kind: ErrorKind::Http }
+        ApiError { status, message: message.into(), kind: ErrorKind::Http, retry_after_seconds: None }
     }
     pub fn transport(message: impl Into<String>) -> ApiError {
-        ApiError { status: 0, message: message.into(), kind: ErrorKind::Network }
+        ApiError { status: 0, message: message.into(), kind: ErrorKind::Network, retry_after_seconds: None }
     }
     /// A client-side `ApiError` (bad input, a polling deadline).
     pub fn local(status: u16, message: impl Into<String>) -> ApiError {
-        ApiError { status, message: message.into(), kind: ErrorKind::Local }
+        ApiError { status, message: message.into(), kind: ErrorKind::Local, retry_after_seconds: None }
     }
     pub fn aborted() -> ApiError {
-        ApiError { status: 0, message: "The request was aborted.".into(), kind: ErrorKind::Aborted }
+        ApiError { status: 0, message: "The request was aborted.".into(), kind: ErrorKind::Aborted, retry_after_seconds: None }
     }
     pub fn is_unauthorized(&self) -> bool {
         self.status == 401 && self.is_api_error()
@@ -128,6 +131,7 @@ impl Reply {
             status: self.status,
             message: format!("Couldn't read the server's response: {e}"),
             kind: ErrorKind::Decode,
+            retry_after_seconds: None,
         })
     }
 
@@ -387,6 +391,7 @@ impl Client {
         let total = header("x-total-count").and_then(|v| v.trim().parse().ok());
         let etag = header("etag");
         let cache_control = header("cache-control");
+        let retry_after = header("retry-after");
         let mut body = Vec::new();
         if method != "HEAD" {
             response
@@ -412,7 +417,7 @@ impl Client {
             }
             // An empty body leaves the message empty, as over HTTP/2 (no
             // status text) on the web, so callers show their own fallback.
-            return Err(ApiError::http(status, text));
+            return Err(ApiError { retry_after_seconds: retry_after_seconds(retry_after.as_deref()), ..ApiError::http(status, text) });
         }
         Ok(Reply { status, content_type, total, etag, cache_control, body })
     }
@@ -547,10 +552,19 @@ fn origin(url: &str) -> String {
     format!("{scheme}://{host}")
 }
 
+/// `retryAfterSeconds`: a Retry-After in whole seconds (not a date).
+fn retry_after_seconds(value: Option<&str>) -> Option<u64> {
+    let v = value?.trim();
+    if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    v.parse().ok()
+}
+
 fn transport_error(e: &ureq::Error) -> ApiError {
     match e {
         ureq::Error::Timeout(_) => {
-            ApiError { status: 0, message: "The request timed out.".into(), kind: ErrorKind::Timeout }
+            ApiError { status: 0, message: "The request timed out.".into(), kind: ErrorKind::Timeout, retry_after_seconds: None }
         }
         ureq::Error::HostNotFound => ApiError::transport("Couldn't find the server."),
         ureq::Error::ConnectionFailed => ApiError::transport("Couldn't reach the server."),
@@ -658,6 +672,37 @@ impl Cancel {
         let (guard, _) = cv.wait_timeout_while(guard, d, |cancelled| !*cancelled).unwrap();
         !*guard
     }
+
+    /// A request the caller can give up on at any point, as `fetch` with a
+    /// signal: `send` runs on a thread of its own, and once this is
+    /// cancelled the call returns [`ApiError::aborted`] at once. The request
+    /// itself goes on to finish or fail by itself (its body may be sent
+    /// already, and a silent connection could hold it for good).
+    pub fn abortable<T: Send + 'static>(&self, send: impl FnOnce() -> ApiResult<T> + Send + 'static) -> ApiResult<T> {
+        self.check()?;
+        let done = Arc::new(Mutex::new(None));
+        let (slot, wake) = (done.clone(), self.clone());
+        std::thread::spawn(move || {
+            let result = send();
+            *slot.lock().unwrap() = Some(result);
+            // Under the flag's lock, so the waiter can't miss it between
+            // looking at the slot and sleeping.
+            let (flag, cv) = &*wake.inner;
+            let _held = flag.lock().unwrap();
+            cv.notify_all();
+        });
+        let (flag, cv) = &*self.inner;
+        let mut cancelled = flag.lock().unwrap();
+        loop {
+            if let Some(result) = done.lock().unwrap().take() {
+                return result;
+            }
+            if *cancelled {
+                return Err(ApiError::aborted());
+            }
+            cancelled = cv.wait(cancelled).unwrap();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -702,6 +747,45 @@ mod tests {
         assert_eq!(error_message(&ApiError::transport("dns"), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::aborted(), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::local(0, "pin id"), "fallback"), "pin id");
+    }
+
+    #[test]
+    fn retry_after_is_whole_seconds_only() {
+        assert_eq!(retry_after_seconds(Some(" 12 ")), Some(12));
+        assert_eq!(retry_after_seconds(Some("0")), Some(0));
+        for v in [None, Some(""), Some("1.5"), Some("-3"), Some("Wed, 21 Oct 2026 07:28:00 GMT")] {
+            assert_eq!(retry_after_seconds(v), None, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn an_abortable_request_returns_once_cancelled_or_done() {
+        let c = Cancel::new();
+        assert_eq!(c.abortable(|| Ok(7)), Ok(7));
+        assert_eq!(c.abortable(|| Err::<(), _>(ApiError::http(500, "boom"))).unwrap_err().status, 500);
+        // A request that never answers: the cancel ends the wait, not it.
+        let (c2, started) = (c.clone(), std::time::Instant::now());
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            c2.cancel();
+        });
+        let err = c.abortable(|| {
+            std::thread::sleep(Duration::from_secs(10));
+            Ok(())
+        });
+        canceller.join().unwrap();
+        assert!(err.unwrap_err().is_aborted());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Already cancelled: nothing runs.
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let r2 = ran.clone();
+        let err = c.abortable(move || {
+            r2.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        assert!(err.unwrap_err().is_aborted());
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(!ran.load(Ordering::SeqCst));
     }
 
     #[test]

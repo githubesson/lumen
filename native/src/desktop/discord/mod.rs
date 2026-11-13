@@ -376,8 +376,12 @@ impl Engine {
     pub fn tick(&mut self, now: f64) {
         if self.paused_expiry.is_some_and(|at| at <= now) {
             self.paused_expiry = None;
-            // Forgotten too, so a reconnect or a card change doesn't put it back.
+            // Forgotten too, so a reconnect (one already queued included) or
+            // a card change doesn't put it back.
             self.requested = None;
+            self.last_activity = None;
+            self.last_start_ms = 0.0;
+            self.cancel_retry();
             let pid = self.pid;
             if let Some(client) = self.client.as_mut()
                 && let Err(RpcError::Closed(_)) = client.set_activity(pid, None)

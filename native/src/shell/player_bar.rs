@@ -164,7 +164,7 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
         return error::line_button(app, t, summary, style, underline_at);
     }
     let shown = match linked(app, &d) {
-        Some(track) => ui::entity_links::line(track, ui::entity_links::np_artist_links(track), style, t.c.muted_foreground),
+        Some(track) => ui::entity_links::line_while(track, ui::entity_links::np_artist_links(track), style, t.c.muted_foreground, shows_links),
         None => line(d.artist.clone(), style, t.c.muted_foreground),
     };
     shown.tip_truncated("np-artist", &d.artist, style)
@@ -174,6 +174,12 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
 /// (not the mini player's), and not while a failure shows in their place.
 fn linked<'a>(app: &App, d: &display::Display<'a>) -> Option<&'a crate::api::TrackListItem> {
     d.current.filter(|_| !app.ui.player.mini.on && d.error.is_none())
+}
+
+/// Whether the bar still shows its links: a lookup they started lands only
+/// then (a failure or the mini player taking their place drops it).
+fn shows_links(app: &App) -> bool {
+    linked(app, &display::display(app)).is_some()
 }
 
 /// Right-click on the now-playing block opens the track's menu (not while
@@ -196,7 +202,7 @@ fn now_playing(app: &App, t: &Theme, bp: Bp) -> El {
     let d = display::display(app);
     let title_style = font(14.0, 500.0);
     let title = match linked(app, &d) {
-        Some(track) => ui::entity_links::line(track, ui::entity_links::album_title_link(&d.title), title_style, t.c.foreground),
+        Some(track) => ui::entity_links::line_while(track, ui::entity_links::album_title_link(&d.title), title_style, t.c.foreground, shows_links),
         None => line(d.title.clone(), title_style, t.c.foreground),
     };
     // 6 px apart, not 2: the title and the artist line are both links, each

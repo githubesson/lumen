@@ -30,6 +30,8 @@ pub struct Widgets {
     pub tooltip: tooltip::State,
     pub shelves: shelf::Shelves,
     pub numbers: blocks::Numbers,
+    /// `latestActivation` (`EntityLinks.tsx`): see [`entity_links::overtake`].
+    pub link_activation: u64,
 }
 
 use rune::{Color, El, Family, Icon, TextStyle, icon, text};
