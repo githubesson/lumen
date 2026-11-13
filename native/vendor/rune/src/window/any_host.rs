@@ -96,12 +96,12 @@ impl<S: 'static> AnyHost for Host<S> {
         if let Some(w) = &mut self.win && !w.visible && w.hidden_pace.take_due(Instant::now()) {
             w.window.request_redraw();
         }
-        if matches!(cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll)
-            && timer_deadline(&self.rt).is_some_and(|deadline| deadline <= Instant::now())
-        {
-            // A Wayland redraw can remain pending for an entire workspace absence.
-            // Timers must keep driving playback even when that frame never arrives.
-            let hidden = self.wayland || self.win.as_ref().is_none_or(|w| !w.visible);
+        let timed = matches!(cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll);
+        // Lumen patch: the poll a Wayland frame that never came would have run (`redraw_watch`).
+        let stall_due = timed && self.redraw_watch.take_due(Instant::now());
+        if timed && (stall_due || timer_deadline(&self.rt).is_some_and(|deadline| deadline <= Instant::now())) {
+            let stalled = self.redraw_watch.stalled(Instant::now());
+            let hidden = stalled || self.win.as_ref().is_none_or(|w| !w.visible);
             if hidden && !(launcher && self.hidden_launcher_renders()) {
                 // Hidden or windowless: poll and due timers run, and the view waits for the
                 // frame that shows the window. A launcher's cached frame follows, paced.
@@ -109,9 +109,8 @@ impl<S: 'static> AnyHost for Host<S> {
                 self.clipboard.flush(&mut self.rt);
                 self.shell(event_loop);
                 if changed && launcher { self.refresh_hidden(); }
-                if changed && self.wayland {
-                    if let Some(w) = self.win.as_ref().filter(|w| w.visible) { w.window.request_redraw(); }
-                }
+                // Lumen patch: shown but not drawn, it still asks for the frame.
+                if changed && stalled && let Some(w) = self.win.as_ref().filter(|w| w.visible) { w.window.request_redraw(); }
             // A redraw while the window backs off would draw nothing and leave the timer due.
             } else if self.win.as_ref().is_some_and(|w| (launcher || (w.visible && !w.occluded)) && !w.minimized()
                 && !w.backing_off(Instant::now())) {
@@ -131,6 +130,8 @@ impl<S: 'static> AnyHost for Host<S> {
                 if frame && let Some(w) = &mut self.win {
                     w.quiet = true;
                     w.window.request_redraw();
+                    // Lumen patch: watch for it on Wayland.
+                    if self.wayland { self.redraw_watch.asked(Instant::now()); }
                 }
             } else {
                 covered_step(&mut self.rt);
@@ -152,6 +153,8 @@ impl<S: 'static> AnyHost for Host<S> {
             .chain(win.and_then(Win::cloak_deadline))
             .chain(win.and_then(|w| w.retry))
             .chain(win.filter(|w| !w.visible).and_then(|w| w.hidden_pace.deadline()))
+            // Lumen patch: the poll for a frame that didn't come (`redraw_watch`).
+            .chain(win.filter(|w| w.visible).and_then(|_| self.redraw_watch.deadline()))
             .chain(self.files.pointer.as_ref().filter(|_| win.is_some_and(|w| w.visible)).map(|_| Instant::now() + DROP_SAMPLE))
             .chain(win.filter(|w| w.visible).and_then(|w| w.cursor.reassert_at(Instant::now())))
             .min()

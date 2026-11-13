@@ -169,26 +169,39 @@ Hooks in upstream files:
 - `src/window.rs` (`surface_config`): the drawable takes `COPY_DST` where the surface allows
   it, so the canvas is copied in rather than drawn.
 
+#### Return activates a focused element link
 
-## Element-link keyboard activation (2026-11-11)
+Return went to a focused rich-text link, a `focus_highlight` row or a list item, but not to
+an element with `role("link")` (Home's "Jump back in" album title, the player bar's title):
+Tab drew its ring, and Return pressed the window's default button instead, or nothing.
+`Runtime::takes_return` now counts that role too. Its test,
+`return_activates_an_element_link_before_the_default_button`, sits with the module's own
+tests in `src/runtime/input/focus.rs` (Rune's in-source tests don't run here; run it in a
+checkout of upstream at the pinned rev with the patched file copied over).
 
-`runtime/input/focus.rs`: Return recognizes a focused `role("link")` element
-with an `on_press` handler, as well as rich-text links. Previously Tab drew its
-focus ring but Enter skipped it (and could activate a default button instead).
-The focused-link regression checks precedence over a default button; native
-Home title Tab/Enter is also exercised in the Lumen affordance audit.
+Hooks in upstream files:
 
-## Wayland background app polling (2026-11-11)
+- `src/runtime/input/focus.rs`: `takes_return`, and the test.
 
-`window/lifecycle.rs` and `window/any_host.rs`: service explicit app wakes and
-due runtime timers independently of redraw callbacks on Wayland. A compositor
-may withhold those callbacks on an inactive workspace without an occlusion event.
-Previously MPRIS commands queued until the window became visible again. Polling
-uses the existing no-draw runtime path and bounded timer deadlines; changed views
-still request a redraw for when the compositor can present them. Other platforms
-retain their existing pacing.
+#### Wayland: poll past a frame the compositor never answers
 
-Native Hyprland regression: play/pause/toggle/next/previous and advancing position
-on a focused window, unfocused window, inactive workspace and special minimized
-workspace, followed by restoring the visible app. Use a separate test profile,
-local audio fixture and private session bus to avoid real account/Discord activity.
+A Wayland compositor may stop sending frame callbacks to a window it doesn't show (another
+workspace, hidden or minimised) without reporting it occluded, so winit never delivers the
+redraw asked for. A wake (`AppHandle`, which the media session's commands use) or a due timer
+on a shown window waits for that frame to poll, so play/pause from the media keys or MPRIS
+queued until the window showed again. `src/window/redraw_watch.rs` (new) notes when a frame
+asked for a wake or timer goes unanswered; once it is 250 ms overdue, the host polls without
+it, once at that deadline and then at each wake and due timer, as for a hidden window, and
+still asks for the frame. The first frame that comes ends it. Only Wayland arms it; a shown
+window that draws keeps polling in its frames, so tooltips, hover delays, press repeat and
+loops still get theirs.
+
+Hooks in upstream files:
+
+- `src/window.rs`: `mod redraw_watch`; `Host::redraw_watch`.
+- `src/window/any_host.rs`: `new_events` runs the overdue frame's poll and takes the hidden
+  path while it is overdue, and the timer's frame arms the watch; `wake_deadline` wakes for
+  it.
+- `src/window/lifecycle.rs`: `poll_hidden` polls a shown window whose frame is overdue; the
+  wake's frame (`drain`) arms the watch.
+- `src/window/events.rs`: `RedrawRequested` ends it.

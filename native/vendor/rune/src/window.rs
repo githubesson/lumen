@@ -57,6 +57,8 @@ mod lifecycle;
 #[cfg(target_os = "macos")]
 mod mac;
 mod pacing;
+/// Lumen patch: polls past a frame a Wayland compositor never answers.
+mod redraw_watch;
 pub(crate) use pacing::{
     HiddenPace, Missed, OCCLUDED_MAX, OCCLUDED_RETRY, TIMEOUT_RETRY, TIMER_FRAME, acquire, acquire_checked,
     timer_deadline, timer_wants_frame,
@@ -381,6 +383,8 @@ struct Host<S: 'static> {
     comp: Option<Box<dyn Compositor<S>>>,
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     wayland: bool,
+    /// The frame a wake or timer asked for, on Wayland, until it comes (Lumen patch).
+    redraw_watch: redraw_watch::RedrawWatch,
     /// The window's frame moving to where a handler asked (`Tx::resize_window`), top-down
     /// screen points on the host's frame clock. macOS only; elsewhere frames change at once.
     frame_anim: Option<crate::window::frame::FrameAnim>,
@@ -525,6 +529,7 @@ impl<S: 'static> Host<S> {
             frame_anim: None,
             frame_origin: None,
             frame_jump: None,
+            redraw_watch: Default::default(),
             trace: None,
             trace_start: None,
             trace_frames: 0,

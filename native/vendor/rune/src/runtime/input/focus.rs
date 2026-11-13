@@ -101,6 +101,7 @@ impl<S: 'static> Runtime<S> {
     /// Whether Return goes to focused element `i` rather than the default button: a focused
     /// link, a `focus_highlight` row, or an item of a menu, list, tree or grid group.
     fn takes_return(&self, i: usize) -> bool {
+        // Lumen patch: an element with `role("link")` too.
         self.link_focused(i) || self.nodes[i].role == "link" || self.nodes[i].focus.highlight.is_some()
             || self.group(i).is_some_and(|g| LIST_ROLES.contains(&self.nodes[g].role) || VERTICAL_ROLES.contains(&self.nodes[g].role))
     }
@@ -1017,6 +1018,7 @@ mod tests {
         assert!(rings(&rt).is_empty(), "a menu item's highlight shows its focus");
     }
 
+    // Lumen patch.
     #[test]
     fn return_activates_an_element_link_before_the_default_button() {
         fn view(_: &Keys, _: &mut Cx<Keys>) -> El {

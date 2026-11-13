@@ -210,6 +210,8 @@ impl<S: 'static> Host<S> {
             WindowEvent::DroppedFile(path) => { self.files.file(path, true); return; }
             WindowEvent::HoveredFileCancelled => { self.files.steps.push(FileStep::Leave); return; }
             WindowEvent::RedrawRequested => {
+                // Lumen patch: the frame a wake or timer asked for came.
+                self.redraw_watch.answered();
                 // A new accent, scroller style or light/dark preference asks every window to redraw.
                 self.rt.set_system_accent(crate::system_accent());
                 self.rt.set_system_scroll_bars_state(crate::platform::scroll_bars::current().with_override(self.args.scroll_bars));
