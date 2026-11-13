@@ -59,23 +59,33 @@ impl Settings {
 
     /// The cut that keeps the cascade's loudest frequency at the preamp's level:
     /// the peak of its magnitude response, over a log-spaced grid from 20 Hz to
-    /// 20 kHz plus each band's centre, at 48 kHz. Cuts alone need none. Sample
-    /// peaks and crossfades can still exceed full scale; this is not a limiter.
+    /// 20 kHz plus each band's centre, at whichever of the common output rates
+    /// peaks highest (the upper bands widen as the rate rises, so treble
+    /// boosts overlap more at 96 and 192 kHz than at 48). Cuts alone need
+    /// none. Sample peaks and crossfades can still exceed full scale; this is
+    /// not a limiter.
     pub fn headroom_db(&self) -> f32 {
-        const RATE: u32 = 48_000;
-        const POINTS: usize = 512;
         let s = self.sanitized();
         if s.bands.iter().all(|db| *db <= 0.0) {
             return 0.0;
         }
-        let cascade: [Coeff; 10] = std::array::from_fn(|i| peak(RATE, FREQUENCIES[i], s.bands[i]));
+        HEADROOM_RATES.iter().map(|rate| s.peak_db(*rate)).fold(0.0, f64::max) as f32
+    }
+
+    /// The cascade's loudest gain at `rate`, in dB, over the grid above.
+    fn peak_db(&self, rate: u32) -> f64 {
+        const POINTS: usize = 512;
+        let cascade: [Coeff; 10] = std::array::from_fn(|i| peak(rate, FREQUENCIES[i], self.bands[i]));
         (0..POINTS)
             .map(|i| 20.0 * 1000.0f64.powf(i as f64 / (POINTS - 1) as f64))
             .chain(FREQUENCIES)
-            .map(|hz| magnitude_db(&cascade, RATE, hz))
-            .fold(0.0, f64::max) as f32
+            .map(|hz| magnitude_db(&cascade, rate, hz))
+            .fold(0.0, f64::max)
     }
 }
+
+/// The output rates the headroom covers: the equalizer runs at the device's.
+const HEADROOM_RATES: [u32; 4] = [44_100, 48_000, 96_000, 192_000];
 
 /// Settings and the pre-gain they need, worked out on the control side
 /// (`Engine::set_equalizer`) so the audio thread only applies them.
@@ -356,6 +366,45 @@ mod tests {
             let loudest = bands.iter().fold(0.0f32, |m, b| m.max(*b));
             assert!(db >= loudest - 0.01 && db < loudest + 3.0, "{name}: {db}");
         }
+    }
+    #[test]
+    fn treble_boosts_have_headroom_at_high_rates() {
+        let flat = Settings {
+            enabled: true,
+            ..Settings::default()
+        };
+        let mut highs = flat;
+        highs.bands[8] = 12.0;
+        highs.bands[9] = 12.0;
+        let treble = Settings { bands: PRESETS[3].1, ..flat };
+        for s in [highs, treble] {
+            let gain_db = Tuning::new(s).gain_db as f64;
+            // The upper bands are wider at 96 and 192 kHz, so they peak higher there.
+            assert!(s.peak_db(192_000) > s.peak_db(48_000) + 0.3, "{s:?}");
+            for rate in HEADROOM_RATES {
+                let cascade: [Coeff; 10] = std::array::from_fn(|i| peak(rate, FREQUENCIES[i], s.bands[i]));
+                for i in 0..2000 {
+                    let hz = 20.0 * 1000.0f64.powf(i as f64 / 1999.0);
+                    let db = magnitude_db(&cascade, rate, hz) + gain_db;
+                    assert!(db < 0.01, "{rate} {hz}: {db}");
+                }
+            }
+        }
+        // And measured: a tone at the 192 kHz cascade's loudest frequency
+        // comes out no louder than it went in.
+        let rate = 192_000;
+        let cascade: [Coeff; 10] = std::array::from_fn(|i| peak(rate, FREQUENCIES[i], highs.bands[i]));
+        let hz = (0..2000)
+            .map(|i| 4000.0 * 5.0f64.powf(i as f64 / 1999.0))
+            .max_by(|a, b| magnitude_db(&cascade, rate, *a).total_cmp(&magnitude_db(&cascade, rate, *b)))
+            .unwrap();
+        let mut eq = Equalizer::new(rate, 1);
+        eq.configure(Tuning::new(highs));
+        let mut data = tone(rate, hz, rate as usize, 1);
+        let before = rms(&data[rate as usize / 2..]);
+        eq.process(&mut data);
+        let db = 20.0 * (rms(&data[rate as usize / 2..]) / before).log10();
+        assert!((-0.5..0.05).contains(&db), "{hz}: {db}");
     }
     #[test]
     fn every_band_boosted_stays_audible() {
