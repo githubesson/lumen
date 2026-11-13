@@ -6,6 +6,11 @@ export interface EditDraft<S, F> {
   draft: F;
   /** Change one field. The first change pins `base` and the draft. */
   setField: <K extends keyof F>(key: K, value: F[K]) => void;
+  /**
+   * After part of a save went through (the details, but not the cover):
+   * diff against what the server now has, keeping what's typed.
+   */
+  rebase: (source: S) => void;
 }
 
 /**
@@ -36,5 +41,9 @@ export function useEditDraft<S, F extends object>(
     setEdited(true);
     setDraft((current) => ({ ...current, [key]: value }));
   }, []);
-  return { base, draft, setField };
+  const rebase = useCallback((next: S) => {
+    setEdited(true);
+    setBase(next);
+  }, []);
+  return { base, draft, setField, rebase };
 }

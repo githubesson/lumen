@@ -2,6 +2,7 @@ import { advanceAuthGeneration } from "../src/api-transport";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  albumCoverUrl,
   api,
   createTrackShareLink,
   downloadStreamUrl,
@@ -454,6 +455,15 @@ describe("form upload fetch", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(errorMessage(err, "Couldn't use that image.")).toBe("Couldn't use that image.");
     expect(errorMessage(new ApiError(413, "too large"), "fallback")).toBe("too large");
+  });
+
+  it("gives an album's cover a new URL once its art changes, so caches don't keep the old one", async () => {
+    expect(albumCoverUrl("al-cover")).toBe("/api/albums/al-cover/cover");
+    setFormFetch(vi.fn(async () => Response.json({ id: "t1", title: "Song", album_id: "al-cover" })));
+    await api.setTrackCover("t1", { uri: "file:///c.jpg", name: "c.jpg", type: "image/jpeg" });
+    expect(albumCoverUrl("al-cover")).toMatch(/^\/api\/albums\/al-cover\/cover\?v=\d+$/);
+    // A version the caller passes still wins.
+    expect(albumCoverUrl("al-cover", undefined, 7)).toBe("/api/albums/al-cover/cover?v=7");
   });
 
   it("carries a rate limit's Retry-After seconds on the error", async () => {

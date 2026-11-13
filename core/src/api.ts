@@ -8,7 +8,7 @@ import {
   requestVoid,
 } from "./api-transport";
 import type { PageParams, RequestOptions, SearchOffsets } from "./api-transport";
-import type { LyricsResult, ReplayBucket, ReplayData } from "./api-media";
+import { markAlbumCoverChanged, type LyricsResult, type ReplayBucket, type ReplayData } from "./api-media";
 import type {
   AdminUser,
   Invite,
@@ -387,21 +387,28 @@ export const api = {
   // Replace an album's cover art. `file` is a browser File (web) or the
   // RN-style { uri, name, type } part React Native's FormData accepts.
   // Admin-only on the server; returns the updated album.
-  setAlbumCover: (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
+  setAlbumCover: async (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
     const fd = new FormData();
     fd.append("file", file as unknown as Blob);
-    return request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd, ...options });
+    const album = await request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd, ...options });
+    markAlbumCoverChanged(id);
+    return album;
   },
   // The uploader's own cover for their personal track (on its album, seen
   // only by them). The track needs an album; returns the updated track.
-  setTrackCover: (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
+  setTrackCover: async (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
     const fd = new FormData();
     fd.append("file", file as unknown as Blob);
-    return request<TrackDetail>(`/api/tracks/${trackPathID(id)}/cover`, { method: "PUT", body: fd, ...options });
+    const track = await request<TrackDetail>(`/api/tracks/${trackPathID(id)}/cover`, { method: "PUT", body: fd, ...options });
+    if (track.album_id) markAlbumCoverChanged(track.album_id);
+    return track;
   },
   // Clear an album's cover art, reverting it to the placeholder. Admin only.
-  removeAlbumCover: (id: string) =>
-    request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "DELETE" }),
+  removeAlbumCover: async (id: string) => {
+    const album = await request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "DELETE" });
+    markAlbumCoverChanged(id);
+    return album;
+  },
   recordPlay: (id: string, completion: number) =>
     requestVoid(`/api/tracks/${trackPathID(id)}/play`, {
       method: "POST",

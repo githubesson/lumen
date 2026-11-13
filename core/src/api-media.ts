@@ -42,12 +42,23 @@ export function coverUrl(id: string, size?: number): string {
   return withCoverSize(`/api/tracks/${pathID(id)}/cover`, size);
 }
 
+// Albums whose cover art changed in this session. The server lets browsers
+// keep an album's cover for a day under one URL, so once it changes, every
+// URL for it carries a revision and the new art loads everywhere.
+const coverRevisions = new Map<string, number>();
+
+/** Call after an album's cover (or the user's own cover for it) changes. */
+export function markAlbumCoverChanged(albumId: string): void {
+  coverRevisions.set(albumId, Date.now());
+}
+
 /**
  * `version` busts caches after an admin replaces the artwork, since the URL
- * itself doesn't change. Falsy versions are left off.
+ * itself doesn't change; without one, a change made in this session
+ * ({@link markAlbumCoverChanged}) still does. Falsy versions are left off.
  */
 export function albumCoverUrl(id: string, size?: number, version?: string | number): string {
-  return withCoverSize(`/api/albums/${pathID(id)}/cover`, size, version);
+  return withCoverSize(`/api/albums/${pathID(id)}/cover`, size, version || coverRevisions.get(id));
 }
 
 /** A playlist's uploaded cover; `version` is its `custom_cover`. */

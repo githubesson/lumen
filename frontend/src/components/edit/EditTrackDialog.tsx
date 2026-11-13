@@ -64,7 +64,7 @@ function TrackEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Only the fields changed from what the form was filled from are sent.
-  const { base, draft, setField } = useEditDraft(track, trackEditForm);
+  const { base, draft, setField, rebase } = useEditDraft(track, trackEditForm);
   // The uploader's own cover art for a personal track.
   const [cover, setCover] = useState<File | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -81,7 +81,20 @@ function TrackEditor({
         patch.album_artist = draft.artists.split(",")[0]?.trim() || undefined;
       }
       let updated = await api.updateTrack(trackId, patch);
-      if (cover) updated = await api.setTrackCover(trackId, cover);
+      if (cover) {
+        try {
+          updated = await api.setTrackCover(trackId, cover);
+        } catch (err) {
+          // The details went in: show them, and diff a retry against them,
+          // or changing a field back would send nothing.
+          rebase(updated);
+          if (patch.album_title !== undefined) setField("albumTitle", updated.album_title ?? "");
+          libraryChanged.emit();
+          onSaved?.(updated);
+          setError(`Details saved, but the cover art wasn't: ${errorMessage(err, "upload failed")}`);
+          return;
+        }
+      }
       libraryChanged.emit();
       onSaved?.(updated);
       onClose();
