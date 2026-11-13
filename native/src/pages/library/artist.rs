@@ -195,13 +195,12 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
                 if here {
                     app.player.toggle_play();
                 } else {
-                    crate::ui::track_row::start_list(app, &queue, false);
+                    crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
                 }
             });
     } else {
         play = play.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed);
     }
-    let shuffle_queue = tracks.to_vec();
     let on = app.player.shuffle;
     let ink = if on { t.c.foreground } else { t.c.muted_foreground };
     let mut shuffle = el()
@@ -210,14 +209,13 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
         .radius(t.radius_lg())
         .center()
         .role("button")
-        .label("Shuffle play").help("Shuffle play")
+        .label("Shuffle")
         .checked(on)
         .cursor(Cursor::Pointer)
         .focusable(true)
         .hover(t.c.ghost_hover)
         .hover_motion(motion::ease(120.0), motion::ease(120.0))
-        .disabled(!can_play)
-        .on_press(move |app: &mut App| { crate::ui::track_row::start_list(app, &shuffle_queue, true); })
+        .on_press(|app: &mut App| app.player.toggle_shuffle())
         .child(ico(&i::SHUFFLE, 20.0, ink).group_color(t.c.foreground));
     if on {
         shuffle = shuffle.child(el().absolute(14.0, 25.0).size(4.0, 4.0).radius(99.0).fill(t.c.foreground).inert());

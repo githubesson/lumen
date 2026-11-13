@@ -108,17 +108,20 @@ fn play_row(app: &App, t: &Theme, tracks: &[TrackListItem], loading: bool, grow:
     }
     if can_play {
         play = play.on_press(move |app: &mut App| {
-            crate::ui::track_row::start_list(app, &queue, false);
+            crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
         });
     }
-    let shuffle_queue = tracks.to_vec();
     let on = app.player.shuffle;
-    let mut shuffle = crate::ui::blocks::shuffle_button(t, "sleeve-shuffle", loading || !can_play).checked(on);
+    let mut shuffle = Btn::new("sleeve-shuffle", "").icon(&i::SHUFFLE).icon_size(16.0).disabled(loading).build(t).w(32.0).px(0.0);
+    shuffle = shuffle.label("Shuffle").checked(on).help(if on { "Shuffle is on" } else { "Shuffle" });
     if on {
-        shuffle = shuffle.fill(t.c.muted)
+        shuffle = shuffle
+            .fill(t.c.muted)
             .child(el().absolute(14.0, 25.0).size(4.0, 4.0).radius(99.0).fill(t.c.foreground).inert());
     }
-    let shuffle = shuffle.on_press(move |app: &mut App| { crate::ui::track_row::start_list(app, &shuffle_queue, true); });
+    if !loading {
+        shuffle = shuffle.on_press(|app: &mut App| app.player.toggle_shuffle());
+    }
     row().w_full().gap(8.0).flex_wrap().child(play).child(shuffle)
 }
 

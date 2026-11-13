@@ -367,7 +367,8 @@ pub fn play_list_button(t: &Theme, key: &str, label: &str, source: Source, disab
         .build(t)
         .on_press(move |app: &mut App| {
             let tracks = source(app).to_vec();
-            crate::ui::track_row::start_list(app, &tracks, false);
+            let shuffle = app.player.shuffle;
+            crate::ui::track_row::start_list(app, &tracks, shuffle);
         })
 }
 
@@ -378,12 +379,12 @@ pub fn shuffle_button(t: &Theme, key: &str, disabled: bool) -> El {
         .w(32.0).px(0.0).label("Shuffle play").help("Shuffle play")
 }
 
-/// Start this collection immediately in shuffled order, including a random first song.
+/// Start this collection at once in shuffled order, shuffle on (native only).
 pub fn shuffle_list_button(t: &Theme, key: &str, source: Source, disabled: bool) -> El {
     shuffle_button(t, key, disabled)
         .on_press(move |app: &mut App| {
             let tracks = source(app).to_vec();
-            crate::ui::track_row::start_list(app, &tracks, true);
+            app.player.start_shuffled_list(&tracks);
         })
 }
 

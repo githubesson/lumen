@@ -223,21 +223,26 @@ fn plays_a_queue_through_on_the_engine() {
 }
 
 #[test]
-fn collection_shuffle_applies_to_the_queue_and_play_all_restores_order() {
+fn shuffle_play_turns_shuffle_on_and_play_all_leaves_it() {
     let (mut p, _) = player();
     let mut tracks = list(&["a", "b", "c", "d"]);
     tracks[1].unavailable = Some(true);
-    assert!(p.start_list(&tracks, true));
+    assert!(p.start_shuffled_list(&tracks));
     assert!(p.shuffle);
     assert_eq!(p.queue.len(), 3);
     let mut ids: Vec<_> = p.queue.iter().map(|t| t.id.as_str()).collect(); ids.sort();
     assert_eq!(ids, ["a", "c", "d"]);
+    // Play all (`startListPlayback`) honours the mode and doesn't change it.
+    assert!(p.start_list(&tracks, false));
+    assert!(p.shuffle);
+    assert_eq!(p.current().unwrap().id, "a");
+    p.toggle_shuffle();
     assert!(p.start_list(&tracks, false));
     assert!(!p.shuffle);
-    assert_eq!(p.current().unwrap().id, "a");
     assert_eq!(p.queue.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a", "c", "d"]);
+    // Nothing playable: nothing changes, shuffle included.
     tracks.iter_mut().for_each(|t| t.unavailable = Some(true));
-    assert!(!p.start_list(&tracks, true));
+    assert!(!p.start_shuffled_list(&tracks));
     assert!(!p.shuffle);
     assert_eq!(p.current().unwrap().id, "a");
 }

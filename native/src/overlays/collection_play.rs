@@ -119,7 +119,13 @@ fn start(app: &mut App, collection: Collection, shuffle: bool) {
         match result {
             Ok(tracks) if tracks.iter().any(|t| t.unavailable != Some(true)) => {
                 close(app);
-                crate::ui::track_row::start_list(app, &tracks, shuffle);
+                // Play is Play all (the player's shuffle); Shuffle turns it on.
+                if shuffle {
+                    app.player.start_shuffled_list(&tracks);
+                } else {
+                    let shuffle = app.player.shuffle;
+                    crate::ui::track_row::start_list(app, &tracks, shuffle);
+                }
             }
             Ok(_) => app.overlays.collection_play.error = Some("No playable tracks in this collection. Your queue has not changed.".into()),
             Err(message) => app.overlays.collection_play.error = Some(message),
