@@ -398,3 +398,15 @@ fn a_system_pause_shows_paused_and_seeks_settle_the_clock() {
     assert_eq!(r.p.current_time(), 40.0);
     assert_eq!(r.a.calls().last().map(String::as_str), Some("seek 40.1"));
 }
+
+#[test]
+fn queue_end_is_distinct_from_pause_and_clears_on_restart() {
+    let mut r = rig();
+    r.start(&["one"], 0, 3.0);
+    r.p.handle(AdapterEvent::Pause);
+    assert!(!r.p.queue_ended());
+    r.p.handle(AdapterEvent::Ended);
+    assert!(r.p.queue_ended());
+    r.p.handle(AdapterEvent::Play);
+    assert!(!r.p.queue_ended());
+}

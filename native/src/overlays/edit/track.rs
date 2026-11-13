@@ -1,14 +1,17 @@
 //! `EditTrackDialog.tsx`: title, artists, album, album artist, year, genre,
-//! track and disc number. The form is filled from the track loaded afresh on
-//! every opening; only changed fields are sent.
+//! track and disc number, and for the uploader's own track their own cover.
+//! The form is filled from the track loaded afresh on every opening; only
+//! changed fields are sent.
 
-use rune::{El, TextEdit, col};
+use rune::{El, TextEdit, col, row};
 
 use super::{Which, grid_field, grid_row, input, number_input, reset, save_cancel};
+use crate::api::TrackPatch;
 use crate::app::App;
 use crate::core::metadata_edit::{TrackEditForm, build_track_patch, track_edit_form};
 use crate::theme::Theme;
 use crate::ui::kit::{Dialog, error_banner, loading_state};
+use crate::ui::{Btn, font, icons as i, line, tnum};
 
 /// `TrackEditForm`, as the fields that edit it.
 #[derive(Default)]
@@ -74,6 +77,8 @@ pub fn open(app: &mut App, track_id: &str) {
     );
 }
 
+/// `submit`: the changed fields, then the owner's cover. Cover art hangs on
+/// an album, so with a cover and no album the track becomes its own single.
 fn save(app: &mut App) {
     let s = &app.overlays.edit;
     let (Some(track), Some(id)) = (&s.track, s.track_id.clone()) else { return };
@@ -81,8 +86,109 @@ fn save(app: &mut App) {
     if s.busy || s.track_form.title.text.trim().is_empty() {
         return;
     }
-    let patch = build_track_patch(track, &s.track_form.values());
-    super::submit(app, move |client| crate::api::library::update_track(client, &id, &patch).map(drop));
+    let form = s.track_form.values();
+    let mut patch = build_track_patch(track, &form);
+    let cover = s.track_cover.clone().filter(|_| track.owned == Some(true));
+    if cover.is_some() && form.album_title.trim().is_empty() {
+        cover_single(&mut patch, &form, &track.title);
+    }
+    let Some(client) = app.client.clone() else { return };
+    let s = &mut app.overlays.edit;
+    s.busy = true;
+    s.error = None;
+    let nonce = s.nonce;
+    let album_sent = patch.album_title.is_some();
+    app.net.run(
+        move || {
+            let updated = match crate::api::library::update_track(&client, &id, &patch) {
+                Ok(updated) => updated,
+                Err(e) => return Saved::Failed(e),
+            };
+            match cover.map(|path| crate::api::upload::set_track_cover(&client, &id, &path)) {
+                Some(Err(e)) => Saved::DetailsOnly(Box::new(updated), e),
+                _ => Saved::All,
+            }
+        },
+        move |app, saved| {
+            let s = &mut app.overlays.edit;
+            if s.nonce != nonce {
+                return;
+            }
+            s.busy = false;
+            match saved {
+                Saved::All => {
+                    crate::pages::library_changed(app);
+                    super::close(app);
+                }
+                Saved::Failed(e) => s.error = Some(crate::overlays::error_message(&e, "Save failed.")),
+                Saved::DetailsOnly(updated, e) => {
+                    // The details went in: show them, and diff a retry
+                    // against them, or changing a field back would send
+                    // nothing. The cover stays picked for that retry.
+                    if album_sent {
+                        s.track_form.album_title = TextEdit::new(updated.album_title.clone().unwrap_or_default());
+                    }
+                    s.track = Some(*updated);
+                    s.error = Some(format!("Details saved, but the cover art wasn't: {}", crate::overlays::error_message(&e, "upload failed")));
+                    crate::pages::library_changed(app);
+                }
+            }
+        },
+    );
+}
+
+/// How far a save got.
+enum Saved {
+    All,
+    /// The details went in (the track as they left it), the cover didn't.
+    DetailsOnly(Box<crate::api::TrackDetail>, crate::api::ApiError),
+    Failed(crate::api::ApiError),
+}
+
+/// A loose track with a cover becomes its own single: the album is named
+/// after the track, by its first artist.
+fn cover_single(patch: &mut TrackPatch, form: &TrackEditForm, title: &str) {
+    let named = form.title.trim();
+    patch.album_title = Some(if named.is_empty() { title.to_string() } else { named.to_string() });
+    patch.album_artist = form.artists.split(',').next().map(str::trim).filter(|a| !a.is_empty()).map(String::from);
+}
+
+fn pick_cover(app: &mut App, tx: &mut rune::Tx) {
+    if app.overlays.edit.busy {
+        return;
+    }
+    let nonce = app.overlays.edit.nonce;
+    let options = rune::FileDialogOptions { title: "Cover art".into(), ..Default::default() }.filter("Images", &["jpg", "jpeg", "png", "webp"]);
+    tx.open_file(options, move |app: &mut App, result, _| {
+        if app.overlays.edit.nonce != nonce {
+            return;
+        }
+        if let Ok(Some(path)) = result {
+            app.overlays.edit.track_cover = Some(path);
+        }
+    });
+}
+
+/// The owner's cover field: only they see the image.
+fn cover_field(t: &Theme, s: &super::State) -> El {
+    let hint = if s.track_form.album_title.text.trim().is_empty() {
+        "Only you see it. With no album set, the track becomes its own single."
+    } else {
+        "Only you see it. Shared album art, if any, still shows first."
+    };
+    let mut control = row().w_full().min_w(0.0).gap(8.0).items_center().child(
+        Btn::new("edit-track-cover", if s.track_cover.is_some() { "Change image" } else { "Choose image" })
+            .ghost()
+            .icon(&i::IMAGE)
+            .disabled(s.busy)
+            .build(t)
+            .on_press_tx(pick_cover),
+    );
+    if let Some(p) = &s.track_cover {
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        control = control.child(line(name, tnum(font(12.0, 400.0)), t.c.muted_foreground));
+    }
+    grid_field(t, "Cover art", control, Some(hint))
 }
 
 pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
@@ -135,6 +241,9 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
                         None,
                     ),
                 ]));
+            if s.track.as_ref().is_some_and(|t| t.owned == Some(true)) {
+                form_body = form_body.child(cover_field(t, s));
+            }
             if let Some(e) = &s.error {
                 form_body = form_body.child(error_banner(t, e));
             }
@@ -149,4 +258,54 @@ pub fn view(app: &App, t: &Theme, window: [f32; 2]) -> El {
         }
     }
     Dialog::new("edit-track", form_body).title("Edit track").build(t, window, super::dismiss)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_loose_track_with_a_cover_becomes_its_own_single() {
+        let form = |title: &str, artists: &str| TrackEditForm { title: title.into(), artists: artists.into(), ..Default::default() };
+        let mut p = TrackPatch::default();
+        cover_single(&mut p, &form(" New name ", " Alice , Bob"), "Old");
+        assert_eq!((p.album_title.as_deref(), p.album_artist.as_deref()), (Some("New name"), Some("Alice")));
+        let mut p = TrackPatch { album_artist: Some("Typed".into()), ..Default::default() };
+        cover_single(&mut p, &form(" ", " "), "Old");
+        assert_eq!((p.album_title.as_deref(), p.album_artist), (Some("Old"), None));
+    }
+
+    /// `EditTrackDialog`: details that save with a cover that doesn't stay
+    /// saved, shown, with the dialog open to try the cover again.
+    #[test]
+    fn details_that_save_without_their_cover_keep_the_dialog_open_on_what_saved() {
+        use crate::api::testing::{MockServer, Res};
+        let loose = r#"{"id":"t1","title":"Song","owned":true}"#;
+        let single = r#"{"id":"t1","title":"Song","owned":true,"album_id":"al","album_title":"Song"}"#;
+        let server = MockServer::with_handler(move |req| match (req.method.as_str(), req.path.as_str()) {
+            ("PATCH", "/api/tracks/t1") => Res::json(single),
+            _ => Res::new(413).body("image too large"),
+        });
+        let mut app = App::for_tests(Some(server.client()));
+        let track: crate::api::TrackDetail = serde_json::from_str(loose).unwrap();
+        let cover = crate::api::testing::temp_path("edit-track-cover.png");
+        std::fs::write(&cover, b"png").unwrap();
+        let s = &mut app.overlays.edit;
+        s.which = Some(Which::Track);
+        s.track_id = Some("t1".into());
+        s.track_form = TrackForm::new(track_edit_form(&track));
+        s.track = Some(track);
+        s.track_cover = Some(cover.clone());
+        save(&mut app);
+        while crate::net::Net::drain(&mut app) {}
+        let s = &app.overlays.edit;
+        assert_eq!(s.which, Some(Which::Track));
+        assert!(!s.busy);
+        assert_eq!(s.error.as_deref(), Some("Details saved, but the cover art wasn't: image too large"));
+        // The single it became is the form's album and what a retry diffs against.
+        assert_eq!(s.track_form.album_title.text, "Song");
+        assert_eq!(s.track.as_ref().and_then(|t| t.album_id.as_deref()), Some("al"));
+        assert_eq!(build_track_patch(s.track.as_ref().unwrap(), &s.track_form.values()), TrackPatch::default());
+        assert_eq!(s.track_cover.as_deref(), Some(cover.as_path()));
+    }
 }

@@ -12,12 +12,14 @@ use super::client::{ApiError, ApiResult, Behavior, Body, Client, Progress, seg};
 use super::types::{Album, Playlist, UploadResult};
 
 /// One field of a form.
+#[derive(Clone)]
 pub enum Part {
     Text { name: String, value: String },
     File { name: String, filename: String, content_type: String, source: FileSource },
 }
 
 /// Where a file part's bytes come from.
+#[derive(Clone)]
 pub enum FileSource {
     Path(PathBuf),
     #[cfg(test)]
@@ -76,6 +78,7 @@ pub fn content_type_for(filename: &str) -> &'static str {
 }
 
 /// A `multipart/form-data` body.
+#[derive(Clone)]
 pub struct Multipart {
     pub boundary: String,
     pub parts: Vec<Part>,
@@ -147,8 +150,9 @@ impl Multipart {
         Ok((boundary, out))
     }
 
-    /// A streamed body that reports `(sent, total)` as it goes. Fails when
-    /// a file can't be read for its size.
+    /// A streamed body that reports `(sent, total)` as it goes, sent once
+    /// the server says to go ahead (`Expect: 100-continue`). Fails when a
+    /// file can't be read for its size.
     pub fn into_body(self, progress: Option<Progress>) -> io::Result<Body> {
         let (boundary, segs) = self.segments()?;
         let len = segs
@@ -163,6 +167,7 @@ impl Multipart {
             content_type: format!("multipart/form-data; boundary={boundary}"),
             len,
             reader: Box::new(reader),
+            expect_continue: true,
         })
     }
 }
@@ -182,7 +187,7 @@ impl Read for SegmentReader {
                 match self.segs.pop_front() {
                     None => return Ok(0),
                     Some(Segment::Bytes(b)) => self.current = Some(Box::new(io::Cursor::new(b))),
-                    Some(Segment::File(p, len)) => self.current = Some(Box::new(File::open(p)?.take(len))),
+                    Some(Segment::File(p, len)) => self.current = Some(Box::new(WholeFile(File::open(p)?.take(len)))),
                 }
             }
             let n = self.current.as_mut().map_or(Ok(0), |r| r.read(buf))?;
@@ -199,6 +204,21 @@ impl Read for SegmentReader {
     }
 }
 
+/// A file part, read for exactly the length the body was measured with: a
+/// file that got shorter since fails the body, where stopping short of its
+/// `Content-Length` would leave the server waiting for the rest for good.
+struct WholeFile(io::Take<File>);
+
+impl Read for WholeFile {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.0.read(buf)?;
+        if n == 0 && !buf.is_empty() && self.0.limit() > 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "a file got shorter while it was being sent"));
+        }
+        Ok(n)
+    }
+}
+
 fn send_form<T: serde::de::DeserializeOwned>(
     c: &Client,
     method: &str,
@@ -206,27 +226,50 @@ fn send_form<T: serde::de::DeserializeOwned>(
     form: Multipart,
     progress: Option<Progress>,
 ) -> ApiResult<T> {
-    let body = form.into_body(progress).map_err(|e| ApiError::local(0, e.to_string()))?;
-    c.request(method, path, body, &[], &Behavior { timeout: None, ..Default::default() })?.json()
+    let send = |form: Multipart, expect_continue: bool| {
+        let mut body = form.into_body(progress.clone()).map_err(|e| ApiError::local(0, e.to_string()))?;
+        if let Body::Stream { expect_continue: ask, .. } = &mut body {
+            *ask = expect_continue;
+        }
+        c.request(method, path, body, &[], &Behavior { timeout: None, ..Default::default() })
+    };
+    // A server (or a proxy in front of it) that won't be asked refuses the
+    // ask with 417 before reading anything: the form goes once more, unasked.
+    match send(form.clone(), true) {
+        Err(e) if e.has_status(417) => send(form, false),
+        reply => reply,
+    }?
+    .json()
 }
 
 /// `uploadMusic`: files into the personal or shared library (see
 /// `core::upload::plan_upload_batches` for staying under the server's cap).
+/// `cancel` aborts it as the web's `AbortSignal` does: the connection
+/// closes, so the call returns at once, mid-body or waiting for the answer,
+/// and the server undoes what the request had added. An answer read whole
+/// before the cancel is returned as it is.
 pub fn upload_music(
     c: &Client,
     files: &[PathBuf],
     scope: crate::core::upload::UploadScope,
-    progress: Option<Progress>,
+    cancel: &super::Cancel,
 ) -> ApiResult<Vec<UploadResult>> {
+    cancel.check()?;
     let mut parts = vec![Part::text("scope", scope.as_str())];
     parts.extend(files.iter().map(|f| Part::file("files", f)));
-    let results: Option<Vec<UploadResult>> = send_form(c, "POST", "/api/library/upload", Multipart::new(parts), progress)?;
+    let results: Option<Vec<UploadResult>> = send_form(&c.with_cancel(cancel), "POST", "/api/library/upload", Multipart::new(parts), None)?;
     Ok(results.unwrap_or_default())
 }
 
 /// Admin: replace an album's cover with an image file.
 pub fn set_album_cover(c: &Client, id: &str, image: &Path) -> ApiResult<Album> {
     send_form(c, "PUT", &format!("/api/albums/{}/cover", seg(id)), Multipart::new(vec![Part::file("file", image)]), None)
+}
+
+/// `setTrackCover`: the uploader's own cover for a track they own (only
+/// they see it); the server checks the ownership.
+pub fn set_track_cover(c: &Client, id: &str, image: &Path) -> ApiResult<super::TrackDetail> {
+    send_form(c, "PUT", &format!("/api/tracks/{}/cover", seg(id)), Multipart::new(vec![Part::file("file", image)]), None)
 }
 
 /// Owner: give a playlist its own cover (see
@@ -257,19 +300,12 @@ mod tests {
     }
 
     #[test]
-    fn streams_files_with_progress() {
-        let server = MockServer::start(vec![Res::json(r#"[{"file":"a.mp3","inserted":true}]"#)]);
+    fn streams_files() {
+        let server = MockServer::start(vec![Res::json(r#"[{"file":"a.mp3","inserted":true,"promoted":true}]"#)]);
         let path = temp_file("a.mp3", b"ID3audio");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let s2 = seen.clone();
-        let results = upload_music(
-            &server.client(),
-            &[path],
-            crate::core::upload::UploadScope::Personal,
-            Some(progress(move |sent, total| s2.lock().unwrap().push((sent, total)))),
-        )
-        .unwrap();
-        assert!(results[0].inserted);
+        let cancel = crate::api::Cancel::new();
+        let results = upload_music(&server.client(), &[path], crate::core::upload::UploadScope::Personal, &cancel).unwrap();
+        assert!(results[0].inserted && results[0].promoted == Some(true));
         let req = &server.requests()[0];
         assert_eq!((req.method.as_str(), req.path.as_str()), ("POST", "/api/library/upload"));
         let ct = req.header("content-type").unwrap();
@@ -278,10 +314,205 @@ mod tests {
         assert!(body.starts_with(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"scope\"\r\n\r\npersonal\r\n")));
         assert!(body.contains("name=\"files\"; filename=\"a.mp3\"\r\nContent-Type: audio/mpeg\r\n\r\nID3audio\r\n"));
         assert!(body.ends_with(&format!("--{boundary}--\r\n")));
-        let seen = seen.lock().unwrap();
-        let (sent, total) = *seen.last().unwrap();
-        assert_eq!(sent, total);
-        assert_eq!(total, req.body.len() as u64);
+    }
+
+    #[test]
+    fn a_body_reports_its_progress() {
+        let path = temp_file("b.mp3", b"ID3audio");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s2 = seen.clone();
+        let form = Multipart::new(vec![Part::text("scope", "personal"), Part::file("files", &path)]);
+        let Body::Stream { len, mut reader, .. } = form.into_body(Some(progress(move |sent, total| s2.lock().unwrap().push((sent, total))))).unwrap() else {
+            panic!("a form streams")
+        };
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        let (sent, total) = *seen.lock().unwrap().last().unwrap();
+        assert_eq!((sent, total), (len, len));
+        assert_eq!(bytes.len() as u64, len);
+    }
+
+    #[test]
+    fn a_cancelled_upload_never_starts() {
+        let cancel = crate::api::Cancel::new();
+        cancel.cancel();
+        let server = MockServer::start(vec![]);
+        let path = temp_file("c.mp3", b"ID3audio");
+        let err = upload_music(&server.client(), &[path], crate::core::upload::UploadScope::Personal, &cancel).unwrap_err();
+        assert!(err.is_aborted());
+        assert!(server.requests().is_empty());
+    }
+
+    /// A server for one request: reads its head and hands it over with the
+    /// connection.
+    fn one_request(then: impl FnOnce(std::net::TcpStream, String) + Send + 'static) -> Client {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let head = read_head(&mut stream);
+            then(stream, head);
+        });
+        Client::new(&base, None)
+    }
+
+    /// A request's head, lowercased, read up to its body.
+    fn read_head(stream: &mut std::net::TcpStream) -> String {
+        let mut head = Vec::new();
+        let mut byte = [0];
+        while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+            head.push(byte[0]);
+        }
+        String::from_utf8_lossy(&head).to_lowercase()
+    }
+
+    fn content_length(head: &str) -> u64 {
+        head.lines().find_map(|l| l.strip_prefix("content-length:")).unwrap().trim().parse().unwrap()
+    }
+
+    /// Upload `size` bytes to a server that reads `read` of them (all when
+    /// `None`) and then just waits; cancel. What the upload returned, how
+    /// long after the cancel, and what the server got of the body before
+    /// the connection closed (`None` if it never closed).
+    fn cancel_while_the_server_holds(name: &str, size: usize, read: Option<u64>) -> (ApiError, std::time::Duration, Option<u64>, u64) {
+        use std::io::Write;
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let (ready, holding) = channel();
+        let (resume, resumed) = channel::<()>();
+        let (closed, got) = channel();
+        let client = one_request(move |mut stream, head| {
+            let len = content_length(&head);
+            stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+            let want = read.unwrap_or(len);
+            let mut body = Vec::new();
+            (&mut stream).take(want).read_to_end(&mut body).unwrap();
+            ready.send(len).unwrap();
+            // Past the cancel: the rest, if any, until the client goes (or 10 s pass).
+            let _ = resumed.recv();
+            stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            let mut total = body.len() as u64;
+            let mut buf = vec![0; 64 * 1024];
+            let end = loop {
+                match stream.read(&mut buf) {
+                    Ok(0) => break Some(total),
+                    Ok(n) => total += n as u64,
+                    Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => break None,
+                    Err(_) => break Some(total),
+                }
+            };
+            let _ = closed.send(end);
+        });
+        let path = temp_file(name, &vec![7u8; size]);
+        let file = path.clone();
+        let cancel = crate::api::Cancel::new();
+        let c2 = cancel.clone();
+        let (sent, answer) = channel();
+        std::thread::spawn(move || {
+            let _ = sent.send(upload_music(&client, &[path], crate::core::upload::UploadScope::Personal, &c2));
+        });
+        let len = holding.recv_timeout(Duration::from_secs(10)).expect("the server got the request");
+        std::thread::sleep(Duration::from_millis(100));
+        cancel.cancel();
+        let started = std::time::Instant::now();
+        let err = answer.recv_timeout(Duration::from_secs(5)).expect("the upload returned").unwrap_err();
+        let elapsed = started.elapsed();
+        resume.send(()).unwrap();
+        let got = got.recv_timeout(Duration::from_secs(15)).unwrap();
+        let _ = std::fs::remove_file(file);
+        (err, elapsed, got, len)
+    }
+
+    #[test]
+    fn a_cancel_closes_the_connection_awaiting_the_answer_so_the_server_sees_it() {
+        let (err, elapsed, got, len) = cancel_while_the_server_holds("held.mp3", 1024, None);
+        assert!(err.is_aborted(), "{err:?}");
+        assert!(elapsed < std::time::Duration::from_secs(2));
+        assert_eq!(got, Some(len));
+    }
+
+    #[test]
+    fn a_cancel_closes_the_connection_mid_body() {
+        // Far more than the socket buffers hold, so the client is stuck writing.
+        let (err, elapsed, got, len) = cancel_while_the_server_holds("big.mp3", 32 << 20, Some(64 * 1024));
+        assert!(err.is_aborted(), "{err:?}");
+        assert!(elapsed < std::time::Duration::from_secs(2));
+        let got = got.expect("the connection closed");
+        assert!(got < len, "{got} of {len}");
+    }
+
+    #[test]
+    fn a_rate_limit_answered_before_the_body_is_read_isnt_lost() {
+        use std::io::Write;
+        // As Go answers from middleware: no 100 Continue, and the body left unread.
+        let client = one_request(|mut stream, head| {
+            assert!(head.contains("expect: 100-continue"), "{head}");
+            let _ = stream.write_all(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\nContent-Type: text/plain\r\nContent-Length: 19\r\nConnection: close\r\n\r\nrate limit exceeded",
+            );
+            let _ = stream.flush();
+        });
+        let path = temp_file("limited.mp3", &vec![7u8; 8 << 20]);
+        let err = upload_music(&client, &[path.clone()], crate::core::upload::UploadScope::Personal, &crate::api::Cancel::new()).unwrap_err();
+        let _ = std::fs::remove_file(path);
+        assert!(err.has_status(429), "{err:?}");
+        assert_eq!((err.message.as_str(), err.retry_after_seconds), ("rate limit exceeded", Some(7)));
+    }
+
+    #[test]
+    fn a_server_that_refuses_to_be_asked_gets_the_form_unasked() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = Client::new(&format!("http://{}", listener.local_addr().unwrap()), None);
+        // Each request's head and the body bytes the server read.
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let head = read_head(&mut stream);
+                if head.contains("expect: 100-continue") {
+                    stream.write_all(b"HTTP/1.1 417 Expectation Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    seen.push((head, 0));
+                    continue;
+                }
+                let mut body = Vec::new();
+                (&mut stream).take(content_length(&head)).read_to_end(&mut body).unwrap();
+                let answer = r#"[{"file":"a.mp3","inserted":true}]"#;
+                let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}", answer.len());
+                stream.write_all(reply.as_bytes()).unwrap();
+                seen.push((head, body.len() as u64));
+            }
+            seen
+        });
+        let path = temp_file("refused-ask.mp3", b"ID3audio");
+        let results = upload_music(&client, &[path], crate::core::upload::UploadScope::Personal, &crate::api::Cancel::new()).unwrap();
+        assert!(results[0].inserted);
+        let seen = server.join().unwrap();
+        assert!(seen[0].0.contains("expect: 100-continue"), "{}", seen[0].0);
+        assert!(!seen[1].0.contains("expect:"), "{}", seen[1].0);
+        assert_eq!(seen[1].1, content_length(&seen[1].0));
+    }
+
+    #[test]
+    fn a_file_that_got_shorter_fails_the_body_instead_of_hanging() {
+        let path = temp_file("shrinks.mp3", b"ID3audio-and-more");
+        let form = Multipart::new(vec![Part::text("scope", "personal"), Part::file("files", &path)]);
+        let Body::Stream { mut reader, .. } = form.into_body(None).unwrap() else { panic!("a form streams") };
+        std::fs::write(&path, b"ID3").unwrap();
+        let err = reader.read_to_end(&mut Vec::new()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        // Sent, the request fails rather than waiting on the server for good.
+        std::fs::write(&path, b"ID3audio-and-more").unwrap();
+        let server = MockServer::start(vec![Res::json("[]")]);
+        let body = Multipart::new(vec![Part::file("files", &path)]).into_body(None).unwrap();
+        std::fs::write(&path, b"ID3").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let client = server.client();
+        std::thread::spawn(move || {
+            let _ = tx.send(client.request("POST", "/api/library/upload", body, &[], &Default::default()).map(|_| ()));
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("the request ended");
+        assert_eq!(result.unwrap_err().kind, crate::api::ErrorKind::Network);
     }
 
     // api.test.ts: form upload fetch

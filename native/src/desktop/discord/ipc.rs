@@ -27,41 +27,78 @@ type Stream = std::os::unix::net::UnixStream;
 #[cfg(windows)]
 type Stream = std::fs::File;
 
-/// The places Discord listens, in the order `discord-rpc` tries them (plus
-/// the Flatpak and Snap sandboxes on Linux).
-fn candidates(id: u8) -> Vec<std::path::PathBuf> {
+/// Sandboxed Linux builds keep their socket in a folder of their own under
+/// the runtime dir (Flatpak, Snap, Vesktop, ArmCord); `discord-rpc` only
+/// looks in the runtime dir itself.
+#[cfg(target_os = "linux")]
+const SUBDIRS: &[&str] = &[
+    "",
+    "app/com.discordapp.Discord",
+    "app/com.discordapp.DiscordCanary",
+    "app/com.discordapp.DiscordPTB",
+    "app/dev.vencord.Vesktop",
+    "app/xyz.armcord.ArmCord",
+    "snap.discord",
+    "snap.discord-canary",
+];
+#[cfg(all(unix, not(target_os = "linux")))]
+const SUBDIRS: &[&str] = &[""];
+
+/// `discordIpcPaths`: every place Discord may listen, most likely first. The
+/// pipes 0 to 9 on Windows; elsewhere `discord-ipc-0` to 9 in the runtime dir
+/// (or the temp dir), then in each sandboxed build's folder. `var` reads the
+/// environment.
+fn candidates(var: impl Fn(&str) -> Option<String>) -> Vec<std::path::PathBuf> {
     #[cfg(windows)]
     {
-        vec![format!(r"\\?\pipe\discord-ipc-{id}").into()]
+        let _ = var;
+        (0..10).map(|id| format!(r"\\?\pipe\discord-ipc-{id}").into()).collect()
     }
     #[cfg(unix)]
     {
-        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-        let runtime = var("XDG_RUNTIME_DIR");
-        let base = runtime.clone().or_else(|| var("TMPDIR")).or_else(|| var("TMP")).or_else(|| var("TEMP")).unwrap_or_else(|| "/tmp".into());
-        let base = base.trim_end_matches('/').to_string();
-        let mut paths = vec![format!("{base}/discord-ipc-{id}").into()];
-        if let Some(run) = runtime {
-            paths.push(format!("{run}/app/com.discordapp.Discord/discord-ipc-{id}").into());
-            paths.push(format!("{run}/snap.discord/discord-ipc-{id}").into());
-        }
-        paths
+        let base = ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"].into_iter().find_map(|k| var(k).filter(|v| !v.is_empty()));
+        let base = base.unwrap_or_else(|| "/tmp".into());
+        let base = base.strip_suffix('/').unwrap_or(&base);
+        SUBDIRS
+            .iter()
+            .flat_map(|sub| {
+                let dir = if sub.is_empty() { base.to_string() } else { format!("{base}/{sub}") };
+                (0..10).map(move |id| format!("{dir}/discord-ipc-{id}").into())
+            })
+            .collect()
     }
 }
 
-fn open() -> Option<Stream> {
-    for id in 0..10 {
-        for path in candidates(id) {
-            #[cfg(unix)]
-            let stream = Stream::connect(&path);
-            #[cfg(windows)]
-            let stream = std::fs::OpenOptions::new().read(true).write(true).open(&path);
-            if let Ok(stream) = stream {
-                return Some(stream);
-            }
+fn open(path: &std::path::Path) -> std::io::Result<Stream> {
+    #[cfg(unix)]
+    {
+        Stream::connect(path)
+    }
+    #[cfg(windows)]
+    {
+        std::fs::OpenOptions::new().read(true).write(true).open(path)
+    }
+}
+
+/// `connectFirstSocket`: the first of `paths` that answers the handshake. A
+/// socket can outlive the Discord that made it (a crash, or another build
+/// that has since quit): that one refuses or never says hello, and the next
+/// is tried, as `discord-rpc` tries id after id.
+fn connect_first(paths: &[std::path::PathBuf], client_id: &str) -> Result<Conn, String> {
+    let mut error = "Could not connect".to_string();
+    for path in paths {
+        // Most aren't there; a pipe is only known by opening it.
+        if cfg!(unix) && !path.exists() {
+            continue;
+        }
+        let Ok(stream) = open(path) else { continue };
+        let mut conn = Conn { stream, buf: Vec::new(), nonce: 0 };
+        match conn.handshake(client_id) {
+            Ok(()) => return Ok(conn),
+            Err(e) => error = e,
         }
     }
-    None
+    Err(error)
 }
 
 /// Bytes waiting to be read without blocking, or an error once the pipe is gone.
@@ -215,11 +252,16 @@ impl Conn {
 
 impl Rpc for Conn {
     fn set_activity(&mut self, pid: u32, activity: Option<Value>) -> Result<(), RpcError> {
+        let clearing = activity.is_none();
         let args = match activity {
             Some(activity) => json!({ "pid": pid, "activity": activity }),
             None => json!({ "pid": pid }),
         };
-        self.request("SET_ACTIVITY", args).map(|_| ())
+        let result = self.request("SET_ACTIVITY", args).map(|_| ());
+        if std::env::var_os("LUMEN_DISCORD_TRACE").is_some() {
+            eprintln!("[discord] {} {}", if clearing { "clear" } else { "activity" }, if result.is_ok() { "accepted" } else { "failed" });
+        }
+        result
     }
 
     fn poll(&mut self) -> Result<(), RpcError> {
@@ -253,10 +295,8 @@ pub struct IpcConnector;
 
 impl Connector for IpcConnector {
     fn connect(&mut self, client_id: &str) -> Result<Box<dyn Rpc>, String> {
-        let stream = open().ok_or("Could not connect")?;
-        let mut conn = Conn { stream, buf: Vec::new(), nonce: 0 };
-        conn.handshake(client_id)?;
-        Ok(Box::new(conn))
+        let paths = candidates(|k| std::env::var(k).ok());
+        Ok(Box::new(connect_first(&paths, client_id)?))
     }
 }
 
@@ -321,9 +361,59 @@ mod tests {
         assert!(matches!(conn.poll(), Err(RpcError::Closed(_))));
     }
 
+    fn env(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |k| vars.iter().find(|(name, _)| *name == k).map(|(_, v)| v.to_string())
+    }
+
+    fn shown(paths: &[std::path::PathBuf]) -> Vec<String> {
+        paths.iter().map(|p| p.to_string_lossy().into_owned()).collect()
+    }
+
     #[test]
-    fn finds_discord_in_the_runtime_dir() {
-        let paths = candidates(3);
-        assert!(paths[0].to_string_lossy().ends_with("/discord-ipc-3"));
+    fn looks_in_the_runtime_dir_first_then_each_sandbox() {
+        let paths = shown(&candidates(env(&[("XDG_RUNTIME_DIR", "/run/user/1000/"), ("TMPDIR", "/var/tmp")])));
+        assert_eq!(&paths[..2], ["/run/user/1000/discord-ipc-0", "/run/user/1000/discord-ipc-1"]);
+        assert_eq!(paths[9], "/run/user/1000/discord-ipc-9");
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(paths.len(), 80);
+            assert_eq!(paths[10], "/run/user/1000/app/com.discordapp.Discord/discord-ipc-0");
+            assert_eq!(paths[79], "/run/user/1000/snap.discord-canary/discord-ipc-9");
+        }
+        // No runtime dir (an empty one counts as none): the temp dir, then /tmp.
+        assert_eq!(shown(&candidates(env(&[("XDG_RUNTIME_DIR", ""), ("TMPDIR", "/var/tmp/")])))[0], "/var/tmp/discord-ipc-0");
+        assert_eq!(shown(&candidates(env(&[])))[0], "/tmp/discord-ipc-0");
+    }
+
+    /// Answers the handshake on `path` once.
+    fn fake_discord(path: &std::path::Path) -> std::thread::JoinHandle<Value> {
+        let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let (_, hello) = read_frame(&mut s);
+            write_frame(&mut s, FRAME, json!({ "cmd": "DISPATCH", "evt": "READY", "data": { "v": 1 } }));
+            hello
+        })
+    }
+
+    #[test]
+    fn passes_over_dead_and_silent_sockets_to_a_live_one() {
+        let dir = crate::api::testing::temp_path("discord-ipc");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |id: u8| dir.join(format!("discord-ipc-{id}"));
+        // 0: left behind by a Discord that quit; nothing listens.
+        drop(std::os::unix::net::UnixListener::bind(path(0)).unwrap());
+        // 1: something that hangs up instead of saying hello.
+        let silent = std::os::unix::net::UnixListener::bind(path(1)).unwrap();
+        let hangs_up = std::thread::spawn(move || drop(silent.accept().unwrap()));
+        // 2 isn't there; 3 is Discord.
+        let live = fake_discord(&path(3));
+        let paths: Vec<_> = (0..4).map(path).collect();
+        assert!(connect_first(&paths, "fixture").is_ok());
+        assert_eq!(live.join().unwrap(), json!({ "v": 1, "client_id": "fixture" }));
+        hangs_up.join().unwrap();
+        assert_eq!(connect_first(&paths[..3], "fixture").err().as_deref(), Some("Could not connect"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

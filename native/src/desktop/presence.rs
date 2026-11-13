@@ -119,6 +119,7 @@ struct Seen {
 pub struct Presence {
     pub sender: Sender,
     seen: Option<Seen>,
+    ended: bool,
     /// Bumped by every push and clear; a cover signed for an older one is dropped.
     generation: u64,
     /// Signed album covers by album, until they expire.
@@ -177,6 +178,17 @@ fn activity_for(track: &TrackListItem, playing: bool, position: f64, duration: O
 /// Watches `app.player` once per `poll`; pushes on the player's events.
 pub fn tick(app: &mut App) {
     let now = super::now_playing::now_ms();
+    if app.player.local_queue_ended() {
+        if !app.desktop.presence.ended {
+            app.desktop.presence.ended = true;
+            clear(app);
+        }
+        return;
+    }
+    if app.desktop.presence.ended {
+        app.desktop.presence.ended = false;
+        app.desktop.presence.seen = None;
+    }
     let player = &app.player;
     let Some(track) = player.current() else {
         if app.desktop.presence.seen.take().is_some() {

@@ -164,7 +164,7 @@ pub fn track_actions(track: &impl TrackRef, is_admin: bool) -> TrackActions {
         download: !track.track_unavailable(),
         view_album: has(track.track_album_id()) || has(track.track_album_title()) || is_tidal_track(track),
         share: can_share_track(track),
-        edit_metadata: is_admin && local,
+        edit_metadata: local && (is_admin || owned),
         edit_album: is_admin && local && has(track.track_album_id()),
         move_to_album: is_admin && local,
         delete_own_upload: owned,
@@ -277,7 +277,10 @@ mod tests {
     fn deletes_the_viewers_own_upload() {
         let a = track_actions(&track(|t| t.owned = Some(true)), true);
         assert!(a.delete_own_upload && !a.admin_remove && !a.share);
-        assert!(track_actions(&track(|t| t.owned = Some(true)), false).delete_own_upload);
+        let own = track_actions(&track(|t| t.owned = Some(true)), false);
+        assert!(own.delete_own_upload && own.edit_metadata);
+        assert!(!own.edit_album && !own.move_to_album && !own.admin_remove);
+        assert!(!track_actions(&track(|_| {}), false).edit_metadata);
     }
 
     #[test]

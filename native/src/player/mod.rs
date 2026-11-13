@@ -154,6 +154,10 @@ impl Default for Player {
 }
 
 impl Player {
+    pub fn local_queue_ended(&self) -> bool {
+        self.target_device().is_none() && self.local.queue_ended()
+    }
+
     /// The app's player: the audio engine on `audio_sink_id` (the saved
     /// output device), or nothing at all in a headless run.
     pub fn new(waker: LateWaker, audio_sink_id: Option<String>) -> Player {

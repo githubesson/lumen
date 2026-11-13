@@ -16,7 +16,8 @@ use crate::ui::cards::{Action, disc, playlist_subtitle, top_artist_glyph, top_ar
 use crate::ui::tooltip::TipExt;
 use super::logic::TopArtistAction;
 use crate::ui::ShadowMd;
-use crate::format::{clean_text, display_text_nullish};
+use crate::format::clean_text;
+use crate::ui::entity_links;
 
 /// Row art is 40-48px; the server's next size up covers a 2x screen.
 pub const ROW_ART_SIZE: u32 = 128;
@@ -248,14 +249,13 @@ fn play_disc(t: &Theme) -> El {
     disc(t, &i::PLAY_FILLED, 28.0, 14.0).shadow_md(t)
 }
 
+/// `.board-row-text`: the title over a `.card-sub` line, 1 px apart.
 fn row_text(t: &Theme, title: El, sub: &str) -> El {
-    let fs = title_size(t);
-    col()
-        .grow(1.0)
-        .min_w(0.0)
-        .gap(1.0)
-        .child(lh(title, fs * 1.45))
-        .child(lh(line(sub.to_string(), font(12.0, 400.0), t.c.muted_foreground), 17.4))
+    row_lines(t, title, line(sub.to_string(), font(12.0, 400.0), t.c.muted_foreground), 1.0)
+}
+
+fn row_lines(t: &Theme, title: El, sub: El, gap: f32) -> El {
+    col().grow(1.0).min_w(0.0).gap(gap).child(lh(title, title_size(t) * 1.45)).child(lh(sub, 17.4))
 }
 
 /// One row of `BoardTrackList`.
@@ -279,7 +279,10 @@ pub fn track_row(app: &App, t: &Theme, key: String, track: &TrackListItem, o: Tr
         r = r.child(cover_art(t, &app.images, Some(&track.cover_at(Some(ROW_ART_SIZE))), &label, 40.0, 40.0, t.radius_md()));
     }
     let title = line(clean_text(Some(&track.title)), font(title_size(t), 500.0), t.c.foreground);
-    r = r.child(row_text(t, title, &display_text_nullish(track.artist.as_deref(), "Unknown artist")));
+    // The artists open their pages, so the two lines are two targets:
+    // `.board-row-text-linked` keeps them 4 px apart (WCAG 2.5.8).
+    let artists = entity_links::artist_links(track, "Unknown artist");
+    r = r.child(row_lines(t, title, entity_links::line(track, artists, font(12.0, 400.0), t.c.muted_foreground), 4.0));
     let meta = text(o.meta.clone()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground);
     let mut end = el().h_full().items_center().justify_end();
     if o.ranked || unavailable {

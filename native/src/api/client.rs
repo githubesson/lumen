@@ -50,21 +50,24 @@ pub struct ApiError {
     pub status: u16,
     pub message: String,
     pub kind: ErrorKind,
+    /// `retryAfterSeconds`: a failed answer's Retry-After, when it gave one
+    /// in seconds (a 429's or a 503's).
+    pub retry_after_seconds: Option<u64>,
 }
 
 impl ApiError {
     pub fn http(status: u16, message: impl Into<String>) -> ApiError {
-        ApiError { status, message: message.into(), kind: ErrorKind::Http }
+        ApiError { status, message: message.into(), kind: ErrorKind::Http, retry_after_seconds: None }
     }
     pub fn transport(message: impl Into<String>) -> ApiError {
-        ApiError { status: 0, message: message.into(), kind: ErrorKind::Network }
+        ApiError { status: 0, message: message.into(), kind: ErrorKind::Network, retry_after_seconds: None }
     }
     /// A client-side `ApiError` (bad input, a polling deadline).
     pub fn local(status: u16, message: impl Into<String>) -> ApiError {
-        ApiError { status, message: message.into(), kind: ErrorKind::Local }
+        ApiError { status, message: message.into(), kind: ErrorKind::Local, retry_after_seconds: None }
     }
     pub fn aborted() -> ApiError {
-        ApiError { status: 0, message: "The request was aborted.".into(), kind: ErrorKind::Aborted }
+        ApiError { status: 0, message: "The request was aborted.".into(), kind: ErrorKind::Aborted, retry_after_seconds: None }
     }
     pub fn is_unauthorized(&self) -> bool {
         self.status == 401 && self.is_api_error()
@@ -128,6 +131,7 @@ impl Reply {
             status: self.status,
             message: format!("Couldn't read the server's response: {e}"),
             kind: ErrorKind::Decode,
+            retry_after_seconds: None,
         })
     }
 
@@ -145,8 +149,8 @@ pub enum Body {
     None,
     Json(serde_json::Value),
     /// A body read as it is sent (multipart uploads of files on disk), with
-    /// its exact length.
-    Stream { content_type: String, len: u64, reader: Box<dyn Read + Send> },
+    /// its exact length; `expect_continue` asks the server before sending it.
+    Stream { content_type: String, len: u64, reader: Box<dyn Read + Send>, expect_continue: bool },
 }
 
 /// When a 401 signs the user out (`notifyUnauthorized`).
@@ -191,6 +195,18 @@ type UnauthorizedHandler = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<Inner>,
+    /// Set on a client [`Client::with_cancel`] made: the connections its
+    /// requests go over instead of the shared ones.
+    own: Option<Arc<Own>>,
+    /// Set on a client [`Client::for_session`] made: the auth generation
+    /// its requests belong to.
+    session: Option<u64>,
+}
+
+/// A [`Client::with_cancel`] client's own agent, shut down by its cancel.
+struct Own {
+    agent: ureq::Agent,
+    cancel: Cancel,
 }
 
 struct Inner {
@@ -206,6 +222,11 @@ struct Inner {
 }
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a [`Client::with_cancel`] request may take to resolve the
+/// server's name, and then to connect. A cancel can't cut either short, so
+/// it waits them out.
+const CANCELLABLE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl Client {
     /// A client for `base` (`https://host`, no trailing slash needed). The
@@ -238,7 +259,50 @@ impl Client {
                 unauthorized: AtomicBool::new(false),
                 on_unauthorized: Mutex::new(None),
             }),
+            own: None,
+            session: None,
         }
+    }
+
+    /// This client for work `cancel` stops, as `fetch` with an `AbortSignal`:
+    /// its requests go over connections of their own, and cancelling closes
+    /// them, so a request waiting on the server (or still sending) fails as
+    /// aborted at once, and the server sees the client leave, as it sees a
+    /// browser's abort (an upload in flight is undone). Each request carries
+    /// the session as it stands, and cookies an answer sets land in the
+    /// shared jar. Resolving and connecting can't be interrupted: a cancel
+    /// waits for them, which give up after [`CANCELLABLE_CONNECT_TIMEOUT`]
+    /// each (one after the other). Its connections stay open between its
+    /// requests, so make one for all of the work, not one per request.
+    pub fn with_cancel(&self, cancel: &Cancel) -> Client {
+        if let Some(own) = &self.own
+            && own.cancel.same(cancel)
+        {
+            return self.clone();
+        }
+        let agent: ureq::Agent = crate::net::agent_config()
+            .timeout_resolve(Some(CANCELLABLE_CONNECT_TIMEOUT))
+            .timeout_connect(Some(CANCELLABLE_CONNECT_TIMEOUT))
+            .build()
+            .into();
+        let own = Arc::new(Own { agent, cancel: cancel.clone() });
+        // Weak: once the client is dropped its connections close with it.
+        let weak = Arc::downgrade(&own);
+        cancel.on_cancel(move || {
+            if let Some(own) = weak.upgrade() {
+                own.agent.clone().shutdown();
+            }
+        });
+        Client { inner: self.inner.clone(), own: Some(own), session: self.session }
+    }
+
+    /// This client for one session's work (an upload that runs on for
+    /// minutes): once the session changes, by a sign-out or a sign-in, its
+    /// requests fail as aborted rather than go out with whatever session
+    /// the jar holds by then. A [`Client::with_cancel`] made from it is
+    /// bound the same way.
+    pub fn for_session(&self) -> Client {
+        Client { session: Some(self.inner.auth_generation.load(Ordering::Acquire)), ..self.clone() }
     }
 
     pub fn base(&self) -> &str {
@@ -326,8 +390,20 @@ impl Client {
         behavior: &Behavior,
     ) -> ApiResult<Reply> {
         let generation = self.inner.auth_generation.load(Ordering::Acquire);
+        if self.session.is_some_and(|s| s != generation) {
+            return Err(ApiError::aborted());
+        }
         let url = self.url(path);
-        let agent = &self.inner.agent;
+        let (agent, cancel) = match &self.own {
+            Some(own) => {
+                own.cancel.check()?;
+                self.lend_cookies(&own.agent);
+                (&own.agent, Some(&own.cancel))
+            }
+            None => (&self.inner.agent, None),
+        };
+        // A request the cancel cut short failed because of it.
+        let cut = |e: ApiError| if cancel.is_some_and(Cancel::is_cancelled) { ApiError::aborted() } else { e };
         let timeout = match body {
             Body::Stream { .. } => None,
             _ => behavior.timeout,
@@ -369,15 +445,31 @@ impl Client {
                     Body::Json(v) => {
                         r.header("Content-Type", "application/json").send(v.to_string().into_bytes())
                     }
-                    Body::Stream { content_type, len, reader } => r
-                        .header("Content-Type", content_type)
-                        .header("Content-Length", len.to_string())
-                        .send(ureq::SendBody::from_owned_reader(reader)),
+                    // A file body asks first: a server that answers
+                    // without reading it (a rate limit, a proxy's size cap)
+                    // closes the connection on the unread rest, and an
+                    // answer written mid-body would be lost to that. Asked,
+                    // it answers before the body goes; one that doesn't
+                    // reply to the ask gets the body after a second, and
+                    // one that refuses it (417) gets it sent again without
+                    // (`api::upload`).
+                    Body::Stream { content_type, len, reader, expect_continue } => {
+                        let mut r = r.header("Content-Type", content_type).header("Content-Length", len.to_string());
+                        if expect_continue {
+                            r = r.header("Expect", "100-continue");
+                        }
+                        r.send(ureq::SendBody::from_owned_reader(reader))
+                    }
                 }
             }
         }
-        .map_err(|e| transport_error(&e))?;
+        .map_err(|e| cut(transport_error(&e)))?;
 
+        // An answer to a request sent before the session changed sets
+        // nothing: its clearing `Set-Cookie` would end the new session.
+        if self.own.is_some() && generation == self.inner.auth_generation.load(Ordering::Acquire) {
+            self.keep_cookies(&response);
+        }
         self.save_jar(false);
         let status = response.status().as_u16();
         let header = |name: &str| {
@@ -387,6 +479,7 @@ impl Client {
         let total = header("x-total-count").and_then(|v| v.trim().parse().ok());
         let etag = header("etag");
         let cache_control = header("cache-control");
+        let retry_after = header("retry-after");
         let mut body = Vec::new();
         if method != "HEAD" {
             response
@@ -395,7 +488,7 @@ impl Client {
                 .limit(u64::MAX)
                 .reader()
                 .read_to_end(&mut body)
-                .map_err(|e| ApiError::transport(e.to_string()))?;
+                .map_err(|e| cut(ApiError::transport(e.to_string())))?;
         }
         let ok = (200..300).contains(&status) || (behavior.allow_not_modified && status == 304);
         if !ok {
@@ -412,7 +505,7 @@ impl Client {
             }
             // An empty body leaves the message empty, as over HTTP/2 (no
             // status text) on the web, so callers show their own fallback.
-            return Err(ApiError::http(status, text));
+            return Err(ApiError { retry_after_seconds: retry_after_seconds(retry_after.as_deref()), ..ApiError::http(status, text) });
         }
         Ok(Reply { status, content_type, total, etag, cache_control, body })
     }
@@ -503,6 +596,38 @@ impl Client {
         self.send_with("GET", url, Body::None, Some(REQUEST_TIMEOUT), &[("Accept", "*/*")])
     }
 
+    /// Give a [`Client::with_cancel`] agent the shared jar's cookies, as
+    /// they stand now (all of them: the jar's JSON leaves out session
+    /// cookies).
+    fn lend_cookies(&self, to: &ureq::Agent) {
+        let jar = self.inner.agent.cookie_jar_lock();
+        let cookies: Vec<String> = jar.iter().map(|c| c.to_string()).collect();
+        jar.release();
+        let mut jar = to.cookie_jar_lock();
+        jar.clear();
+        if let Ok(uri) = self.inner.base.parse::<ureq::http::Uri>() {
+            for cookie in cookies {
+                if let Ok(cookie) = ureq::Cookie::parse(cookie, &uri) {
+                    let _ = jar.insert(cookie, &uri);
+                }
+            }
+        }
+        jar.release();
+    }
+
+    /// Cookies a [`Client::with_cancel`] answer set, into the shared jar.
+    fn keep_cookies(&self, response: &ureq::http::Response<ureq::Body>) {
+        use ureq::ResponseExt;
+        let uri = response.get_uri();
+        let mut jar = self.inner.agent.cookie_jar_lock();
+        for value in response.headers().get_all("set-cookie") {
+            if let Ok(cookie) = value.to_str().map_err(drop).and_then(|v| ureq::Cookie::parse(v.to_string(), uri).map_err(drop)) {
+                let _ = jar.insert(cookie, uri);
+            }
+        }
+        jar.release();
+    }
+
     /// Write the jar to disk when it changed since the last write (a
     /// `Set-Cookie`, here or on a redirect on the way, or a cookie expiring),
     /// or always when `force`d. Cover fetches by the dozen change nothing,
@@ -547,10 +672,19 @@ fn origin(url: &str) -> String {
     format!("{scheme}://{host}")
 }
 
+/// `retryAfterSeconds`: a Retry-After in whole seconds (not a date).
+fn retry_after_seconds(value: Option<&str>) -> Option<u64> {
+    let v = value?.trim();
+    if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    v.parse().ok()
+}
+
 fn transport_error(e: &ureq::Error) -> ApiError {
     match e {
         ureq::Error::Timeout(_) => {
-            ApiError { status: 0, message: "The request timed out.".into(), kind: ErrorKind::Timeout }
+            ApiError { status: 0, message: "The request timed out.".into(), kind: ErrorKind::Timeout, retry_after_seconds: None }
         }
         ureq::Error::HostNotFound => ApiError::transport("Couldn't find the server."),
         ureq::Error::ConnectionFailed => ApiError::transport("Couldn't reach the server."),
@@ -629,10 +763,19 @@ pub fn seg(s: &str) -> String {
 }
 
 /// A cancellation flag shared with blocking work (`AbortSignal`): polling
-/// loops check it between requests and wake from their sleeps when it trips.
+/// loops check it between requests and wake from their sleeps when it trips,
+/// and a [`Client::with_cancel`] request in flight fails as it does.
 #[derive(Clone, Default)]
 pub struct Cancel {
-    inner: Arc<(Mutex<bool>, std::sync::Condvar)>,
+    inner: Arc<(Mutex<Flag>, std::sync::Condvar)>,
+}
+
+#[derive(Default)]
+struct Flag {
+    cancelled: bool,
+    /// Run once when it trips: closing the connections of the clients made
+    /// with it.
+    on_cancel: Vec<Box<dyn FnOnce() + Send>>,
 }
 
 impl Cancel {
@@ -641,11 +784,18 @@ impl Cancel {
     }
     pub fn cancel(&self) {
         let (flag, cv) = &*self.inner;
-        *flag.lock().unwrap() = true;
+        let hooks = {
+            let mut f = flag.lock().unwrap();
+            f.cancelled = true;
+            std::mem::take(&mut f.on_cancel)
+        };
         cv.notify_all();
+        for hook in hooks {
+            hook();
+        }
     }
     pub fn is_cancelled(&self) -> bool {
-        *self.inner.0.lock().unwrap()
+        self.inner.0.lock().unwrap().cancelled
     }
     /// Err([`ApiError::aborted`]) once cancelled.
     pub fn check(&self) -> ApiResult<()> {
@@ -655,8 +805,21 @@ impl Cancel {
     pub fn sleep(&self, d: Duration) -> bool {
         let (flag, cv) = &*self.inner;
         let guard = flag.lock().unwrap();
-        let (guard, _) = cv.wait_timeout_while(guard, d, |cancelled| !*cancelled).unwrap();
-        !*guard
+        let (guard, _) = cv.wait_timeout_while(guard, d, |f| !f.cancelled).unwrap();
+        !guard.cancelled
+    }
+    /// Run `hook` when this is cancelled, or now if it is already.
+    fn on_cancel(&self, hook: impl FnOnce() + Send + 'static) {
+        let mut f = self.inner.0.lock().unwrap();
+        if f.cancelled {
+            drop(f);
+            hook();
+        } else {
+            f.on_cancel.push(Box::new(hook));
+        }
+    }
+    fn same(&self, other: &Cancel) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
@@ -702,6 +865,106 @@ mod tests {
         assert_eq!(error_message(&ApiError::transport("dns"), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::aborted(), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::local(0, "pin id"), "fallback"), "pin id");
+    }
+
+    #[test]
+    fn retry_after_is_whole_seconds_only() {
+        assert_eq!(retry_after_seconds(Some(" 12 ")), Some(12));
+        assert_eq!(retry_after_seconds(Some("0")), Some(0));
+        for v in [None, Some(""), Some("1.5"), Some("-3"), Some("Wed, 21 Oct 2026 07:28:00 GMT")] {
+            assert_eq!(retry_after_seconds(v), None, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn a_cancel_runs_what_waits_on_it_once_and_at_once_when_already_cancelled() {
+        let c = Cancel::new();
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let r = runs.clone();
+        c.on_cancel(move || {
+            r.fetch_add(1, Ordering::SeqCst);
+        });
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+        c.cancel();
+        c.cancel();
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        let r = runs.clone();
+        c.on_cancel(move || {
+            r.fetch_add(1, Ordering::SeqCst);
+        });
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_cancellable_client_carries_the_session_and_keeps_what_its_answers_set() {
+        use crate::api::testing::{MockServer, Res};
+        let server = MockServer::start(vec![
+            Res::json("{}").header("Set-Cookie", "session=old; Path=/"),
+            Res::json("{}").header("Set-Cookie", "session=new; Path=/"),
+            Res::json("{}"),
+        ]);
+        let shared = server.client();
+        shared.send("GET", "/api/me", Body::None).unwrap();
+        let cancel = Cancel::new();
+        let own = shared.with_cancel(&cancel);
+        own.send("GET", "/api/one", Body::None).unwrap();
+        assert_eq!(server.requests()[1].header("cookie").as_deref(), Some("session=old"));
+        assert_eq!(shared.cookie_header().as_deref(), Some("session=new"));
+        // The session as it stands when each request goes.
+        shared.clear_cookies();
+        own.send("GET", "/api/two", Body::None).unwrap();
+        assert_eq!(server.requests()[2].header("cookie"), None);
+        // Made again for the same cancel, it is the same client.
+        assert!(Arc::ptr_eq(own.own.as_ref().unwrap(), own.with_cancel(&cancel).own.as_ref().unwrap()));
+        cancel.cancel();
+        assert!(own.send("GET", "/api/three", Body::None).err().is_some_and(|e| e.is_aborted()));
+        assert_eq!(server.requests().len(), 3);
+        // The shared connections stay up.
+        shared.send("GET", "/api/four", Body::None).unwrap();
+    }
+
+    #[test]
+    fn a_cancellable_answer_from_before_the_session_changed_sets_no_cookies() {
+        use crate::api::testing::{MockServer, Res};
+        let shared: Arc<Mutex<Option<Client>>> = Arc::default();
+        let handle = shared.clone();
+        let server = MockServer::with_handler(move |req| match req.path.as_str() {
+            "/api/old" => Res::json("{}").header("Set-Cookie", "session=old; Path=/"),
+            "/api/new" => Res::json("{}").header("Set-Cookie", "session=new; Path=/"),
+            // A sign-out and a sign-in while this request waits on the
+            // server, which then clears the session it was sent with.
+            _ => {
+                let shared = handle.lock().unwrap().clone().unwrap();
+                shared.send("GET", "/api/new", Body::None).unwrap();
+                shared.advance_auth_generation();
+                Res::json("{}").header("Set-Cookie", "session=; Max-Age=0; Path=/")
+            }
+        });
+        let client = server.client();
+        *shared.lock().unwrap() = Some(client.clone());
+        client.send("GET", "/api/old", Body::None).unwrap();
+        client.with_cancel(&Cancel::new()).send("GET", "/api/logout", Body::None).unwrap();
+        assert_eq!(client.cookie_header().as_deref(), Some("session=new"));
+    }
+
+    #[test]
+    fn a_client_for_a_session_sends_nothing_once_it_changes() {
+        use crate::api::testing::{MockServer, Res};
+        let server = MockServer::start(vec![Res::json("{}")]);
+        let shared = server.client();
+        let bound = shared.for_session();
+        let own = bound.with_cancel(&Cancel::new());
+        bound.send("GET", "/api/one", Body::None).unwrap();
+        own.send("GET", "/api/two", Body::None).unwrap();
+        shared.advance_auth_generation();
+        for c in [&bound, &own] {
+            assert!(c.send("GET", "/api/three", Body::None).err().is_some_and(|e| e.is_aborted()));
+        }
+        assert_eq!(server.requests().len(), 2);
+        // The new session's work goes ahead.
+        shared.send("GET", "/api/four", Body::None).unwrap();
+        shared.for_session().send("GET", "/api/five", Body::None).unwrap();
+        assert_eq!(server.requests().len(), 4);
     }
 
     #[test]

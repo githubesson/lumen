@@ -68,7 +68,9 @@ pub fn button(key: &str, label: &str, glyph: Option<&'static rune::Icon>) -> Btn
     b
 }
 
-/// The artists under the title; one with a library page links to it.
+/// `AlbumCredits`: the artists under the title, each opening their page:
+/// the library page, else (a TIDAL album's main artist) the TIDAL page, else
+/// an artist search.
 fn credits_line(t: &Theme, credits: &[AlbumCredit], max: f32) -> El {
     let mut s = String::new();
     let mut links = Vec::new();
@@ -78,15 +80,24 @@ fn credits_line(t: &Theme, credits: &[AlbumCredit], max: f32) -> El {
         }
         let start = s.len();
         s.push_str(&c.name);
-        if let Some(id) = &c.artist_id {
-            links.push(Link::new(start..s.len(), id.clone()).hover(LinkPaint::new().underline(t.c.foreground)));
-        }
+        let target = c.artist_id.as_ref().map(|id| format!("local:{id}")).unwrap_or_else(|| format!("name:{}", c.name));
+        links.push(Link::new(start..s.len(), target).hover(LinkPaint::new().underline(t.c.foreground)));
     }
     let mut e = text(s).font(font(14.0, 500.0)).color(t.c.foreground).wrap_anywhere().max_w(max);
     for l in links {
         e = e.link(l);
     }
-    e.on_link(|app: &mut App, id: &str, _tx: &mut rune::Tx| super::artist_link(app, id))
+    e.on_link(|app: &mut App, target: &str, _tx: &mut rune::Tx| {
+        if let Some(id) = target.strip_prefix("local:") {
+            return super::artist_link(app, id);
+        }
+        let name = target.strip_prefix("name:").unwrap_or(target);
+        // A TIDAL album's main artist has a TIDAL page.
+        let tidal = app.pages.library.detail.tidal_album.as_ref()
+            .filter(|a| a.artist.as_deref().is_some_and(|main| main.to_lowercase() == name.to_lowercase()))
+            .and_then(|a| a.artist_id.clone());
+        super::credit_link(app, name, tidal.as_deref());
+    })
 }
 
 /// `SleevePlay`: Play all, and the player's shuffle beside it.

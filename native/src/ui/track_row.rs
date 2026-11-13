@@ -318,7 +318,7 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
 
     // `.col-acts`: edit (admins, library tracks) and the heart, shown on hover.
     let mut acts = row().gap(8.0).items_center().group_opacity(0.0, 1.0);
-    if is_admin && actions(tr, true).edit_metadata {
+    if actions(tr, is_admin).edit_metadata {
         let id = tr.id.clone();
         let edit = action_button(t, &format!("{key}-edit"), "Edit metadata")
             .child(ico(&i::SQUARE_PEN, 14.0, t.c.muted_foreground).group_color(t.c.accent_foreground))

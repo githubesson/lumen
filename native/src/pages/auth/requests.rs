@@ -55,7 +55,7 @@ mod tests {
 
     fn err(status: u16, message: &str) -> ApiError {
         if status == 0 {
-            ApiError { status, message: message.into(), kind: crate::api::client::ErrorKind::Network }
+            ApiError { status, message: message.into(), kind: crate::api::client::ErrorKind::Network, retry_after_seconds: None }
         } else {
             ApiError::http(status, message)
         }

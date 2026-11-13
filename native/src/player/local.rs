@@ -85,6 +85,7 @@ pub struct LocalPlayer {
     pub crossfade_seconds: f64,
 
     current: Option<TrackListItem>,
+    ended_track: Option<String>,
     /// Bumped when `current` becomes another object (React's identity).
     current_rev: u64,
     /// `queue` is the play order; `source_queue` the list order, for when
@@ -134,6 +135,7 @@ impl LocalPlayer {
             base: String::new(),
             crossfade_seconds: 0.0,
             current: None,
+            ended_track: None,
             current_rev: 0,
             queue: Vec::new(),
             source_queue: Vec::new(),
@@ -173,6 +175,10 @@ impl LocalPlayer {
     }
 
     // ---- state (`PlayerState`, `TimeState`) ----
+
+    pub fn queue_ended(&self) -> bool {
+        !self.is_playing && self.current.as_ref().is_some_and(|t| self.ended_track.as_deref() == Some(t.id.as_str()))
+    }
 
     pub fn current(&self) -> Option<&TrackListItem> {
         self.current.as_ref()
@@ -271,6 +277,7 @@ impl LocalPlayer {
     }
 
     fn start_playback(&mut self) {
+        self.ended_track = None;
         self.playback_attempt += 1;
         if !self.adapter.play() {
             // As the web's rejected play promise: only the latest attempt

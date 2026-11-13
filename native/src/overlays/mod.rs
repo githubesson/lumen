@@ -21,6 +21,8 @@ pub mod toast;
 pub mod track_info;
 pub mod track_menu;
 pub mod upload;
+mod upload_edits;
+mod upload_files;
 
 use rune::{Cx, El};
 

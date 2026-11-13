@@ -1,6 +1,7 @@
 //! Shared building blocks: text styles, and the web app's small components
 //! (`.iconbtn`, `.btn`, `kbd`, `CoverArt`, …) built from rune elements with
 //! the same box metrics as their CSS.
+pub mod entity_links;
 pub mod blocks;
 pub mod cards;
 pub mod chart;
@@ -29,6 +30,8 @@ pub struct Widgets {
     pub tooltip: tooltip::State,
     pub shelves: shelf::Shelves,
     pub numbers: blocks::Numbers,
+    /// `latestActivation` (`EntityLinks.tsx`): see [`entity_links::overtake`].
+    pub link_activation: u64,
 }
 
 use rune::{Color, El, Family, Icon, TextStyle, icon, text};

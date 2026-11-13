@@ -302,12 +302,23 @@ fn poll(app: &mut App) {
     if !query.trim().is_empty() {
         return;
     }
-    let due = |at: Option<std::time::Instant>| at.is_some_and(|t| t.elapsed() >= POLL_INTERVAL);
+    let s = &app.pages.library;
+    let loaded_at = match view {
+        View::Tracks => s.tracks.loaded_at,
+        View::Albums => s.albums.loaded_at,
+        View::Artists => s.artists.loaded_at,
+    };
+    if loaded_at.is_some_and(|t| t.elapsed() >= POLL_INTERVAL) {
+        revalidate_list(app, view);
+    }
+}
+
+/// The browse list of `view` reads its rows again in place.
+fn revalidate_list(app: &mut App, view: View) -> bool {
     match view {
-        View::Tracks if due(app.pages.library.tracks.loaded_at) => paging::revalidate(app, |a| &mut a.pages.library.tracks),
-        View::Albums if due(app.pages.library.albums.loaded_at) => paging::revalidate(app, |a| &mut a.pages.library.albums),
-        View::Artists if due(app.pages.library.artists.loaded_at) => paging::revalidate(app, |a| &mut a.pages.library.artists),
-        _ => {}
+        View::Tracks => paging::revalidate(app, |a| &mut a.pages.library.tracks),
+        View::Albums => paging::revalidate(app, |a| &mut a.pages.library.albums),
+        View::Artists => paging::revalidate(app, |a| &mut a.pages.library.artists),
     }
 }
 
@@ -317,6 +328,36 @@ pub fn library_changed(app: &mut App) {
     if app.location().is("/library") {
         let loc = app.location().clone();
         enter(app, &loc);
+    }
+}
+
+/// [`library_changed`] in place (see `pages::library_settled`): the open
+/// browse list or search reads again the rows it shows, keeping its
+/// place; an album or artist page reads again as on any change (in place
+/// too).
+pub fn library_settled(app: &mut App) {
+    settle(app, 0);
+}
+
+/// How many times, a second apart, [`library_settled`] waits out a load
+/// already running (the reload a cancel started, a page more) before
+/// giving up to the next poll.
+const SETTLE_TRIES: u32 = 10;
+
+fn settle(app: &mut App, tries: u32) {
+    if !app.location().is("/library") {
+        return;
+    }
+    let started = match route(app.location()) {
+        Route::Browse { query, .. } if !query.trim().is_empty() => paging::revalidate(app, |a| &mut a.pages.library.search),
+        Route::Browse { view, .. } => revalidate_list(app, view),
+        _ => {
+            library_changed(app);
+            true
+        }
+    };
+    if !started && tries + 1 < SETTLE_TRIES {
+        app.net.after(std::time::Duration::from_secs(1), move |app| settle(app, tries + 1));
     }
 }
 
@@ -493,6 +534,18 @@ pub fn clear_drill(app: &mut App) {
 /// (`AlbumCredits`).
 pub fn artist_link(app: &mut App, artist_id: &str) {
     let next = super::library_drill::without_drill(&library_loc(app)).with("artist", Some(artist_id));
+    app.navigate(next);
+}
+
+/// `AlbumCredits`' link for a credit with no library page: the TIDAL
+/// artist's page when known, else an artist search. The rest of the
+/// library's state stays, so the Library crumb returns there.
+pub fn credit_link(app: &mut App, name: &str, tidal_artist: Option<&str>) {
+    let next = super::library_drill::without_drill(&library_loc(app));
+    let next = match tidal_artist {
+        Some(id) => next.with("tidalArtist", Some(id)).with("artistName", Some(name)),
+        None => next.with("view", Some("artists")).with("q", Some(name)),
+    };
     app.navigate(next);
 }
 

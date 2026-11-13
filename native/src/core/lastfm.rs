@@ -288,7 +288,7 @@ mod tests {
     fn a_deadline_ends_the_wait_and_a_new_connect_waits_again() {
         let mut c = LastFmConnection::default();
         let wait = c.status_loaded(Ok(base(|s| s.pending = true))).unwrap();
-        let timeout = ApiError { status: 0, message: "The request timed out.".into(), kind: crate::api::ErrorKind::Timeout };
+        let timeout = ApiError { status: 0, message: "The request timed out.".into(), kind: crate::api::ErrorKind::Timeout, retry_after_seconds: None };
         c.wait_finished(wait.ticket, Err(timeout));
         assert_eq!(c.error.as_deref(), Some("Could not complete Last.fm authorization."));
         assert_eq!(c.status.as_ref().map(|s| s.pending), Some(false));

@@ -109,6 +109,8 @@ END
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    // Only when it exists: Cargo counts a missing path as changed, which would
+    // rerun this script (and relink) on every build.
     if Path::new(".env").exists() {
         println!("cargo:rerun-if-changed=.env");
     }

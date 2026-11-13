@@ -383,7 +383,7 @@ mod tests {
         let mut s = TidalDeviceLogin::default();
         s.start();
         let started = s.started(Ok(flow()), now()).unwrap();
-        let timeout = ApiError { status: 0, message: "The request timed out.".into(), kind: crate::api::ErrorKind::Timeout };
+        let timeout = ApiError { status: 0, message: "The request timed out.".into(), kind: crate::api::ErrorKind::Timeout, retry_after_seconds: None };
         assert_eq!(s.poll_finished(started.poll.ticket, Err(timeout)), PollOutcome::Ended);
         assert_eq!(s.error.as_deref(), Some("Could not complete TIDAL sign-in."));
         assert!(s.flow.is_none());

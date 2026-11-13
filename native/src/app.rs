@@ -103,6 +103,36 @@ impl App {
         app
     }
 
+    /// A bare app for unit tests: no config read, work run inline (results
+    /// land on [`Net::drain`]), `client` as given.
+    #[cfg(test)]
+    pub fn for_tests(client: Option<Client>) -> App {
+        let waker = LateWaker::default();
+        let app = App {
+            config: Config::default(),
+            tweaks: Default::default(),
+            system_dark: std::cell::Cell::new(true),
+            instant_once: std::cell::Cell::new(false),
+            waker: waker.clone(),
+            net: Net::new(waker.clone()),
+            images: Images::new(waker),
+            client,
+            session: Session::Loading,
+            history: History::new(Location::parse("/")),
+            playlists: Res::default(),
+            pending_invites: 0,
+            ui: Ui::default(),
+            player: Default::default(),
+            pages: Default::default(),
+            overlays: Default::default(),
+            select: None,
+            widgets: Default::default(),
+            desktop: Default::default(),
+        };
+        app.net.set_sync(true);
+        app
+    }
+
     /// Point the app at `server` and check the session (`AuthProvider`).
     pub fn connect(&mut self, server: &str) {
         let jar = crate::config::data_dir().join("session.json");
@@ -204,6 +234,7 @@ impl App {
     /// Follow a link (`navigate(to)`).
     pub fn navigate(&mut self, loc: Location) {
         self.instant_once.set(true);
+        crate::ui::entity_links::overtake(self);
         self.history.push(loc.clone());
         crate::pages::enter(self, &loc);
     }
@@ -215,6 +246,7 @@ impl App {
     /// `navigate(to, { replace: true })`.
     pub fn navigate_replace(&mut self, loc: Location) {
         self.instant_once.set(true);
+        crate::ui::entity_links::overtake(self);
         self.history.replace(loc.clone());
         crate::pages::enter(self, &loc);
     }
@@ -222,6 +254,7 @@ impl App {
     pub fn back(&mut self) {
         self.instant_once.set(true);
         if self.history.back() {
+            crate::ui::entity_links::overtake(self);
             let loc = self.location().clone();
             crate::pages::enter(self, &loc);
         }
@@ -283,15 +316,21 @@ impl App {
     /// what its session showed goes, and the app connects to `url`.
     pub fn switch_server(&mut self, url: &str) {
         if let Some(old) = &self.client {
+            // Its work still out (an upload) goes no further, and a late 401
+            // from it can't end the new server's session.
+            old.advance_auth_generation();
             old.clear_cookies();
         }
         self.forget_session("/");
         self.connect(url);
     }
 
-    /// Drop what a session showed: the player's queue, the shell's data,
-    /// every page's state, and the history (which starts again at `at`).
+    /// Drop what a session showed: an upload under way, the player's queue,
+    /// the shell's data, every page's state, and the history (which starts
+    /// again at `at`).
     fn forget_session(&mut self, at: &str) {
+        crate::overlays::upload::session_ended(self);
+        crate::ui::entity_links::overtake(self);
         self.player.stop();
         self.playlists = Res::default();
         self.pending_invites = 0;
