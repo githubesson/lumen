@@ -53,7 +53,8 @@ struct State {
 impl State {
     fn position(&self) -> i64 {
         if self.shown.track.is_none() { return 0; }
-        let elapsed = if self.shown.playing {
+        // Not while it waits for audio (buffering).
+        let elapsed = if self.shown.running {
             self.sampled_at.map(|at| at.elapsed().as_micros().min(i64::MAX as u128) as i64).unwrap_or(0)
         } else { 0 };
         let at = self.shown.position_us.saturating_add(elapsed).max(0);
@@ -193,11 +194,21 @@ struct ArtJob {
     client: crate::api::Client,
 }
 struct ArtCache(std::path::PathBuf);
+const ART_PREFIX: &str = "lumen-mpris-art-";
 impl ArtCache {
     fn new() -> std::io::Result<Self> {
         use std::os::unix::fs::DirBuilderExt;
-        let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
-        let path = base.join(format!("lumen-mpris-art-{}", uuid::Uuid::new_v4()));
+        let base = match dirs::runtime_dir() {
+            Some(dir) => {
+                // A worker thread's Drop doesn't run at exit; the next start clears
+                // what a gone process left (only in the user's own runtime dir).
+                sweep(&dir, |pid| std::path::Path::new(&format!("/proc/{pid}")).exists());
+                dir
+            }
+            None => std::env::temp_dir(),
+        };
+        let name = format!("{ART_PREFIX}{}-{}", std::process::id(), uuid::Uuid::new_v4());
+        let path = base.join(name);
         std::fs::DirBuilder::new().mode(0o700).create(&path)?;
         Ok(Self(path))
     }
@@ -227,6 +238,18 @@ impl ArtCache {
 impl Drop for ArtCache {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+/// Removes the cover caches in `base` whose process isn't `alive` any more.
+fn sweep(base: &std::path::Path, alive: impl Fn(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(base) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let pid = name.to_str().and_then(|n| n.strip_prefix(ART_PREFIX)).and_then(|n| n.split('-').next()).and_then(|p| p.parse().ok());
+        // `file_type` doesn't follow a symlink.
+        if pid.is_some_and(|pid| !alive(pid)) && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
     }
 }
 fn art_worker(
@@ -430,6 +453,7 @@ mod tests {
             Shown {
                 track: Some(track.clone()),
                 playing: true,
+                running: true,
                 position_us: 12_000_000,
                 duration_us: 120_000_000,
             },
@@ -487,6 +511,7 @@ mod tests {
             Shown {
                 track: Some(track),
                 playing: false,
+                running: false,
                 position_us: 45_000_000,
                 duration_us: 120_000_000,
             },
@@ -519,6 +544,7 @@ mod tests {
             Shown {
                 track: Some(uncovered),
                 playing: true,
+                running: true,
                 position_us: 12_000_000,
                 duration_us: 120_000_000,
             },
@@ -568,5 +594,20 @@ mod tests {
         assert!(cache.store(1, b"<html>not a cover</html>").is_none());
         drop(cache);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn mpris_covers_left_by_a_gone_process_are_cleared() {
+        let base = std::env::temp_dir().join(format!("lumen-mpris-sweep-{}", uuid::Uuid::new_v4()));
+        let dir = |name: &str| {
+            let p = base.join(name);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join("1.png"), b"x").unwrap();
+            p
+        };
+        let (gone, alive, other) = (dir("lumen-mpris-art-41-a"), dir("lumen-mpris-art-42-b"), dir("something-else"));
+        sweep(&base, |pid| pid == 42);
+        assert!(!gone.exists() && alive.exists() && other.exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
