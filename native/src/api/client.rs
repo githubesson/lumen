@@ -149,8 +149,8 @@ pub enum Body {
     None,
     Json(serde_json::Value),
     /// A body read as it is sent (multipart uploads of files on disk), with
-    /// its exact length.
-    Stream { content_type: String, len: u64, reader: Box<dyn Read + Send> },
+    /// its exact length; `expect_continue` asks the server before sending it.
+    Stream { content_type: String, len: u64, reader: Box<dyn Read + Send>, expect_continue: bool },
 }
 
 /// When a 401 signs the user out (`notifyUnauthorized`).
@@ -450,12 +450,16 @@ impl Client {
                     // closes the connection on the unread rest, and an
                     // answer written mid-body would be lost to that. Asked,
                     // it answers before the body goes; one that doesn't
-                    // reply to the ask gets the body after a second.
-                    Body::Stream { content_type, len, reader } => r
-                        .header("Content-Type", content_type)
-                        .header("Content-Length", len.to_string())
-                        .header("Expect", "100-continue")
-                        .send(ureq::SendBody::from_owned_reader(reader)),
+                    // reply to the ask gets the body after a second, and
+                    // one that refuses it (417) gets it sent again without
+                    // (`api::upload`).
+                    Body::Stream { content_type, len, reader, expect_continue } => {
+                        let mut r = r.header("Content-Type", content_type).header("Content-Length", len.to_string());
+                        if expect_continue {
+                            r = r.header("Expect", "100-continue");
+                        }
+                        r.send(ureq::SendBody::from_owned_reader(reader))
+                    }
                 }
             }
         }
