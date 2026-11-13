@@ -316,4 +316,6 @@ it("doesn't add a dropped folder whose walk ends after the upload started", asyn
   await act(async () => { finish(file("late.flac")); });
   expect(screen.getByRole("button", { name: "Uploading 0 of 1…" })).toBeTruthy();
   expect(screen.queryByText("Late/late.flac")).toBeNull();
+  // Not silently: the dialog says the folder didn't go.
+  expect(screen.getByText("A dropped folder wasn't added: the upload had already started.")).toBeTruthy();
 });

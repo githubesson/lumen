@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -210,7 +211,19 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		res := h.Ingest.IngestFileAs(r.Context(), dst, ownerID)
+		// A shared file's ingest isn't cut short by a cancel: one left
+		// half-done stays in uploads/ for the watcher, which would add it
+		// (or promote a user's copy of it) after the dialog said it was
+		// undone. Finished, its outcome is known and the undo below takes
+		// back a new track and leaves a promoted one. A cancel waits for at
+		// most this one file. A personal upload's failed file is removed
+		// instead, so it can stop at once.
+		ingestCtx, stop := r.Context(), context.CancelFunc(func() {})
+		if ownerID == nil {
+			ingestCtx, stop = context.WithTimeout(context.WithoutCancel(r.Context()), sharedIngestTimeout)
+		}
+		res := h.Ingest.IngestFileAs(ingestCtx, dst, ownerID)
+		stop()
 		// res.Skipped must be honoured: a file that vanished between write and
 		// stat comes back Inserted=false, Err=nil, and was reported as
 		// `dedup: true` — a success. The nil track id likewise has to stay out of
@@ -359,6 +372,10 @@ func (h *Library) Errors(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, ingestErrorsResp{Errors: errs, Total: total})
 }
+
+// sharedIngestTimeout bounds a shared upload's per-file ingest, which a
+// cancel doesn't interrupt (see Upload).
+const sharedIngestTimeout = 5 * time.Minute
 
 // addedByUpload reports whether a cancelled upload should take this file's
 // track back: a new track only. A dedup hit, or a promotion (a shared upload

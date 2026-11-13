@@ -260,11 +260,17 @@ while uploading.
   sends nothing more, and deletes the tracks this upload had already added.
   Personal uploads use the owner delete; admin uploads use the admin delete.
   The selection stays so you can retry, and the dialog says what was removed.
-  Closing the dialog with X or Escape during an upload does the same.
+  X, Escape and the backdrop do nothing during an upload: stopping one
+  deletes what it added, so that takes the Cancel upload button.
 - **Server:** if the client disconnects mid-request, the upload stops at the
   next file and undoes the tracks that request had added. It removes the rows
   first, then the files, and only files inside that upload's own folder.
-  Half-written files were already removed before this branch.
+  Half-written files were already removed before this branch. A shared
+  upload finishes the file it was ingesting first, so its outcome is known.
+- **What stays:** a shared upload that took over a user's personal copy of
+  the same audio ("promoted") keeps that track, since it wasn't new. A server
+  without this update doesn't say which ones were promoted, so the app leaves
+  a shared upload's tracks there and asks you to delete the rest.
 
 **Server update needed?** The app-side cancel and cleanup work on today's
 server. Undoing a request that had *fully arrived* when the cancel came needs

@@ -96,6 +96,9 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   // of the render it started in.
   const resultsShownRef = useRef(false);
   const busyRef = useRef(false);
+  // Uploads started so far: a dropped folder still being read when one
+  // starts is left out, saying so.
+  const uploadsStartedRef = useRef(0);
   useEffect(() => {
     resultsShownRef.current = results !== null;
   }, [results]);
@@ -131,6 +134,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       return;
     }
     busyRef.current = true;
+    uploadsStartedRef.current++;
     setBusy(true);
     setError(null);
     setCancelNote(null);
@@ -248,7 +252,16 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
         e.preventDefault();
         setDragActive(false);
         if (busy) return;
-        void filesFromDrop(e.dataTransfer).then(accept);
+        const uploads = uploadsStartedRef.current;
+        void filesFromDrop(e.dataTransfer).then((list) => {
+          // An upload started while the folder was being read: it didn't
+          // include these, and its results mustn't give way to them.
+          if (uploadsStartedRef.current !== uploads) {
+            if (list.length) setError("A dropped folder wasn't added: the upload had already started.");
+            return;
+          }
+          accept(list);
+        });
       }}
     >
       <DialogShell
