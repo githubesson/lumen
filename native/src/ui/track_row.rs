@@ -248,22 +248,17 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
     if spec.cover {
         let url = tr.cover_at(Some(64));
         let (col_w, art) = if spec.headless { (56.0, 40.0) } else { (44.0, 32.0) };
-        r = r.child(
-            row().w(col_w).h_full().pl(8.0).items_center().child(crate::ui::cover_art(
-                t,
-                &app.images,
-                Some(&url),
-                &art_label(tr),
-                art,
-                art,
-                t.radius_md(),
-            )),
-        );
+        let cover = crate::ui::cover_art(t, &app.images, Some(&url), &art_label(tr), art, art, t.radius_md());
+        let cover = if selecting { cover } else {
+            super::entity_links::album_cover(cover, tr, t).key(format!("{key}-cover-link"))
+        };
+        r = r.child(row().w(col_w).h_full().pl(8.0).items_center().child(cover));
     }
 
     // Title and artist.
-    let mut title_line =
-        row().w_full().min_w(0.0).items_center().child(crate::ui::centred(line(title.clone(), font(14.0, 500.0), t.c.foreground), font(14.0, 500.0)));
+    let label = crate::ui::centred(line(title.clone(), font(14.0, 500.0), t.c.foreground), font(14.0, 500.0));
+    let label = if selecting { label } else { super::entity_links::album_label(label, tr, t).key(format!("{key}-title-link")) };
+    let mut title_line = row().w_full().min_w(0.0).items_center().child(label);
     if spec.source_badge && is_tidal(tr) {
         title_line = title_line.child(badge(t, if unavailable { "Removed from TIDAL" } else { "TIDAL" }).ml(8.0));
     }
@@ -277,20 +272,10 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
         rune::col().grow(1.0).min_w(0.0).h_full().px(8.0).justify_center().child(crate::ui::exact(title_line.h(20.3), 20.3));
     if spec.artist {
         let artist = display_text(tr.artist.as_deref(), "Unknown artist");
-        let sub = line(artist.clone(), font(12.0, 400.0), t.c.muted_foreground);
+        let sub = if selecting { line(artist.clone(), font(12.0, 400.0), t.c.muted_foreground) }
+            else { super::entity_links::artists(tr, font(12.0, 400.0), t.c.muted_foreground) };
         title_cell =
             title_cell.child(crate::ui::exact(tooltip::tip_truncated(sub, &format!("{key}-artist"), &artist, font(12.0, 400.0)), 17.4));
-    }
-    {
-        let (l, id, tr2) = (list.clone(), tr.id.clone(), shared.clone());
-        title_cell = title_cell.on_press_tx(move |app: &mut App, tx| {
-            if app.widgets.lists.is_selecting(&l) {
-                track_select::toggle_row(app, &l, source, &id, index, tx.mods().shift);
-            } else {
-                let list = queue(app).to_vec();
-                play_from(app, &tr2, &list);
-            }
-        });
     }
     r = r.child(title_cell);
 
@@ -300,7 +285,10 @@ pub fn track_row(app: &App, t: &Theme, spec: RowSpec) -> El {
         let mut cell = row().w_frac(0.25).h_full().px(8.0).items_center().min_w(0.0);
         let label = line(album.clone().unwrap_or_else(|| "—".into()), tnum(font(12.0, 400.0)), t.c.muted_foreground);
         cell = cell.child(match album {
-            Some(a) => tooltip::tip_truncated(label, &format!("{key}-album"), &a, tnum(font(12.0, 400.0))),
+            Some(a) => {
+                let label = if selecting { label } else { super::entity_links::album_label(label, tr, t).key(format!("{key}-album-link")) };
+                tooltip::tip_truncated(label, &format!("{key}-album"), &a, tnum(font(12.0, 400.0)))
+            },
             None => label,
         });
         r = r.child(cell);

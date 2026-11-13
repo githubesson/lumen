@@ -199,7 +199,7 @@ pub const TRACKS_LIST: &str = "album-tracks";
 /// `AlbumTrackList`: no row covers or albums, and rows crediting only the
 /// album's artists leave their artist line out. The rows are the search's
 /// matches; a row plays the whole album.
-fn album_tracks(app: &App, t: &Theme, credits: Vec<String>) -> El {
+fn album_tracks(app: &App, t: &Theme, credits: Vec<String>) -> TrackList {
     let mut list = TrackList::new(TRACKS_LIST, super::detail_rows)
         .queue(super::detail_tracks)
         .no_cover()
@@ -209,7 +209,7 @@ fn album_tracks(app: &App, t: &Theme, credits: Vec<String>) -> El {
     if let Some(q) = super::detail_query(app) {
         list = list.empty(empty_state(t, None, "No matches.", Some(&format!("Nothing in this album matches \"{q}\".")), None));
     }
-    list.build(app, t)
+    list
 }
 
 /// A failed first load: the error, in the view. The Library crumb is the way back.
@@ -258,7 +258,7 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         list.push(error_banner(t, e));
     }
     let names: Vec<String> = d.credits.iter().map(|c| c.name.clone()).collect();
-    list.push(album_tracks(app, t, names));
+    let track_list = Some(album_tracks(app, t, names));
     let actions = match album.tidal_album_id.as_deref().filter(|s| !s.is_empty()) {
         Some(tidal) if admin => download_control(app, t, tidal, tracks, album.queued_count.unwrap_or(0)),
         _ => Vec::new(),
@@ -286,6 +286,7 @@ pub fn view_library(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
             on_edit,
             matches: (d.rows.len(), tracks.len()),
             list,
+            track_list,
         },
     )
 }
@@ -303,6 +304,7 @@ fn loading_sleeve(kind: &'static str, label: &'static str, reserve: bool, facts:
         on_edit: None,
         matches: (0, 0),
         list: Vec::new(),
+        track_list: None,
     }
 }
 
@@ -374,7 +376,7 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
         list.push(error_banner(t, e));
     }
     let names: Vec<String> = d.credits.iter().map(|c| c.name.clone()).collect();
-    list.push(album_tracks(app, t, names));
+    let track_list = Some(album_tracks(app, t, names));
     sleeve::view(
         app,
         t,
@@ -398,6 +400,7 @@ pub fn view_tidal(app: &App, t: &Theme, cx: &mut Cx<App>, id: &str, artist_param
             on_edit: None,
             matches: (d.rows.len(), tracks.len()),
             list,
+            track_list,
         },
     )
 }

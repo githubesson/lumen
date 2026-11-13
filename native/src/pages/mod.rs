@@ -43,6 +43,7 @@ impl Pages {
 
 /// Runs when the location changes: start the page's requests.
 pub fn enter(app: &mut App, loc: &Location) {
+    crate::overlays::collection_play::close(app);
     let p = loc.path.as_str();
     match p {
         "/" => home::enter(app, loc),

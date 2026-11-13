@@ -290,7 +290,10 @@ fn np_text(app: &App, t: &Theme, title: f32, artist: f32, gap: f32, centred: boo
         .key("np-text")
         .min_w(0.0)
         .gap(gap)
-        .child(held(crate::ui::line(d.title.clone(), title_style, t.c.foreground).tip_truncated("np-title", &d.title, title_style).matched("mini-title"), title_lh, centred))
+        .child(held({
+            let label = crate::ui::line(d.title.clone(), title_style, t.c.foreground).tip_truncated("np-title", &d.title, title_style).matched("mini-title");
+            if let Some(track) = d.current { crate::ui::entity_links::album_label(label, track, t) } else { label }
+        }, title_lh, centred))
         .child(held(bar::np_artist(app, t, artist_style, underline).matched("mini-artist"), artist_lh, centred));
     if centred {
         c = c.items_center();

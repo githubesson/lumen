@@ -51,6 +51,7 @@ pub struct Sleeve<'a> {
     pub matches: (usize, usize),
     /// The list: an error banner and the track table.
     pub list: Vec<El>,
+    pub track_list: Option<crate::ui::track_list::TrackList>,
 }
 
 
@@ -107,20 +108,17 @@ fn play_row(app: &App, t: &Theme, tracks: &[TrackListItem], loading: bool, grow:
     }
     if can_play {
         play = play.on_press(move |app: &mut App| {
-            crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
+            crate::ui::track_row::start_list(app, &queue, false);
         });
     }
+    let shuffle_queue = tracks.to_vec();
     let on = app.player.shuffle;
-    let mut shuffle = Btn::new("sleeve-shuffle", "").icon(&i::SHUFFLE).icon_size(16.0).disabled(loading).build(t).w(32.0).px(0.0);
-    shuffle = shuffle.label("Shuffle").checked(on).help(if on { "Shuffle is on" } else { "Shuffle" });
+    let mut shuffle = crate::ui::blocks::shuffle_button(t, "sleeve-shuffle", loading || !can_play).checked(on);
     if on {
-        shuffle = shuffle
-            .fill(t.c.muted)
+        shuffle = shuffle.fill(t.c.muted)
             .child(el().absolute(14.0, 25.0).size(4.0, 4.0).radius(99.0).fill(t.c.foreground).inert());
     }
-    if !loading {
-        shuffle = shuffle.on_press(|app: &mut App| app.player.toggle_shuffle());
-    }
+    let shuffle = shuffle.on_press(move |app: &mut App| { crate::ui::track_row::start_list(app, &shuffle_queue, true); });
     row().w_full().gap(8.0).flex_wrap().child(play).child(shuffle)
 }
 
@@ -232,9 +230,13 @@ fn name_block(t: &Theme, s: &Sleeve, width: f32, title_style: TextStyle) -> El {
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {
     let view_w = cx.layout_size("sleeve-view").map_or(956.0 + 2.0 * t.pad(), |r| r[0]);
     let content_w = view_w - 2.0 * t.pad();
+    let tracks: &[TrackListItem] = s.album.as_ref().map_or(&[], |a| a.tracks);
+    // Compilation buckets can hold thousands of songs. Keep the full queue,
+    // but mount only visible rows, using the same page scroller as Library.
+    // Base this on the unfiltered collection so searching does not swap layouts.
+    let virtual_list = tracks.len() > 200;
     let stacked = content_w < STACK_BELOW_PX;
     let phone = stacked && Bp::of(window_size(cx)[0]) == Bp::Narrow;
-    let tracks: &[TrackListItem] = s.album.as_ref().map_or(&[], |a| a.tracks);
 
     // The column.
     let (art_w, head_w) = if !stacked {
@@ -310,6 +312,10 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, mut s: Sleeve) -> El {
     let mut list = col().key("sleeve-list").gap(8.0).min_w(0.0).child(tools);
     for c in std::mem::take(&mut s.list) {
         list = list.child(c);
+    }
+
+    if let Some(tracks) = s.track_list.take() {
+        list = list.child(if virtual_list { tracks.windowed(app, t, cx) } else { tracks.build(app, t) });
     }
 
     let mut v = if stacked {

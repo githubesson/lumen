@@ -221,3 +221,23 @@ fn plays_a_queue_through_on_the_engine() {
     }
     assert_eq!(asked.iter().filter(|p| *p == "/api/tracks/b/stream").count(), 1, "the prepared stream is the one that played");
 }
+
+#[test]
+fn collection_shuffle_applies_to_the_queue_and_play_all_restores_order() {
+    let (mut p, _) = player();
+    let mut tracks = list(&["a", "b", "c", "d"]);
+    tracks[1].unavailable = Some(true);
+    assert!(p.start_list(&tracks, true));
+    assert!(p.shuffle);
+    assert_eq!(p.queue.len(), 3);
+    let mut ids: Vec<_> = p.queue.iter().map(|t| t.id.as_str()).collect(); ids.sort();
+    assert_eq!(ids, ["a", "c", "d"]);
+    assert!(p.start_list(&tracks, false));
+    assert!(!p.shuffle);
+    assert_eq!(p.current().unwrap().id, "a");
+    assert_eq!(p.queue.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["a", "c", "d"]);
+    tracks.iter_mut().for_each(|t| t.unavailable = Some(true));
+    assert!(!p.start_list(&tracks, true));
+    assert!(!p.shuffle);
+    assert_eq!(p.current().unwrap().id, "a");
+}

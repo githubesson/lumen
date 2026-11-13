@@ -235,12 +235,14 @@ fn repeat(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<f32>
         let n = queue.len();
         let label = if n > 0 { format!("Play all {n}") } else { "Play all".to_string() };
         let all = queue.clone();
+        let shuffled = queue.clone();
         frame.footer = Some(
-            Btn::new(format!("{}-playall", p.id), label).disabled(n == 0).icon(&i::PLAY_FILLED).icon_size(16.0).build(t).on_press(
+            row().gap(8.0).flex_wrap().child(Btn::new(format!("{}-playall", p.id), label).disabled(n == 0).icon(&i::PLAY_FILLED).icon_size(16.0).build(t).on_press(
                 move |app: &mut App| {
                     track_row::start_list(app, &all, false);
                 },
-            ),
+            )).child(Btn::new(format!("{}-shuffle", p.id), "").icon(&i::SHUFFLE).icon_size(16.0).disabled(n == 0).build(t).w(32.0).px(0.0).label("Shuffle play").help("Shuffle play")
+                .on_press(move |app: &mut App| { track_row::start_list(app, &shuffled, true); })),
         );
     }
     let body = if loading {
@@ -545,7 +547,7 @@ fn track_rows(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
         }
     };
     let status = status_of(ctx, t, p, source, retry, content);
-    let has_footer = p.kind == PanelKind::Playlist && !tracks.is_empty();
+    let has_footer = !tracks.is_empty();
     let (mut frame, fixed) = frame_of(ctx, p, content, sub, to, status, false, if has_footer { board::FOOTER_H } else { 0.0 });
     let natural = fixed + fill.min();
     let want = |count: usize| paged.then_some(count);
@@ -558,12 +560,14 @@ fn track_rows(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, w: f32, h: Option<
     }
     if has_footer {
         let all = queue.clone();
+        let shuffled = queue.clone();
         frame.footer = Some(
-            Btn::new(format!("{}-playall", p.id), format!("Play all {}", tracks.len())).icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
+            row().gap(8.0).flex_wrap().child(Btn::new(format!("{}-playall", p.id), format!("Play all {}", tracks.len())).icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
                 .on_press(move |app: &mut App| {
                     let list = all.read(app).to_vec();
                     track_row::start_list(app, &list, false);
-                }),
+                })).child(Btn::new(format!("{}-shuffle", p.id), "").icon(&i::SHUFFLE).icon_size(16.0).build(t).w(32.0).px(0.0).label("Shuffle play").help("Shuffle play")
+                    .on_press(move |app: &mut App| { let list = shuffled.read(app).to_vec(); track_row::start_list(app, &list, true); })),
         );
     }
     let body = if placeholders {

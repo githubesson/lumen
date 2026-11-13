@@ -194,9 +194,10 @@ pub fn column(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     if !app.ui.lyrics_open || app.ui.player.mini.on {
         return None;
     }
-    let w = column_width(t);
+    let window_w = crate::shell::window_size(cx)[0];
+    let w = crate::shell::panes::widths(app, t, window_w).1;
     let enter = rune::Transition::offset(12.0, 0.0).combined(rune::Transition::opacity()).hold_layout();
-    Some(row().key("lyrics-column").w(w + 8.0).h_full().transition(enter).child(el().w(8.0)).child(sidebar(app, t, cx).w(w)))
+    Some(row().key("lyrics-column").w(w + 8.0).h_full().transition(enter).child(crate::shell::panes::divider(app, t, window_w, true)).child(sidebar(app, t, cx).w(w)))
 }
 
 /// At 760 px and under: the panel floats over the page from the right, over

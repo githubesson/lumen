@@ -403,7 +403,7 @@ fn head(t: &Theme, s: &State, now: i64, no_tracks: bool, narrow: bool) -> El {
         .disabled(no_tracks || s.downloading)
         .build(t)
         .on_press(share_image);
-    let mut actions = row().flex_wrap().items_center().gap(8.0).child(fit(play)).child(fit(generate)).child(fit(share));
+    let mut actions = row().flex_wrap().items_center().gap(8.0).child(fit(play)).child(fit(crate::ui::blocks::shuffle_list_button(t, "replay-shuffle", |a| &a.pages.replay.queue, no_tracks))).child(fit(generate)).child(fit(share));
     if narrow {
         actions = actions.w_full();
     }

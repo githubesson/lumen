@@ -177,3 +177,18 @@ with an `on_press` handler, as well as rich-text links. Previously Tab drew its
 focus ring but Enter skipped it (and could activate a default button instead).
 The focused-link regression checks precedence over a default button; native
 Home title Tab/Enter is also exercised in the Lumen affordance audit.
+
+## Wayland background app polling (2026-11-11)
+
+`window/lifecycle.rs` and `window/any_host.rs`: service explicit app wakes and
+due runtime timers independently of redraw callbacks on Wayland. A compositor
+may withhold those callbacks on an inactive workspace without an occlusion event.
+Previously MPRIS commands queued until the window became visible again. Polling
+uses the existing no-draw runtime path and bounded timer deadlines; changed views
+still request a redraw for when the compositor can present them. Other platforms
+retain their existing pacing.
+
+Native Hyprland regression: play/pause/toggle/next/previous and advancing position
+on a focused window, unfocused window, inactive workspace and special minimized
+workspace, followed by restoring the visible app. Use a separate test profile,
+local audio fixture and private session bus to avoid real account/Discord activity.

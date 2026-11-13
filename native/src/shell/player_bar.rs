@@ -161,7 +161,7 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
     match &d.error {
         Some(summary) => error::line_button(app, t, summary, style, underline_at),
         None => {
-            if let Some(track) = d.current.filter(|_| !app.ui.player.mini.on) {
+            if let Some(track) = d.current {
                 // One bounded text layout gives the whole metadata line one
                 // ellipsis, while keeping each visible artist/album clickable.
                 let artist = crate::format::display_text(track.artist.as_deref(), "—");
@@ -180,7 +180,8 @@ pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32
                     label = label.link(rune::Link::new(album_start..d.artist.len(), "album").hover(paint));
                 }
                 let track = track.clone();
-                label.on_link(move |app: &mut App, target: &str, _| {
+                label.on_link(move |app: &mut App, target: &str, tx| {
+                    ui::entity_links::reveal_library(app, tx);
                     if target == "album" {
                         ui::entity_links::album(app, track.clone());
                     } else if let Some(name) = target.strip_prefix("artist:") {
@@ -280,7 +281,7 @@ pub fn transport_row(app: &App, t: &Theme, s: TransportSize) -> El {
     let mut controls = row().key("transport-row").gap(s.gap).items_center();
     if !s.compact {
         controls = controls.child(
-            sized(t_btn(t, "shuffle", &i::SHUFFLE, p.shuffle, d.command_pending)).label("Shuffle").on_press(|app: &mut App| app.player.toggle_shuffle()),
+            sized(t_btn(t, "shuffle", &i::SHUFFLE, p.shuffle, d.command_pending)).label(if p.shuffle { "Shuffle on" } else { "Shuffle off" }).checked(p.shuffle).on_press(|app: &mut App| app.player.toggle_shuffle()),
         );
     }
     controls = controls

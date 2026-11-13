@@ -15,6 +15,10 @@ use crate::theme::{Density, Layout, Mode};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tweaks {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lyrics_width: Option<f32>,
     #[serde(default)]
     pub theme: Mode,
     #[serde(default = "default_radius")]
@@ -37,7 +41,7 @@ fn default_radius() -> u32 {
 
 impl Default for Tweaks {
     fn default() -> Self {
-        Tweaks { theme: Mode::Dark, radius: 10, density: Density::Balanced, layout: Layout::Sidebar, home_board: None, smooth_mix: None, equalizer: Default::default() }
+        Tweaks { sidebar_width: None, lyrics_width: None, theme: Mode::Dark, radius: 10, density: Density::Balanced, layout: Layout::Sidebar, home_board: None, smooth_mix: None, equalizer: Default::default() }
     }
 }
 

@@ -7,7 +7,7 @@ use crate::app::App;
 use crate::resource::{self, Res};
 use crate::route::Location;
 use crate::theme::Theme;
-use crate::ui::blocks::{ListHeader, list_page_header, meta_line, play_list_button};
+use crate::ui::blocks::{ListHeader, list_page_header, meta_line};
 use crate::ui::kit::{empty_state, error_banner};
 use crate::ui::track_list::TrackList;
 use crate::ui::icons as i;
@@ -50,10 +50,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
             hero: list.and_then(|l| l.first()),
             fallback_icon: Some(&i::CLOCK),
             meta: Some(meta_line(t, &[&count, "each track once, most recent first"])),
-            actions: Some(play_list_button(t, "recent-play", "Play all", tracks, !playable).on_press(|app: &mut App| {
-                let list = tracks(app).to_vec();
-                crate::ui::track_row::start_list(app, &list, false);
-            })),
+            actions: Some(crate::ui::blocks::list_play_actions(t, "recent", tracks, !playable)),
             ..Default::default()
         },
     );

@@ -99,7 +99,9 @@ impl<S: 'static> AnyHost for Host<S> {
         if matches!(cause, StartCause::ResumeTimeReached { .. } | StartCause::Poll)
             && timer_deadline(&self.rt).is_some_and(|deadline| deadline <= Instant::now())
         {
-            let hidden = self.win.as_ref().is_none_or(|w| !w.visible);
+            // A Wayland redraw can remain pending for an entire workspace absence.
+            // Timers must keep driving playback even when that frame never arrives.
+            let hidden = self.wayland || self.win.as_ref().is_none_or(|w| !w.visible);
             if hidden && !(launcher && self.hidden_launcher_renders()) {
                 // Hidden or windowless: poll and due timers run, and the view waits for the
                 // frame that shows the window. A launcher's cached frame follows, paced.
@@ -107,6 +109,9 @@ impl<S: 'static> AnyHost for Host<S> {
                 self.clipboard.flush(&mut self.rt);
                 self.shell(event_loop);
                 if changed && launcher { self.refresh_hidden(); }
+                if changed && self.wayland {
+                    if let Some(w) = self.win.as_ref().filter(|w| w.visible) { w.window.request_redraw(); }
+                }
             // A redraw while the window backs off would draw nothing and leave the timer due.
             } else if self.win.as_ref().is_some_and(|w| (launcher || (w.visible && !w.occluded)) && !w.minimized()
                 && !w.backing_off(Instant::now())) {

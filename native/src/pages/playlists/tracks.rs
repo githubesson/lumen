@@ -146,6 +146,7 @@ fn drop_edge(drag: Option<DragState>, index: usize, count: usize) -> Option<bool
 /// `PlaylistRow`.
 fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
     let c = r.c;
+    let track = e.as_track();
     let key = format!("pl-row-{}-{}", e.position, e.track_id);
     let ink = if r.now || r.selected { t.c.foreground } else { t.c.muted_foreground };
     let small = |s: String| text(s).font(tnum(font(12.0, 400.0))).color(ink);
@@ -206,11 +207,16 @@ fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
                     .min_w(0.0)
                     // At their CSS line heights (Rune would round them to 21 and 18).
                     .child(exact(
-                        line(title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated(&format!("{key}-title"), &title, font(14.0, 500.0)),
+                        {
+                            let label = line(title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated(&format!("{key}-title"), &title, font(14.0, 500.0));
+                            if r.selecting { label } else { crate::ui::entity_links::album_label(label, &track, t) }
+                        },
                         20.3,
                     ))
                     .child(exact(
-                        line(sub.clone(), font(12.0, 400.0), t.c.muted_foreground).tip_truncated(&format!("{key}-sub"), &sub, font(12.0, 400.0)),
+                        if r.selecting { line(sub.clone(), font(12.0, 400.0), t.c.muted_foreground) } else {
+                            crate::ui::entity_links::artists_label(&track, &sub, font(12.0, 400.0), t.c.muted_foreground)
+                        }.tip(&format!("{key}-sub"), &sub),
                         17.4,
                     )),
             ),
@@ -218,7 +224,10 @@ fn track_row(app: &App, t: &Theme, e: &PlaylistTrackEntry, r: RowCtx) -> El {
         .child(cell(c.album).child({
             let a = line(album.clone().unwrap_or_else(|| "—".into()), tnum(font(12.0, 400.0)), ink);
             match album {
-                Some(s) => a.tip_truncated(&format!("{key}-album"), &s, tnum(font(12.0, 400.0))),
+                Some(s) => {
+                    let a = a.tip_truncated(&format!("{key}-album"), &s, tnum(font(12.0, 400.0)));
+                    if r.selecting { a } else { crate::ui::entity_links::album_label(a, &track, t) }
+                },
                 None => a,
             }
         }))

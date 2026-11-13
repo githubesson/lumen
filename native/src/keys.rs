@@ -23,6 +23,7 @@ pub fn modal_open(app: &App) -> bool {
         || app.ui.mobile_nav_open
         || app.select.is_some()
         || app.overlays.confirm.is_open()
+        || app.overlays.collection_play.is_open()
 }
 
 pub fn on_key(app: &mut App, ev: &KeyEvent, tx: &mut Tx) -> bool {

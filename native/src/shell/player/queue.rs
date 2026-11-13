@@ -116,8 +116,8 @@ fn now_playing_band(app: &App, t: &Theme, scope: &str, track: &TrackListItem, in
         .grow(1.0)
         .min_w(0.0)
         .child(text("Now playing").font(with_lh(font(12.0, 500.0), 16.0)).color(t.c.muted_foreground))
-        .child(line(display_text(Some(&track.title), ""), with_lh(font(14.0, 500.0), 18.0), t.c.foreground))
-        .child(line(display_text(track.artist.as_deref(), "Unknown artist"), with_lh(font(12.0, 400.0), 16.0), t.c.muted_foreground));
+        .child(crate::ui::entity_links::album_label(line(display_text(Some(&track.title), ""), with_lh(font(14.0, 500.0), 18.0), t.c.foreground), track, t))
+        .child(crate::ui::entity_links::artists(track, with_lh(font(12.0, 400.0), 16.0), t.c.muted_foreground));
     let mut band = css_border_bottom(row(), 1.0, t.c.border)
         .key(format!("{scope}-now"))
         .w_full()
@@ -143,8 +143,8 @@ fn queue_row(app: &App, t: &Theme, scope: &str, track: &TrackListItem, index: us
     let text_col = col()
         .grow(1.0)
         .min_w(0.0)
-        .child(line(title.clone(), with_lh(font(13.0, 500.0), 16.0), t.c.popover_foreground))
-        .child(line(display_text(track.artist.as_deref(), "Unknown artist"), with_lh(font(12.0, 400.0), 16.0), t.c.muted_foreground));
+        .child(crate::ui::entity_links::album_label(line(title.clone(), with_lh(font(13.0, 500.0), 16.0), t.c.popover_foreground), track, t))
+        .child(crate::ui::entity_links::artists(track, with_lh(font(12.0, 400.0), 16.0), t.c.muted_foreground));
     let mut r = row()
         .key(format!("{scope}-row-{index}"))
         .w_full()

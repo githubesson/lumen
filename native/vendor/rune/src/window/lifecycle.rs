@@ -150,13 +150,18 @@ impl<S: 'static> Host<S> {
     /// shown. A hidden launcher renders poll's changes hidden, paced, keeping its cached frame
     /// fresh. A minimize waits for a show in the same turn (`shows`). Returns whether it polled.
     pub(super) fn poll_hidden(&mut self, event_loop: &ActiveEventLoop, shows: bool) -> bool {
-        if event_loop.exiting() || self.win.as_ref().is_some_and(|w| w.visible) { return false; }
+        // Wayland may withhold redraw callbacks on an inactive workspace without
+        // reporting occlusion. Service the inbox independently of those callbacks.
+        if event_loop.exiting() || (!self.wayland && self.win.as_ref().is_some_and(|w| w.visible)) { return false; }
         let changed = self.rt.poll_hidden();
         self.clipboard.flush(&mut self.rt);
         let minimize = shows && std::mem::take(&mut self.rt.minimize_request);
         self.shell(event_loop);
         self.rt.minimize_request |= minimize;
         if changed && self.launcher() { self.refresh_hidden(); }
+        if changed && self.wayland {
+            if let Some(w) = self.win.as_ref().filter(|w| w.visible) { w.window.request_redraw(); }
+        }
         true
     }
 

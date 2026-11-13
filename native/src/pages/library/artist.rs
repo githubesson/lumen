@@ -195,12 +195,13 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
                 if here {
                     app.player.toggle_play();
                 } else {
-                    crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
+                    crate::ui::track_row::start_list(app, &queue, false);
                 }
             });
     } else {
         play = play.opacity(0.5).disabled(true).cursor(Cursor::NotAllowed);
     }
+    let shuffle_queue = tracks.to_vec();
     let on = app.player.shuffle;
     let ink = if on { t.c.foreground } else { t.c.muted_foreground };
     let mut shuffle = el()
@@ -209,13 +210,14 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
         .radius(t.radius_lg())
         .center()
         .role("button")
-        .label("Shuffle")
+        .label("Shuffle play").help("Shuffle play")
         .checked(on)
         .cursor(Cursor::Pointer)
         .focusable(true)
         .hover(t.c.ghost_hover)
         .hover_motion(motion::ease(120.0), motion::ease(120.0))
-        .on_press(|app: &mut App| app.player.toggle_shuffle())
+        .disabled(!can_play)
+        .on_press(move |app: &mut App| { crate::ui::track_row::start_list(app, &shuffle_queue, true); })
         .child(ico(&i::SHUFFLE, 20.0, ink).group_color(t.c.foreground));
     if on {
         shuffle = shuffle.child(el().absolute(14.0, 25.0).size(4.0, 4.0).radius(99.0).fill(t.c.foreground).inert());
@@ -288,7 +290,13 @@ fn discography(app: &App, t: &Theme, releases: &[ArtistRelease], width: f32) -> 
             d.show_all = !d.show_all;
         })
     });
-    let mut body = col().w_full();
+    let all = releases.to_vec();
+    let shuffled = all.clone();
+    let mut body = col().w_full().child(row().gap(8.0).flex_wrap().mb(12.0)
+        .child(Btn::new("discography-play", "Play all").primary().icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
+            .on_press(move |app: &mut App| crate::overlays::collection_play::releases(app, all.clone(), false)))
+        .child(crate::ui::blocks::shuffle_button(t, "discography-shuffle", false)
+            .on_press(move |app: &mut App| crate::overlays::collection_play::releases(app, shuffled.clone(), true))));
     if logic::has_release_filters(releases) {
         let mut chips = row().gap(8.0).flex_wrap().mb(12.0);
         for (value, label) in RELEASE_FILTER_OPTIONS {

@@ -185,6 +185,34 @@ impl TrackList {
         c.child(table)
     }
 
+    /// Fixed-height album rows inside the original sleeve layout. Unlike `page`,
+    /// this can sit beside the sticky cover without changing the page scroller.
+    /// Keep the full body's height and mount the viewport plus one screen each
+    /// side; window-layout reads refresh the range when scrolling or resizing.
+    pub fn windowed(self, app: &App, t: &Theme, cx: &rune::Cx<App>) -> El {
+        let items = (self.source)(app);
+        if items.is_empty() {
+            return self.empty.clone().unwrap_or_else(el);
+        }
+        if self.selectable {
+            app.widgets.lists.mount(&self.key, self.source);
+        }
+        let body_key = format!("{}-windowed-body", self.key);
+        let viewport = cx.window_layout("content").unwrap_or([0.0, 0.0, 1280.0, 820.0]);
+        let body_y = cx.window_layout(&body_key).map_or(viewport[1], |r| r[1]);
+        let range = windowed_range(items.len(), t.row_h(), body_y, viewport[1], viewport[3]);
+        let mut body = col().key(body_key).w_full().h(items.len() as f32 * t.row_h());
+        for n in range {
+            body = body.child(el().absolute(0.0, n as f32 * t.row_h()).w_full().h(t.row_h())
+                .child(self.row(app, t, n, &items[n])));
+        }
+        let mut c = col().key(format!("{}-list", self.key)).w_full().gap(self.gap);
+        if let Some(place) = self.bar {
+            c = c.child(self.selection_bar(app, t, place));
+        }
+        c.child(self.dim(col().w_full().child(self.header_row(app, t)).child(body)))
+    }
+
     /// The whole page as virtual rows of the content scroller: `head` (the
     /// page's header, padded like `.view`), then the selection bar and the
     /// table's header, one row per track, and `tail`. Return it as the
@@ -419,4 +447,26 @@ pub fn open_menu(app: &mut App, list: &str, source: Source, queue: Source, tr: &
         selection,
     };
     track_menu::open(app, tr.clone(), at, ctx);
+}
+
+/// Overscan prevents gaps during ordinary wheel/drag motion; clamping also
+/// handles a filtered list whose old scroll position was near its end.
+fn windowed_range(count: usize, row_h: f32, body_y: f32, viewport_y: f32, viewport_h: f32) -> std::ops::Range<usize> {
+    let visible = ((viewport_h / row_h).ceil() as usize).max(1);
+    let first = (((viewport_y - body_y).max(0.0) / row_h).floor() as usize).min(count.saturating_sub(1));
+    first.saturating_sub(visible)..(first + visible * 2 + 1).min(count)
+}
+
+#[cfg(test)]
+mod windowed_tests {
+    use super::windowed_range;
+    #[test]
+    fn large_album_window_is_bounded_and_reaches_both_ends() {
+        assert_eq!(windowed_range(4635, 44.0, 148.0, 57.0, 674.0), 0..33);
+        let end = windowed_range(4635, 44.0, -203200.0, 57.0, 674.0);
+        assert!(end.contains(&4634));
+        assert!(end.len() <= 49);
+        assert_eq!(windowed_range(4, 44.0, -203200.0, 57.0, 674.0), 0..4);
+        assert!(windowed_range(0, 44.0, 148.0, 57.0, 674.0).is_empty());
+    }
 }

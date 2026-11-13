@@ -137,6 +137,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, h: Props) -> El {
         detail::queue_source,
         h.tracks.is_none_or(|r| r.is_empty()),
     ));
+    actions = actions.child(crate::ui::blocks::shuffle_list_button(t, "playlist-shuffle", detail::queue_source, !detail::queue_source(app).iter().any(|t| t.unavailable != Some(true))));
     if h.perms.can_edit_tracks {
         let add = Btn::new("playlist-add-tracks", "Add tracks").icon(&i::PLUS).icon_size(16.0).disabled(h.tracks.is_none()).build(t);
         actions = actions.child(if h.tracks.is_none() { add } else { add.on_press(super::add_tracks::open) });

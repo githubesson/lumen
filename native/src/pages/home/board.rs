@@ -276,11 +276,12 @@ pub fn track_row(app: &App, t: &Theme, key: String, track: &TrackListItem, o: Tr
     }
     if !o.bare {
         let label = track.album_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| track.title.clone());
-        r = r.child(cover_art(t, &app.images, Some(&track.cover_at(Some(ROW_ART_SIZE))), &label, 40.0, 40.0, t.radius_md()));
+        let art = cover_art(t, &app.images, Some(&track.cover_at(Some(ROW_ART_SIZE))), &label, 40.0, 40.0, t.radius_md());
+        r = r.child(crate::ui::entity_links::album_cover(art, track, t).key(format!("{key}-cover-link")));
     }
     let title = line(clean_text(Some(&track.title)), font(title_size(t), 500.0), t.c.foreground);
     r = r.child(col().grow(1.0).min_w(0.0).gap(1.0)
-        .child(lh(title, title_size(t) * 1.45))
+        .child(lh(crate::ui::entity_links::album_label(title, track, t).key(format!("{key}-title-link")), title_size(t) * 1.45))
         .child(lh(crate::ui::entity_links::artists(track, font(12.0, 400.0), t.c.muted_foreground), 17.4)));
     let meta = text(o.meta.clone()).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground);
     let mut end = el().h_full().items_center().justify_end();

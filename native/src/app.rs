@@ -29,6 +29,7 @@ pub struct Ui {
     pub settings_open: bool,
     pub upload_open: bool,
     pub lyrics_open: bool,
+    pub pane_drag: Option<crate::shell::panes::DragState>,
     /// The sidebar drawer of narrow windows (`useMobileNav`).
     pub mobile_nav_open: bool,
     /// A `SeekBar` being dragged: its key and the value under the pointer.

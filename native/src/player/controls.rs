@@ -56,7 +56,7 @@ impl Player {
             return false;
         }
         let start = if shuffle { queue[self::core::random_below(queue.len())].clone() } else { queue[0].clone() };
-        self.play(&start, &queue, PlayOptions::default())
+        self.play(&start, &queue, PlayOptions { shuffle: Some(shuffle), ..Default::default() })
     }
 
     pub fn toggle_play(&mut self) {

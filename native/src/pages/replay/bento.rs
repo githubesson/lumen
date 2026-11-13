@@ -681,13 +681,13 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         .child(label(t, "Most played track"))
         .child(
             el().w_full().h(lines * title_lh).mt(6.0).child(
-                text(shown)
+                crate::ui::entity_links::album_label(text(shown)
                     .font(title_style)
                     .color(t.c.foreground)
                     .wrap_anywhere()
                     .max_lines(2)
                     .w_full()
-                    .tip("replay-feat-title", &title),
+                    .tip("replay-feat-title", &title), tr, t),
             ),
         )
         .child(exact(sub_el, LH14).mt(2.0).tip("replay-feat-sub", &sub_tip.join(" · ")))
@@ -793,8 +793,8 @@ fn repeat_row(app: &App, t: &Theme, track: &ReplayTrack, rank: usize, max: u64, 
     let words = col()
         .grow(1.0)
         .min_w(0.0)
-        .child(exact(line(title, font(14.0, 500.0), t.c.foreground), LH14))
-        .child(exact(line(display_text(tr.artist.as_deref(), "Unknown artist"), font(12.0, 400.0), t.c.muted_foreground), LH12));
+        .child(exact(crate::ui::entity_links::album_label(line(title, font(14.0, 500.0), t.c.foreground), tr, t), LH14))
+        .child(exact(crate::ui::entity_links::artists(tr, font(12.0, 400.0), t.c.muted_foreground), LH12));
     let mut r = row()
         .key(key.clone())
         .w(width)
