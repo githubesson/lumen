@@ -106,6 +106,8 @@ impl<S: 'static> AnyHost for Host<S> {
                 // Hidden or windowless: poll and due timers run, and the view waits for the
                 // frame that shows the window. A launcher's cached frame follows, paced.
                 let changed = self.rt.hidden_wake();
+                // Lumen patch: loops wait for the frame too, or their wake polls every interval.
+                if stalled { self.rt.drop_loop_wake(); }
                 self.clipboard.flush(&mut self.rt);
                 self.shell(event_loop);
                 if changed && launcher { self.refresh_hidden(); }

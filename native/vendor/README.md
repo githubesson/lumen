@@ -172,7 +172,7 @@ Hooks in upstream files:
 #### Return activates a focused element link
 
 Return went to a focused rich-text link, a `focus_highlight` row or a list item, but not to
-an element with `role("link")` (Home's "Jump back in" album title, the player bar's title):
+an element with `role("link")` (a sidebar nav item, a breadcrumb, Home's "Jump back in" cover):
 Tab drew its ring, and Return pressed the window's default button instead, or nothing.
 `Runtime::takes_return` now counts that role too. Its test,
 `return_activates_an_element_link_before_the_default_button`, sits with the module's own
@@ -192,7 +192,10 @@ on a shown window waits for that frame to poll, so play/pause from the media key
 queued until the window showed again. `src/window/redraw_watch.rs` (new) notes when a frame
 asked for a wake or timer goes unanswered; once it is 250 ms overdue, the host polls without
 it, once at that deadline and then at each wake and due timer, as for a hidden window, and
-still asks for the frame. The first frame that comes ends it. Only Wayland arms it; a shown
+still asks for the frame. The first frame that comes ends it. Each of those polls also drops
+the runtime's loop wake (`Runtime::drop_loop_wake`), as hiding a window does: a loop on screen
+(a loading spinner) would otherwise come due every frame interval and poll at ~60 Hz for a
+frame that doesn't come; the next frame re-arms it. Only Wayland arms the watch; a shown
 window that draws keeps polling in its frames, so tooltips, hover delays, press repeat and
 loops still get theirs.
 
@@ -200,8 +203,9 @@ Hooks in upstream files:
 
 - `src/window.rs`: `mod redraw_watch`; `Host::redraw_watch`.
 - `src/window/any_host.rs`: `new_events` runs the overdue frame's poll and takes the hidden
-  path while it is overdue, and the timer's frame arms the watch; `wake_deadline` wakes for
-  it.
+  path while it is overdue, dropping the loop wake, and the timer's frame arms the watch;
+  `wake_deadline` wakes for it.
+- `src/runtime/motion/timer_wake.rs`: `Runtime::drop_loop_wake`.
 - `src/window/lifecycle.rs`: `poll_hidden` polls a shown window whose frame is overdue; the
   wake's frame (`drain`) arms the watch.
 - `src/window/events.rs`: `RedrawRequested` ends it.

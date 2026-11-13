@@ -101,6 +101,11 @@ impl<S: 'static> Runtime<S> {
         self.schedule_wakes_from(polled, wakes);
     }
 
+    /// Lumen patch: a shown window's frames stopped coming (`window::redraw_watch`). Its loops
+    /// wait for the next frame, as a hidden window's do (`set_live_visible`): their wake would
+    /// come due every frame interval and poll for a frame that doesn't come.
+    pub(crate) fn drop_loop_wake(&mut self) { self.loop_wake = None; }
+
     /// Nothing but a timer asks this runtime for a frame.
     pub(crate) fn rests(&self) -> bool {
         #[cfg(feature = "hot")]

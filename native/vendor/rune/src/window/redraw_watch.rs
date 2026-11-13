@@ -4,7 +4,8 @@
 //! or due timer on a shown window waits for that frame to poll, so the app's inbox (media
 //! keys, MPRIS) would queue until the window shows again. Once a frame asked for a wake or
 //! timer is `STALL` overdue, the host polls without it, as for a hidden window, and keeps
-//! asking for the frame.
+//! asking for the frame. Loops on screen wait for that frame too (`Runtime::drop_loop_wake`),
+//! or their wake would poll every frame interval.
 use std::time::{Duration, Instant};
 
 /// How long a requested frame may take before the host stops waiting for it to poll.
