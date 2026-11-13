@@ -81,6 +81,10 @@ type Outcome struct {
 	Path     string
 	TrackID  uuid.UUID
 	Inserted bool // true = new track, false = dedup hit
+	// Promoted: Inserted by taking over a user's personal upload of the same
+	// audio (an admin's shared upload). The row and its id predate this
+	// ingest, so whoever undoes "what this upload added" must leave it.
+	Promoted bool
 	Skipped  bool // true = not a supported audio file, or source file gone (hard-deleted)
 	Err      error
 }
@@ -379,6 +383,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 
 	out.TrackID = trackID
 	out.Inserted = inserted
+	out.Promoted = replacedPath != ""
 	// Successful ingest clears any stale failure rows for this path so the
 	// errors list doesn't stay inflated after a fix (or a retry after a
 	// transient glitch).

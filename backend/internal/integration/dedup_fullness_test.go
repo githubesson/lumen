@@ -359,13 +359,16 @@ func TestDuplicateWithFullerMetadataBecomesCanonical(t *testing.T) {
 	upload2 := filepath.Join(primary, ".users", user.String(), "promo.flac")
 	writeFLAC(t, upload2, promoAudio)
 	personal := ingestOK(upload2, &user)
+	if personal.Promoted {
+		t.Fatalf("a personal upload reported a promotion: %+v", personal)
+	}
 	personalTitle := "Uploader title"
 	if err := lib.UpdateTrack(ctx, personal.TrackID, library.TrackPatch{Title: &personalTitle}); err != nil {
 		t.Fatal(err)
 	}
 	globalBare := filepath.Join(primary, "promo.flac")
 	writeFLAC(t, globalBare, promoAudio)
-	if out := ingestOK(globalBare, nil); out.TrackID != personal.TrackID || !out.Inserted {
+	if out := ingestOK(globalBare, nil); out.TrackID != personal.TrackID || !out.Inserted || !out.Promoted {
 		t.Fatalf("promotion = %+v", out)
 	}
 	globalTagged := filepath.Join(primary, "promo tagged.flac")

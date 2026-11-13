@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -123,6 +124,10 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 	type result struct {
 		File     string `json:"file"`
 		Inserted bool   `json:"inserted"`
+		// Promoted: a shared upload that took over someone's personal copy
+		// of the same audio. Inserted into the shared library, but the track
+		// isn't new, so a cancel must not delete it.
+		Promoted bool   `json:"promoted,omitempty"`
 		Dedup    bool   `json:"dedup,omitempty"`
 		Skipped  bool   `json:"skipped,omitempty"`
 		Error    string `json:"error,omitempty"`
@@ -143,8 +148,11 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Tracks this request added, undone if the client goes away mid-request.
+	// Tracks this request added, undone if the client goes away mid-request,
+	// and shared uploads whose ingest it interrupted (the watcher would
+	// otherwise ingest them a moment later).
 	var added []uuid.UUID
+	var interrupted []string
 	for _, fh := range files {
 		if r.Context().Err() != nil {
 			break // the client cancelled: nothing after this file is wanted
@@ -208,12 +216,13 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		rr := result{
 			File:     fh.Filename,
 			Inserted: res.Inserted,
+			Promoted: res.Promoted,
 			Skipped:  res.Skipped,
 			Dedup:    !res.Inserted && !res.Skipped && res.Err == nil,
 		}
 		if res.TrackID != uuid.Nil {
 			rr.TrackID = res.TrackID.String()
-			if res.Inserted && res.Err == nil {
+			if res.Inserted && !res.Promoted && res.Err == nil {
 				added = append(added, res.TrackID)
 			}
 		}
@@ -225,6 +234,8 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			// clean up a failed personal upload; don't let junk accumulate.
 			if ownerID != nil {
 				removeFailedUpload(h.log(), res.Path, dst)
+			} else if r.Context().Err() != nil {
+				interrupted = append(interrupted, cmp.Or(res.Path, dst))
 			}
 		}
 		results = append(results, rr)
@@ -234,6 +245,11 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		// Nobody will see the results, so nothing this request added may stay
 		// behind taking up space (and quota) the user didn't mean to use.
 		h.undoCancelledUpload(context.WithoutCancel(r.Context()), u.ID, ownerID, destDir, added)
+		for _, p := range interrupted {
+			if inDest, _ := pathsafe.WithinRoot(destDir, p); inDest {
+				removeFailedUpload(h.log(), "", p)
+			}
+		}
 		return
 	}
 

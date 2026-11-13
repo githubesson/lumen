@@ -708,11 +708,13 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 	defer tx.Rollback(ctx)
 
 	// Make sure the track exists and is live (and, for an owner's edit, theirs)
-	// before touching anything. FOR UPDATE holds it against a concurrent delete.
+	// before touching anything. No row lock here: the album upsert below
+	// locks the album first, as ingest does, and taking the track first
+	// would invert that order. The UPDATE re-checks the same conditions.
 	var existing uuid.UUID
 	if err := tx.QueryRow(ctx,
 		`SELECT id FROM tracks WHERE id = $1 AND deleted_at IS NULL
-		   AND ($2::uuid IS NULL OR owner_id = $2) FOR UPDATE`, id, p.Owner).
+		   AND ($2::uuid IS NULL OR owner_id = $2)`, id, p.Owner).
 		Scan(&existing); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -793,13 +795,20 @@ func (s *Store) UpdateTrack(ctx context.Context, id uuid.UUID, p TrackPatch) err
 		// never replaces it (AdoptDuplicate, AdoptFullerAliases).
 		set.AddRaw("metadata_edited_at = NOW()")
 		setClause, args := set.Build()
-		args = append(args, id)
+		args = append(args, id, p.Owner)
+		// The same conditions as the check above, now under the row lock: a
+		// track deleted, or promoted out of its owner's hands, since then is
+		// no longer theirs to edit.
 		stmt := fmt.Sprintf(
-			"UPDATE tracks SET %s WHERE id = $%d",
-			setClause, len(args),
+			"UPDATE tracks SET %s WHERE id = $%d AND deleted_at IS NULL AND ($%d::uuid IS NULL OR owner_id = $%d)",
+			setClause, len(args)-1, len(args), len(args),
 		)
-		if _, err := tx.Exec(ctx, stmt, args...); err != nil {
+		tag, err := tx.Exec(ctx, stmt, args...)
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
 		}
 	}
 
