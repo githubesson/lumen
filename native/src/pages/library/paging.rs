@@ -179,12 +179,17 @@ fn more_after<T>(page: &PageResult<T>, last: usize, loaded: usize) -> bool {
 /// after page, or a search's offsets, until as many as were shown) and put
 /// in their place without a loading state, so the list keeps its scroll
 /// and what was loaded past the first page. Failures keep what's there.
-pub fn revalidate<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>) {
-    let Some(client) = app.client.clone() else { return };
+/// False when a load already running (a reload, a page more) kept it from
+/// starting, for a caller that must have it to try again; true otherwise.
+pub fn revalidate<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>) -> bool {
+    let Some(client) = app.client.clone() else { return true };
     let p = slot(app);
-    let Some(fetch) = p.fetch.clone() else { return };
-    if p.loading || p.stale() {
-        return;
+    let Some(fetch) = p.fetch.clone() else { return true };
+    if p.loading {
+        return false;
+    }
+    if p.stale() {
+        return true;
     }
     let shown = p.len().unwrap_or(0);
     let limit = p.page_size.max(shown.min(1000));
@@ -194,13 +199,18 @@ pub fn revalidate<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>) {
         move || -> ApiResult<(PageResult<T>, usize)> {
             let mut page = fetch(&client, limit, 0, None)?;
             let mut items = std::mem::take(&mut page.items);
+            // Every page's warnings, not just the last one's: a stream that
+            // failed on the first page isn't asked again on the next.
+            let mut warnings = std::mem::take(&mut page.warnings);
             let mut last = items.len();
             while items.len() < shown && more_after(&page, last, items.len()) {
                 page = fetch(&client, limit, items.len(), page.next_offsets.as_ref())?;
                 last = page.items.len();
                 items.append(&mut page.items);
+                warnings = crate::api::search::merge_search_warnings(&warnings, &page.warnings);
             }
             page.items = items;
+            page.warnings = warnings;
             Ok((page, last))
         },
         move |app, result| {
@@ -221,8 +231,16 @@ pub fn revalidate<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>) {
             if let Some(f) = on_page {
                 f(app, &page, true);
             }
+            // A scroll to the end while this was out found the list busy
+            // (`load_more` waits for no one), and the sentinel only speaks
+            // up again when it leaves and comes back: load the page now.
+            let p = slot(app);
+            if p.near_end && p.has_more {
+                load_more(app, slot);
+            }
         },
     );
+    true
 }
 
 /// `LoadMoreSentinel`: an inert band over the list's last 1200 px that is
@@ -289,5 +307,30 @@ mod tests {
         let ids: Vec<&str> = p.items.iter().flatten().map(|t| t.id.as_str()).collect();
         assert_eq!((ids.len(), ids[159], p.has_more), (160, "t159", true));
         assert_eq!(p.next_offsets.as_ref().map(|o| o["local"]), Some(160));
+    }
+
+    #[test]
+    fn a_quiet_refresh_says_when_a_running_load_kept_it_out() {
+        let mut app = App::for_tests(Some(Client::new("http://127.0.0.1:9", None)));
+        let slot: Slot<TrackListItem> = |a| &mut a.pages.library.tracks;
+        reload(&mut app, slot, "q".into(), search_like(Arc::new(Mutex::new(Vec::new()))), true, None);
+        assert!(!revalidate(&mut app, slot), "started over a load still out");
+        while crate::net::Net::drain(&mut app) {}
+        assert!(revalidate(&mut app, slot));
+    }
+
+    #[test]
+    fn a_quiet_refresh_loads_the_next_page_a_scroll_asked_for_meanwhile() {
+        let mut app = App::for_tests(Some(Client::new("http://127.0.0.1:9", None)));
+        let slot: Slot<TrackListItem> = |a| &mut a.pages.library.tracks;
+        reload(&mut app, slot, "q".into(), search_like(Arc::new(Mutex::new(Vec::new()))), true, None);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(slot(&mut app).len(), Some(80));
+        // The sentinel came into view while the refresh was out.
+        assert!(revalidate(&mut app, slot));
+        slot(&mut app).near_end = true;
+        load_more(&mut app, slot); // turned away: the refresh holds the list
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(slot(&mut app).len(), Some(160));
     }
 }

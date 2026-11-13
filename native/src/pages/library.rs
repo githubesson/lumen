@@ -314,7 +314,7 @@ fn poll(app: &mut App) {
 }
 
 /// The browse list of `view` reads its rows again in place.
-fn revalidate_list(app: &mut App, view: View) {
+fn revalidate_list(app: &mut App, view: View) -> bool {
     match view {
         View::Tracks => paging::revalidate(app, |a| &mut a.pages.library.tracks),
         View::Albums => paging::revalidate(app, |a| &mut a.pages.library.albums),
@@ -336,13 +336,28 @@ pub fn library_changed(app: &mut App) {
 /// place; an album or artist page reads again as on any change (in place
 /// too).
 pub fn library_settled(app: &mut App) {
+    settle(app, 0);
+}
+
+/// How many times, a second apart, [`library_settled`] waits out a load
+/// already running (the reload a cancel started, a page more) before
+/// giving up to the next poll.
+const SETTLE_TRIES: u32 = 10;
+
+fn settle(app: &mut App, tries: u32) {
     if !app.location().is("/library") {
         return;
     }
-    match route(app.location()) {
+    let started = match route(app.location()) {
         Route::Browse { query, .. } if !query.trim().is_empty() => paging::revalidate(app, |a| &mut a.pages.library.search),
         Route::Browse { view, .. } => revalidate_list(app, view),
-        _ => library_changed(app),
+        _ => {
+            library_changed(app);
+            true
+        }
+    };
+    if !started && tries + 1 < SETTLE_TRIES {
+        app.net.after(std::time::Duration::from_secs(1), move |app| settle(app, tries + 1));
     }
 }
 
