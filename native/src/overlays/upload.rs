@@ -6,7 +6,8 @@
 //! footer's "Cancel upload" closes the connection of the request in flight
 //! (the server undoes what it had added, if it hadn't finished) and deletes
 //! what the earlier requests added; nothing else closes the dialog while an
-//! upload runs, and nothing in it changes.
+//! upload runs (but the session ending, which stops it: `session_ended`),
+//! and nothing in it changes.
 //!
 //! Drops land anywhere in the window while the dialog is open. Rune's open
 //! dialog picks one file at a time (the web input takes several); "Choose
@@ -128,6 +129,20 @@ pub fn close(app: &mut App) {
     if !s.busy && s.scanning > 0 {
         s.stop_walks();
     }
+}
+
+/// The session ended (a sign-out, another server): an upload under way
+/// stops, closing its request in flight, and sends nothing more (what its
+/// finished requests added stays: taking it back needs the session); folder
+/// walks stop; the dialog shuts and the next session starts it afresh.
+pub fn session_ended(app: &mut App) {
+    app.ui.upload_open = false;
+    let s = &mut app.overlays.upload;
+    if let Some(c) = &s.cancel {
+        c.cancel();
+    }
+    s.walks.cancel();
+    *s = State { session: s.session + 1, ..Default::default() };
 }
 
 /// Escape, the backdrop and the close button: nothing while an upload runs
@@ -281,14 +296,18 @@ struct Run {
     /// Albums whose cover was tried, across batches (`coveredAlbums`).
     covered: Arc<Mutex<HashSet<String>>>,
     cancel: Cancel,
-    /// The batches' and their edits' client: connections of its own, which
-    /// the cancel closes, kept open from one batch to the next.
+    /// The client for the session the upload started in: once that ends
+    /// (a sign-out, a sign-in), none of its requests go out. Over the
+    /// shared connections, for taking back what a cancelled upload added.
+    client: Client,
+    /// The same over connections of its own, which the cancel closes, kept
+    /// open from one batch to the next: for the batches and their edits.
     sending: Client,
 }
 
 fn submit(app: &mut App) {
     let admin = is_admin(app);
-    let Some(client) = app.client.clone() else { return };
+    let Some(client) = app.client.as_ref().map(Client::for_session) else { return };
     let s = &mut app.overlays.upload;
     if s.files.is_empty() || s.busy || s.scanning > 0 {
         return;
@@ -318,6 +337,7 @@ fn submit(app: &mut App) {
         edits: Arc::new(typed_edits(s)),
         covered: Arc::default(),
         sending: client.with_cancel(&cancel),
+        client,
         cancel,
     };
     send_batch(app, run);
@@ -326,7 +346,7 @@ fn submit(app: &mut App) {
 /// Send the next batch, then the one after, collecting results.
 fn send_batch(app: &mut App, mut run: Run) {
     if run.cancel.is_cancelled() {
-        return take_back(app, run.uploaded, run.scope);
+        return take_back(app, run.client, run.uploaded, run.scope);
     }
     if run.next >= run.batches.len() {
         let added = upload_added_any(&run.uploaded);
@@ -359,7 +379,7 @@ fn send_batch(app: &mut App, mut run: Run) {
                     run.next += 1;
                     send_batch(app, run);
                 }
-                Err(_) if run.cancel.is_cancelled() => take_back(app, run.uploaded, run.scope),
+                Err(_) if run.cancel.is_cancelled() => take_back(app, run.client, run.uploaded, run.scope),
                 Err(e) => {
                     let message = upload_error_message(&e);
                     let s = &mut app.overlays.upload;
@@ -396,15 +416,9 @@ const CANCEL_SETTLE_SHARED: Duration = Duration::from_secs(30);
 
 /// A cancelled upload: take back what its finished requests added (the
 /// request in flight the server undoes itself), then say how that went.
-fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
+fn take_back(app: &mut App, client: Client, uploaded: Vec<UploadResult>, scope: Scope) {
     let cleanup = cancel_cleanup(&uploaded, scope);
     let added = cleanup.added;
-    let Some(client) = app.client.clone() else {
-        let s = &mut app.overlays.upload;
-        s.cancel_note = Some(upload_cancel_note(added, 0));
-        s.finish();
-        return settle(app, scope);
-    };
     let session = app.overlays.upload.session;
     app.net.run(
         move || {
@@ -885,6 +899,29 @@ mod tests {
         assert!(!u.busy && u.error.is_none() && u.results.is_some());
         assert_eq!(u.progress, 3);
         assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn signing_out_stops_an_upload_and_sends_nothing_more() {
+        let s = server();
+        let mut app = App::for_tests(Some(s.client()));
+        open(&mut app);
+        for name in ["a.mp3", "b.mp3"] {
+            let path = crate::api::testing::temp_path(&format!("upload-signout-{name}"));
+            std::fs::write(&path, b"ID3audio").unwrap();
+            app.overlays.upload.files.push(Picked { display: name.into(), size: None, key: path.clone(), path });
+        }
+        // The first of two batches goes; its answer waits for the drain.
+        submit(&mut app);
+        let cancel = app.overlays.upload.cancel.clone().unwrap();
+        app.signed_out();
+        assert!(cancel.is_cancelled());
+        let u = &app.overlays.upload;
+        assert!(!app.ui.upload_open && !u.busy && u.files.is_empty() && u.results.is_none() && u.cancel_note.is_none());
+        while crate::net::Net::drain(&mut app) {}
+        let sent: Vec<(String, String)> = s.requests().into_iter().filter(|r| r.path.starts_with("/api/library/upload") || r.method == "DELETE").map(|r| (r.method, r.path)).collect();
+        assert_eq!(sent, [("POST".to_string(), "/api/library/upload".to_string())]);
+        assert!(!app.overlays.upload.busy && app.overlays.upload.results.is_none());
     }
 
     /// A library of 250 tracks, paged as `/api/tracks` pages them.

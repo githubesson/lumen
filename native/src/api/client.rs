@@ -198,6 +198,9 @@ pub struct Client {
     /// Set on a client [`Client::with_cancel`] made: the connections its
     /// requests go over instead of the shared ones.
     own: Option<Arc<Own>>,
+    /// Set on a client [`Client::for_session`] made: the auth generation
+    /// its requests belong to.
+    session: Option<u64>,
 }
 
 /// A [`Client::with_cancel`] client's own agent, shut down by its cancel.
@@ -257,6 +260,7 @@ impl Client {
                 on_unauthorized: Mutex::new(None),
             }),
             own: None,
+            session: None,
         }
     }
 
@@ -289,7 +293,16 @@ impl Client {
                 own.agent.clone().shutdown();
             }
         });
-        Client { inner: self.inner.clone(), own: Some(own) }
+        Client { inner: self.inner.clone(), own: Some(own), session: self.session }
+    }
+
+    /// This client for one session's work (an upload that runs on for
+    /// minutes): once the session changes, by a sign-out or a sign-in, its
+    /// requests fail as aborted rather than go out with whatever session
+    /// the jar holds by then. A [`Client::with_cancel`] made from it is
+    /// bound the same way.
+    pub fn for_session(&self) -> Client {
+        Client { session: Some(self.inner.auth_generation.load(Ordering::Acquire)), ..self.clone() }
     }
 
     pub fn base(&self) -> &str {
@@ -377,6 +390,9 @@ impl Client {
         behavior: &Behavior,
     ) -> ApiResult<Reply> {
         let generation = self.inner.auth_generation.load(Ordering::Acquire);
+        if self.session.is_some_and(|s| s != generation) {
+            return Err(ApiError::aborted());
+        }
         let url = self.url(path);
         let (agent, cancel) = match &self.own {
             Some(own) => {
@@ -925,6 +941,26 @@ mod tests {
         client.send("GET", "/api/old", Body::None).unwrap();
         client.with_cancel(&Cancel::new()).send("GET", "/api/logout", Body::None).unwrap();
         assert_eq!(client.cookie_header().as_deref(), Some("session=new"));
+    }
+
+    #[test]
+    fn a_client_for_a_session_sends_nothing_once_it_changes() {
+        use crate::api::testing::{MockServer, Res};
+        let server = MockServer::start(vec![Res::json("{}")]);
+        let shared = server.client();
+        let bound = shared.for_session();
+        let own = bound.with_cancel(&Cancel::new());
+        bound.send("GET", "/api/one", Body::None).unwrap();
+        own.send("GET", "/api/two", Body::None).unwrap();
+        shared.advance_auth_generation();
+        for c in [&bound, &own] {
+            assert!(c.send("GET", "/api/three", Body::None).err().is_some_and(|e| e.is_aborted()));
+        }
+        assert_eq!(server.requests().len(), 2);
+        // The new session's work goes ahead.
+        shared.send("GET", "/api/four", Body::None).unwrap();
+        shared.for_session().send("GET", "/api/five", Body::None).unwrap();
+        assert_eq!(server.requests().len(), 4);
     }
 
     #[test]
