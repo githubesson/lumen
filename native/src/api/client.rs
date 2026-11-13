@@ -50,21 +50,24 @@ pub struct ApiError {
     pub status: u16,
     pub message: String,
     pub kind: ErrorKind,
+    /// `retryAfterSeconds`: a failed answer's Retry-After, when it gave one
+    /// in seconds (a 429's or a 503's).
+    pub retry_after_seconds: Option<u64>,
 }
 
 impl ApiError {
     pub fn http(status: u16, message: impl Into<String>) -> ApiError {
-        ApiError { status, message: message.into(), kind: ErrorKind::Http }
+        ApiError { status, message: message.into(), kind: ErrorKind::Http, retry_after_seconds: None }
     }
     pub fn transport(message: impl Into<String>) -> ApiError {
-        ApiError { status: 0, message: message.into(), kind: ErrorKind::Network }
+        ApiError { status: 0, message: message.into(), kind: ErrorKind::Network, retry_after_seconds: None }
     }
     /// A client-side `ApiError` (bad input, a polling deadline).
     pub fn local(status: u16, message: impl Into<String>) -> ApiError {
-        ApiError { status, message: message.into(), kind: ErrorKind::Local }
+        ApiError { status, message: message.into(), kind: ErrorKind::Local, retry_after_seconds: None }
     }
     pub fn aborted() -> ApiError {
-        ApiError { status: 0, message: "The request was aborted.".into(), kind: ErrorKind::Aborted }
+        ApiError { status: 0, message: "The request was aborted.".into(), kind: ErrorKind::Aborted, retry_after_seconds: None }
     }
     pub fn is_unauthorized(&self) -> bool {
         self.status == 401 && self.is_api_error()
@@ -128,6 +131,7 @@ impl Reply {
             status: self.status,
             message: format!("Couldn't read the server's response: {e}"),
             kind: ErrorKind::Decode,
+            retry_after_seconds: None,
         })
     }
 
@@ -387,6 +391,7 @@ impl Client {
         let total = header("x-total-count").and_then(|v| v.trim().parse().ok());
         let etag = header("etag");
         let cache_control = header("cache-control");
+        let retry_after = header("retry-after");
         let mut body = Vec::new();
         if method != "HEAD" {
             response
@@ -412,7 +417,7 @@ impl Client {
             }
             // An empty body leaves the message empty, as over HTTP/2 (no
             // status text) on the web, so callers show their own fallback.
-            return Err(ApiError::http(status, text));
+            return Err(ApiError { retry_after_seconds: retry_after_seconds(retry_after.as_deref()), ..ApiError::http(status, text) });
         }
         Ok(Reply { status, content_type, total, etag, cache_control, body })
     }
@@ -547,10 +552,19 @@ fn origin(url: &str) -> String {
     format!("{scheme}://{host}")
 }
 
+/// `retryAfterSeconds`: a Retry-After in whole seconds (not a date).
+fn retry_after_seconds(value: Option<&str>) -> Option<u64> {
+    let v = value?.trim();
+    if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    v.parse().ok()
+}
+
 fn transport_error(e: &ureq::Error) -> ApiError {
     match e {
         ureq::Error::Timeout(_) => {
-            ApiError { status: 0, message: "The request timed out.".into(), kind: ErrorKind::Timeout }
+            ApiError { status: 0, message: "The request timed out.".into(), kind: ErrorKind::Timeout, retry_after_seconds: None }
         }
         ureq::Error::HostNotFound => ApiError::transport("Couldn't find the server."),
         ureq::Error::ConnectionFailed => ApiError::transport("Couldn't reach the server."),
@@ -733,6 +747,15 @@ mod tests {
         assert_eq!(error_message(&ApiError::transport("dns"), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::aborted(), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::local(0, "pin id"), "fallback"), "pin id");
+    }
+
+    #[test]
+    fn retry_after_is_whole_seconds_only() {
+        assert_eq!(retry_after_seconds(Some(" 12 ")), Some(12));
+        assert_eq!(retry_after_seconds(Some("0")), Some(0));
+        for v in [None, Some(""), Some("1.5"), Some("-3"), Some("Wed, 21 Oct 2026 07:28:00 GMT")] {
+            assert_eq!(retry_after_seconds(v), None, "{v:?}");
+        }
     }
 
     #[test]

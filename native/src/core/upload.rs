@@ -192,6 +192,39 @@ pub fn cancel_cleanup(results: &[UploadResult], scope: UploadScope) -> CancelCle
     cleanup
 }
 
+/// How many times one request waits out the server's rate limit.
+const UPLOAD_RATE_LIMIT_WAITS: u32 = 5;
+
+/// `waitOutRateLimit`: send one request of an upload (a batch or a cover).
+/// The server allows so many upload requests a minute, which a fast
+/// connection can reach with many small batches: a 429 waits out its
+/// Retry-After (1 to 60 s, 5 when it gave none) and tries again, up to a few
+/// times, rather than failing the rest of the selection. `cancel` ends the
+/// wait as aborted.
+pub fn wait_out_rate_limit<T>(cancel: &crate::api::Cancel, send: impl FnMut() -> crate::api::ApiResult<T>) -> crate::api::ApiResult<T> {
+    wait_out_rate_limit_with(cancel, send, |d| cancel.sleep(d))
+}
+
+fn wait_out_rate_limit_with<T>(
+    cancel: &crate::api::Cancel,
+    mut send: impl FnMut() -> crate::api::ApiResult<T>,
+    mut sleep: impl FnMut(std::time::Duration) -> bool,
+) -> crate::api::ApiResult<T> {
+    let mut waits = 0;
+    loop {
+        match send() {
+            Err(e) if e.has_status(429) && waits < UPLOAD_RATE_LIMIT_WAITS && !cancel.is_cancelled() => {
+                let seconds = e.retry_after_seconds.unwrap_or(5).clamp(1, 60);
+                if !sleep(std::time::Duration::from_secs(seconds)) {
+                    return Err(crate::api::ApiError::aborted());
+                }
+                waits += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
 /// What a cancelled upload says once it has taken back the `added` tracks
 /// its finished requests added, `removed` of them successfully.
 pub fn upload_cancel_note(added: usize, removed: usize) -> String {
@@ -304,6 +337,45 @@ mod tests {
         assert_eq!(cleanup(&[t(&said)], UploadScope::Personal), (1, "t".into()));
         assert_eq!(cleanup(&[t(&promoted)], UploadScope::Personal), (0, String::new()));
         assert_eq!(cleanup(&[t(&unsaid)], UploadScope::Global), (1, String::new()));
+    }
+
+    #[test]
+    fn waits_out_the_rate_limit_a_few_times() {
+        use crate::api::{ApiError, Cancel};
+        use std::time::Duration;
+        fn limited<T>(after: Option<u64>) -> crate::api::ApiResult<T> {
+            Err(ApiError { retry_after_seconds: after, ..ApiError::http(429, "slow down") })
+        }
+        let cancel = Cancel::new();
+        // Each 429 waits its Retry-After, kept to 1..=60 s (5 when unsaid).
+        let mut answers = vec![limited(Some(0)), limited(Some(90)), limited(None), Ok("done")].into_iter();
+        let mut slept = Vec::new();
+        let r = wait_out_rate_limit_with(&cancel, || answers.next().unwrap(), |d| {
+            slept.push(d);
+            true
+        });
+        assert_eq!(r, Ok("done"));
+        assert_eq!(slept, [1, 60, 5].map(Duration::from_secs));
+        // Five waits, then the sixth 429 is the answer.
+        let mut sent = 0;
+        let r: Result<(), _> = wait_out_rate_limit_with(&cancel, || {
+            sent += 1;
+            limited(Some(1))
+        }, |_| true);
+        assert_eq!((r.unwrap_err().status, sent), (429, 6));
+        // Other failures aren't retried.
+        let mut sent = 0;
+        let r: Result<(), _> = wait_out_rate_limit_with(&cancel, || {
+            sent += 1;
+            Err(ApiError::http(503, "down"))
+        }, |_| panic!("no wait"));
+        assert_eq!((r.unwrap_err().status, sent), (503, 1));
+        // A cancel during the wait ends it as aborted.
+        let r: Result<(), _> = wait_out_rate_limit_with(&cancel, || limited(Some(1)), |_| false);
+        assert!(r.unwrap_err().is_aborted());
+        cancel.cancel();
+        let r: Result<(), _> = wait_out_rate_limit_with(&cancel, || limited(Some(1)), |_| panic!("no wait once cancelled"));
+        assert_eq!(r.unwrap_err().status, 429);
     }
 
     #[test]

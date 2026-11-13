@@ -2,9 +2,11 @@
 //! `core/src/upload.ts`: pick or drop music files and folders, type in their
 //! details if wanted, and send them to the library (admins choose the shared
 //! library or their own) in batches that stay under the server's request
-//! cap, one after another. The footer's "Cancel upload" stops the request in
-//! flight (the server undoes what it had added) and deletes what the earlier
-//! requests added; nothing else closes the dialog while an upload runs.
+//! cap, one after another, each waiting out the server's rate limit. The
+//! footer's "Cancel upload" gives up the request in flight at once (the
+//! server undoes what it had added, if it hadn't finished) and deletes what
+//! the earlier requests added; nothing else closes the dialog while an
+//! upload runs, and nothing in it changes.
 //!
 //! Drops land anywhere in the window while the dialog is open. Rune's open
 //! dialog picks one file at a time (the web input takes several); "Choose
@@ -14,7 +16,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rune::{Color, Cursor, Cx, El, GrowthSpec, TextEdit, col, el, row, text};
 
@@ -32,7 +34,7 @@ use crate::ui::{Btn, font, ico, icons as i, line, tnum};
 use crate::core::upload::{
     UPLOAD_EXTENSIONS, UPLOAD_REQUEST_MAX_BYTES, UploadScope as Scope, UploadStatus, cancel_cleanup, default_upload_scope as default_scope,
     plan_upload_batches, too_large_upload_result, upload_added_any, upload_cancel_note, upload_error_message, upload_result_detail,
-    upload_result_status, upload_scope,
+    upload_result_status, upload_scope, wait_out_rate_limit,
 };
 
 /// The last path component, for messages and part headers.
@@ -271,6 +273,8 @@ struct Run {
     too_large: Vec<String>,
     scope: Scope,
     edits: Arc<Edits>,
+    /// Albums whose cover was tried, across batches (`coveredAlbums`).
+    covered: Arc<Mutex<HashSet<String>>>,
     cancel: Cancel,
 }
 
@@ -278,6 +282,12 @@ fn submit(app: &mut App) {
     let admin = is_admin(app);
     let s = &mut app.overlays.upload;
     if s.files.is_empty() || s.busy || s.scanning > 0 || app.client.is_none() {
+        return;
+    }
+    if s.editing
+        && let Some(e) = upload_edits::details_error(&s.album.text, &s.album_artist.text)
+    {
+        s.error = Some(e.to_string());
         return;
     }
     s.busy = true;
@@ -296,6 +306,7 @@ fn submit(app: &mut App) {
         too_large: plan.too_large.iter().map(|f| file_name(&f.path)).collect(),
         scope: upload_scope(admin, s.scope.unwrap_or(default_scope(admin))),
         edits: Arc::new(typed_edits(s)),
+        covered: Arc::default(),
         cancel,
     };
     send_batch(app, run);
@@ -322,11 +333,11 @@ fn send_batch(app: &mut App, mut run: Run) {
     };
     let session = app.overlays.upload.session;
     let files = run.batches[run.next].clone();
-    let (cancel, edits, scope) = (run.cancel.clone(), run.edits.clone(), run.scope);
+    let (cancel, edits, scope, covered) = (run.cancel.clone(), run.edits.clone(), run.scope, run.covered.clone());
     app.net.run(
         move || -> ApiResult<Vec<UploadResult>> {
-            let mut results = crate::api::upload::upload_music(&client, &files, scope, &cancel)?;
-            upload_edits::apply(&client, &files, &mut results, &edits, scope, &cancel);
+            let mut results = wait_out_rate_limit(&cancel, || crate::api::upload::upload_music(&client, &files, scope, &cancel))?;
+            upload_edits::apply(&client, &files, &mut results, &edits, scope, &cancel, &covered);
             Ok(results)
         },
         move |app, result| {

@@ -71,7 +71,7 @@ mod tests {
     }
 
     fn timed_out() -> ApiError {
-        ApiError { status: 0, message: "The operation was aborted.".into(), kind: ErrorKind::Timeout }
+        ApiError { status: 0, message: "The operation was aborted.".into(), kind: ErrorKind::Timeout, retry_after_seconds: None }
     }
 
     #[test]
