@@ -89,6 +89,24 @@ type Outcome struct {
 	Err      error
 }
 
+// dropIfVanished undoes a fresh insert whose file is gone. A file can go
+// while it's being read: an upload cancelled under the watcher's re-ingest of
+// it deletes its track and file, and an insert committed after that would
+// leave a track with nothing to play. A removal before this check is caught
+// here; one after it fires a Remove event that finds the committed row. Only
+// for a new row: a promoted one was a user's track before this ingest.
+func (s *Service) dropIfVanished(ctx context.Context, path string) bool {
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) || s.Library == nil {
+		return false
+	}
+	if err := s.Library.HardDeleteByPath(context.WithoutCancel(ctx), path); err != nil {
+		s.log().Warn("removing the track of a file deleted during its ingest failed", "path", path, "err", err)
+		return false
+	}
+	s.log().Info("file deleted during its ingest; its new track removed", "path", path)
+	return true
+}
+
 // IngestFile parses a single audio file and upserts everything as a global
 // (admin) entry — the fsnotify watcher and admin rescan use this path.
 // Use IngestFileAs for per-user ingestion.
@@ -362,6 +380,10 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 	if err := tx.Commit(ctx); err != nil {
 		out.Err = err
 		s.recordErr(ctx, path, err)
+		return out
+	}
+	if inserted && replacedPath == "" && s.dropIfVanished(ctx, path) {
+		out.Skipped = true
 		return out
 	}
 
