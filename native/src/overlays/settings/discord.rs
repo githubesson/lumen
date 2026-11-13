@@ -253,7 +253,7 @@ pub fn settings<'a>(app: &'a App, t: &'a Theme, cx: &mut rune::Cx<App>, d: &Desk
         setting_row(
             t,
             "Card text",
-            Some(Desc::Text("Use {title}, {artist} and {album} in any order. For example: {title} — {artist}.".into())),
+            Some(Desc::Text("{title}, {artist} and {album} fill in with the track's.".into())),
             None,
             Some(grid),
             None,
@@ -262,11 +262,11 @@ pub fn settings<'a>(app: &'a App, t: &'a Theme, cx: &mut rune::Cx<App>, d: &Desk
     }));
     let status_name = card.status_name.as_str().to_string();
     rows.push(Box::new(move |last| {
-        let options = vec![SelectOption::new("app", "Lumen"), SelectOption::new("details", "Card line 1"), SelectOption::new("state", "Card line 2")];
+        let options = vec![SelectOption::new("app", "Lumen"), SelectOption::new("details", "Line 1"), SelectOption::new("state", "Line 2")];
         let c = select(app, t, "discord-status-name", options, &status_name, false, |app, v| {
             change(app, one_patch("statusName", Value::String(v.to_string())), false)
         });
-        setting_row(t, "Status text", Some(Desc::Text("Choose Lumen or an editable card line above to follow “Listening to” in Discord’s member list.".into())), Some(c), None, None, last)
+        setting_row(t, "Status text", Some(Desc::Text("What follows “Listening to” in the member list.".into())), Some(c), None, None, last)
     }));
     let (cover, badge, paused) = (card.cover, card.play_state, card.show_paused);
     rows.push(Box::new(move |last| card_switch(t, "cover", "Album cover", "Off shows the Lumen logo instead.", cover, last)));

@@ -99,7 +99,6 @@ pub fn idx_play(t: &Theme, key: &str, label: &str) -> El {
         .center()
         .role("button")
         .label(label)
-        .focusable(true)
         .cursor(Cursor::Pointer)
         .child(ico(&i::PLAY_FILLED, 14.0, t.c.foreground))
 }

@@ -273,7 +273,7 @@ pub fn transport_row(app: &App, t: &Theme, s: TransportSize) -> El {
     let mut controls = row().key("transport-row").gap(s.gap).items_center();
     if !s.compact {
         controls = controls.child(
-            sized(t_btn(t, "shuffle", &i::SHUFFLE, p.shuffle, d.command_pending)).label(if p.shuffle { "Shuffle on" } else { "Shuffle off" }).checked(p.shuffle).on_press(|app: &mut App| app.player.toggle_shuffle()),
+            sized(t_btn(t, "shuffle", &i::SHUFFLE, p.shuffle, d.command_pending)).label("Shuffle").checked(p.shuffle).on_press(|app: &mut App| app.player.toggle_shuffle()),
         );
     }
     controls = controls
