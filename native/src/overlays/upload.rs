@@ -24,7 +24,7 @@ use rune::{Color, Cursor, Cx, El, GrowthSpec, TextEdit, col, el, row, text};
 use super::edit::{grid_field, grid_row};
 use super::upload_edits::{self, Edits};
 use super::upload_files::{LeftOut, Picked, collect_files};
-use crate::api::{ApiResult, Cancel, UploadResult};
+use crate::api::{ApiResult, Cancel, Client, UploadResult};
 use crate::app::App;
 use crate::format::pluralize;
 use crate::theme::Theme;
@@ -281,12 +281,16 @@ struct Run {
     /// Albums whose cover was tried, across batches (`coveredAlbums`).
     covered: Arc<Mutex<HashSet<String>>>,
     cancel: Cancel,
+    /// The batches' and their edits' client: connections of its own, which
+    /// the cancel closes, kept open from one batch to the next.
+    sending: Client,
 }
 
 fn submit(app: &mut App) {
     let admin = is_admin(app);
+    let Some(client) = app.client.clone() else { return };
     let s = &mut app.overlays.upload;
-    if s.files.is_empty() || s.busy || s.scanning > 0 || app.client.is_none() {
+    if s.files.is_empty() || s.busy || s.scanning > 0 {
         return;
     }
     if s.editing
@@ -313,6 +317,7 @@ fn submit(app: &mut App) {
         scope: upload_scope(admin, s.scope.unwrap_or(default_scope(admin))),
         edits: Arc::new(typed_edits(s)),
         covered: Arc::default(),
+        sending: client.with_cancel(&cancel),
         cancel,
     };
     send_batch(app, run);
@@ -334,17 +339,11 @@ fn send_batch(app: &mut App, mut run: Run) {
         }
         return;
     }
-    let Some(client) = app.client.clone() else {
-        return app.overlays.upload.finish();
-    };
     let session = app.overlays.upload.session;
     let files = run.batches[run.next].clone();
-    let (cancel, edits, scope, covered) = (run.cancel.clone(), run.edits.clone(), run.scope, run.covered.clone());
+    let (client, cancel, edits, scope, covered) = (run.sending.clone(), run.cancel.clone(), run.edits.clone(), run.scope, run.covered.clone());
     app.net.run(
         move || -> ApiResult<Vec<UploadResult>> {
-            // One set of connections for the batch and its edits, which the
-            // cancel closes.
-            let client = client.with_cancel(&cancel);
             let mut results = wait_out_rate_limit(&cancel, || crate::api::upload::upload_music(&client, &files, scope, &cancel))?;
             upload_edits::apply(&client, &files, &mut results, &edits, scope, &cancel, &covered);
             Ok(results)
@@ -828,6 +827,64 @@ mod tests {
         assert!(!u.busy && u.results.is_none());
         // At once and once the server has undone the request in flight.
         assert_eq!(reloads(&s), 2);
+    }
+
+    /// A server that keeps connections open and answers every request with
+    /// `[]`: the client, and how many connections it took.
+    fn keep_alive_server() -> (crate::api::Client, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{BufRead, Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let connections = Arc::new(AtomicUsize::new(0));
+        let count = connections.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                count.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut stream = stream;
+                    loop {
+                        let mut head = String::new();
+                        loop {
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            if line == "\r\n" {
+                                break;
+                            }
+                            head.push_str(&line.to_ascii_lowercase());
+                        }
+                        let len: usize = head.lines().find_map(|l| l.strip_prefix("content-length:")).map_or(0, |v| v.trim().parse().unwrap());
+                        if head.contains("expect: 100-continue") {
+                            stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+                        }
+                        reader.by_ref().take(len as u64).read_to_end(&mut Vec::new()).unwrap();
+                        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n[]").unwrap();
+                    }
+                });
+            }
+        });
+        (crate::api::Client::new(&base, None), connections)
+    }
+
+    #[test]
+    fn an_uploads_batches_go_over_one_connection() {
+        let (client, connections) = keep_alive_server();
+        let mut app = App::for_tests(Some(client));
+        // Files of unknown size go one to a batch.
+        for name in ["a.mp3", "b.mp3", "c.mp3"] {
+            let path = crate::api::testing::temp_path(&format!("upload-batches-{name}"));
+            std::fs::write(&path, b"ID3audio").unwrap();
+            app.overlays.upload.files.push(Picked { display: name.into(), size: None, key: path.clone(), path });
+        }
+        submit(&mut app);
+        while crate::net::Net::drain(&mut app) {}
+        let u = &app.overlays.upload;
+        assert!(!u.busy && u.error.is_none() && u.results.is_some());
+        assert_eq!(u.progress, 3);
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     /// A library of 250 tracks, paged as `/api/tracks` pages them.

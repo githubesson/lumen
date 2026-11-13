@@ -220,6 +220,11 @@ struct Inner {
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a [`Client::with_cancel`] request may take to resolve the
+/// server's name, and then to connect. A cancel can't cut either short, so
+/// it waits them out.
+const CANCELLABLE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl Client {
     /// A client for `base` (`https://host`, no trailing slash needed). The
     /// cookie jar lives at `jar_path` when given.
@@ -261,8 +266,10 @@ impl Client {
     /// aborted at once, and the server sees the client leave, as it sees a
     /// browser's abort (an upload in flight is undone). Each request carries
     /// the session as it stands, and cookies an answer sets land in the
-    /// shared jar. Resolving and connecting can't be interrupted; they give
-    /// up after [`REQUEST_TIMEOUT`] here.
+    /// shared jar. Resolving and connecting can't be interrupted: a cancel
+    /// waits for them, which give up after [`CANCELLABLE_CONNECT_TIMEOUT`]
+    /// each (one after the other). Its connections stay open between its
+    /// requests, so make one for all of the work, not one per request.
     pub fn with_cancel(&self, cancel: &Cancel) -> Client {
         if let Some(own) = &self.own
             && own.cancel.same(cancel)
@@ -270,8 +277,8 @@ impl Client {
             return self.clone();
         }
         let agent: ureq::Agent = crate::net::agent_config()
-            .timeout_resolve(Some(REQUEST_TIMEOUT))
-            .timeout_connect(Some(REQUEST_TIMEOUT))
+            .timeout_resolve(Some(CANCELLABLE_CONNECT_TIMEOUT))
+            .timeout_connect(Some(CANCELLABLE_CONNECT_TIMEOUT))
             .build()
             .into();
         let own = Arc::new(Own { agent, cancel: cancel.clone() });
