@@ -658,6 +658,37 @@ impl Cancel {
         let (guard, _) = cv.wait_timeout_while(guard, d, |cancelled| !*cancelled).unwrap();
         !*guard
     }
+
+    /// A request the caller can give up on at any point, as `fetch` with a
+    /// signal: `send` runs on a thread of its own, and once this is
+    /// cancelled the call returns [`ApiError::aborted`] at once. The request
+    /// itself goes on to finish or fail by itself (its body may be sent
+    /// already, and a silent connection could hold it for good).
+    pub fn abortable<T: Send + 'static>(&self, send: impl FnOnce() -> ApiResult<T> + Send + 'static) -> ApiResult<T> {
+        self.check()?;
+        let done = Arc::new(Mutex::new(None));
+        let (slot, wake) = (done.clone(), self.clone());
+        std::thread::spawn(move || {
+            let result = send();
+            *slot.lock().unwrap() = Some(result);
+            // Under the flag's lock, so the waiter can't miss it between
+            // looking at the slot and sleeping.
+            let (flag, cv) = &*wake.inner;
+            let _held = flag.lock().unwrap();
+            cv.notify_all();
+        });
+        let (flag, cv) = &*self.inner;
+        let mut cancelled = flag.lock().unwrap();
+        loop {
+            if let Some(result) = done.lock().unwrap().take() {
+                return result;
+            }
+            if *cancelled {
+                return Err(ApiError::aborted());
+            }
+            cancelled = cv.wait(cancelled).unwrap();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -702,6 +733,36 @@ mod tests {
         assert_eq!(error_message(&ApiError::transport("dns"), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::aborted(), "fallback"), "fallback");
         assert_eq!(error_message(&ApiError::local(0, "pin id"), "fallback"), "pin id");
+    }
+
+    #[test]
+    fn an_abortable_request_returns_once_cancelled_or_done() {
+        let c = Cancel::new();
+        assert_eq!(c.abortable(|| Ok(7)), Ok(7));
+        assert_eq!(c.abortable(|| Err::<(), _>(ApiError::http(500, "boom"))).unwrap_err().status, 500);
+        // A request that never answers: the cancel ends the wait, not it.
+        let (c2, started) = (c.clone(), std::time::Instant::now());
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            c2.cancel();
+        });
+        let err = c.abortable(|| {
+            std::thread::sleep(Duration::from_secs(10));
+            Ok(())
+        });
+        canceller.join().unwrap();
+        assert!(err.unwrap_err().is_aborted());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Already cancelled: nothing runs.
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let r2 = ran.clone();
+        let err = c.abortable(move || {
+            r2.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        assert!(err.unwrap_err().is_aborted());
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(!ran.load(Ordering::SeqCst));
     }
 
     #[test]

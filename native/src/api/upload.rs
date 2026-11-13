@@ -212,8 +212,10 @@ fn send_form<T: serde::de::DeserializeOwned>(
 
 /// `uploadMusic`: files into the personal or shared library (see
 /// `core::upload::plan_upload_batches` for staying under the server's cap).
-/// `cancel` stops the request mid-body, as the web's `AbortSignal` does; the
-/// server then undoes what that request had added.
+/// `cancel` aborts it as the web's `AbortSignal` does: the call returns at
+/// once, mid-body or waiting for the answer, and a body still going stops
+/// there (the server then undoes what that request had added). One the
+/// server got whole finishes on its own, or fails with its connection.
 pub fn upload_music(
     c: &Client,
     files: &[PathBuf],
@@ -229,14 +231,12 @@ pub fn upload_music(
         }
         body => body,
     };
-    match c.request("POST", "/api/library/upload", body, &[], &Behavior { timeout: None, ..Default::default() }) {
-        Ok(reply) => {
-            let results: Option<Vec<UploadResult>> = reply.json()?;
-            Ok(results.unwrap_or_default())
-        }
-        Err(_) if cancel.is_cancelled() => Err(ApiError::aborted()),
-        Err(e) => Err(e),
-    }
+    let c = c.clone();
+    cancel.abortable(move || {
+        let reply = c.request("POST", "/api/library/upload", body, &[], &Behavior { timeout: None, ..Default::default() })?;
+        let results: Option<Vec<UploadResult>> = reply.json()?;
+        Ok(results.unwrap_or_default())
+    })
 }
 
 /// A body that stops being read once `cancel` fires.
@@ -339,6 +339,24 @@ mod tests {
         let err = upload_music(&server.client(), &[path], crate::core::upload::UploadScope::Personal, &cancel).unwrap_err();
         assert!(err.is_aborted());
         assert!(server.requests().is_empty());
+    }
+
+    #[test]
+    fn a_cancel_doesnt_wait_for_a_server_that_never_answers() {
+        // The body is sent whole; the answer never comes in time.
+        let server = MockServer::start(vec![Res::json("[]").delay(std::time::Duration::from_secs(20))]);
+        let path = temp_file("d.mp3", b"ID3audio");
+        let cancel = crate::api::Cancel::new();
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            c2.cancel();
+        });
+        let started = std::time::Instant::now();
+        let err = upload_music(&server.client(), &[path], crate::core::upload::UploadScope::Personal, &cancel).unwrap_err();
+        assert!(err.is_aborted());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(server.requests().len(), 1);
     }
 
     // api.test.ts: form upload fetch
