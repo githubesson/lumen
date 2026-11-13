@@ -432,16 +432,22 @@ fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
 
 /// The library after a cancel: a batch the server finished as the cancel
 /// went out never reached `uploaded`, and its tracks stay, so it shows them
-/// rather than looking unchanged. Again a moment later: the server undoes
-/// the request in flight only once it notices the closed connection, so a
-/// reload right away can still list what it removes; and for a shared
-/// upload once more, after the file it was reading (a long one can take
-/// past that).
+/// rather than looking unchanged. Again later ([`settle_later`]).
 fn settle(app: &mut App, scope: Scope) {
     crate::pages::library_changed(app);
-    app.net.after(CANCEL_SETTLE, crate::pages::library_changed);
+    settle_later(app, scope);
+}
+
+/// The server undoes the request in flight only once it notices the closed
+/// connection, so a reload right away can still list what it removes: the
+/// lists read again a moment later, and for a shared upload once more,
+/// after the file it was reading (a long one can take past that). By then
+/// the dialog may be long shut, so they read in place, leaving a list
+/// scrolled since where it is.
+fn settle_later(app: &mut App, scope: Scope) {
+    app.net.after(CANCEL_SETTLE, crate::pages::library_settled);
     if scope == Scope::Global {
-        app.net.after(CANCEL_SETTLE_SHARED, crate::pages::library_changed);
+        app.net.after(CANCEL_SETTLE_SHARED, crate::pages::library_settled);
     }
 }
 
@@ -822,6 +828,45 @@ mod tests {
         assert!(!u.busy && u.results.is_none());
         // At once and once the server has undone the request in flight.
         assert_eq!(reloads(&s), 2);
+    }
+
+    /// A library of 250 tracks, paged as `/api/tracks` pages them.
+    fn library_server() -> MockServer {
+        MockServer::with_handler(|req| {
+            if !req.path.starts_with("/api/tracks") {
+                return Res::json("[]");
+            }
+            let param = |k: &str| {
+                req.path.split(['?', '&']).find_map(|kv| kv.strip_prefix(k)?.strip_prefix('=')?.parse::<usize>().ok())
+            };
+            let (limit, offset) = (param("limit").unwrap_or(100), param("offset").unwrap_or(0));
+            let rows: Vec<String> = (offset..(offset + limit).min(250)).map(|i| format!(r#"{{"id":"t{i}","title":"T{i}"}}"#)).collect();
+            Res::json(&format!("[{}]", rows.join(","))).header("X-Total-Count", "250")
+        })
+    }
+
+    /// The reloads after a cancel's own come when the user may have scrolled
+    /// on: they read again the rows shown, in place.
+    #[test]
+    fn a_settling_cancel_rereads_the_library_where_it_was_scrolled() {
+        let s = library_server();
+        let mut app = App::for_tests(Some(s.client()));
+        app.navigate(crate::route::Location::parse("/library"));
+        while crate::net::Net::drain(&mut app) {}
+        crate::pages::library::paging::load_more(&mut app, |a| &mut a.pages.library.tracks);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(app.pages.library.tracks.len(), Some(200));
+        let before = s.requests().len();
+        settle_later(&mut app, Scope::Personal);
+        while crate::net::Net::drain(&mut app) {}
+        let reads: Vec<String> = s.requests()[before..].iter().map(|r| r.path.clone()).collect();
+        assert_eq!(reads, ["/api/tracks?limit=200&offset=0&sort=recent"]);
+        let tracks = &app.pages.library.tracks;
+        assert_eq!((tracks.len(), tracks.has_more, tracks.total), (Some(200), true, Some(250)));
+        // The cancel's own reload, right away, starts the list over.
+        crate::pages::library_changed(&mut app);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(app.pages.library.tracks.len(), Some(100));
     }
 
     #[test]

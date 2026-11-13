@@ -65,6 +65,22 @@ pub fn enter(app: &mut App, loc: &Location) {
 /// show the edit).
 pub fn library_changed(app: &mut App) {
     library::library_changed(app);
+    library_changed_beyond_library(app);
+}
+
+/// [`library_changed`] for a change that shows up a while after the action
+/// behind it (a cancelled upload, once the server has undone the request in
+/// flight): the same pages read again, but the Library's lists in place, as
+/// the web's `libraryChanged` reads them, so a list the user has since
+/// scrolled past its first page keeps its place. Home, Favorites, Recent
+/// and a playlist already read again in place, keeping their rows up.
+pub fn library_settled(app: &mut App) {
+    library::library_settled(app);
+    library_changed_beyond_library(app);
+}
+
+/// The pages other than the Library that show what's in it.
+fn library_changed_beyond_library(app: &mut App) {
     playlists::library_changed(app);
     home::library_changed(app);
     let loc = app.location().clone();

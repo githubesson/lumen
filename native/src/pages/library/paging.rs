@@ -131,15 +131,7 @@ fn run<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>, offset: usize, r
             p.loading_more = false;
             match result {
                 Ok(page) => {
-                    let loaded = offset + page.items.len();
-                    let more = match &page.next_offsets {
-                        Some(o) => !o.is_empty(),
-                        // An empty offset page cannot make progress. Treat it
-                        // as exhausted even if a stale total claims rows are
-                        // still available, otherwise a visible sentinel will
-                        // request the same empty page forever.
-                        None => !page.items.is_empty() && (loaded as u64) < page.total,
-                    };
+                    let more = more_after(&page, page.items.len(), offset + page.items.len());
                     p.has_more = more;
                     p.total = if page.next_offsets.is_some() && more { None } else { Some(page.total) };
                     p.next_offsets = page.next_offsets.clone();
@@ -170,33 +162,64 @@ fn run<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>, offset: usize, r
     );
 }
 
-/// The poll's quiet refresh: everything shown, read again in one go (up
-/// to 1000 rows), replacing the rows without a loading state. Failures
-/// keep what's there.
+/// Whether a list goes on past its first `loaded` rows, `page` being the
+/// last one read (`last` rows long): a search's offsets say so; otherwise
+/// the total does, but an empty offset page can't make progress, so it ends
+/// the list even when a stale total claims more (or a visible sentinel would
+/// ask for the same empty page forever).
+fn more_after<T>(page: &PageResult<T>, last: usize, loaded: usize) -> bool {
+    match &page.next_offsets {
+        Some(o) => !o.is_empty(),
+        None => last > 0 && (loaded as u64) < page.total,
+    }
+}
+
+/// The quiet refresh (the poll's, and a library change seen again later):
+/// the rows shown, read again from the top in batches of up to 1000 (page
+/// after page, or a search's offsets, until as many as were shown) and put
+/// in their place without a loading state, so the list keeps its scroll
+/// and what was loaded past the first page. Failures keep what's there.
 pub fn revalidate<T: Clone + Send + 'static>(app: &mut App, slot: Slot<T>) {
     let Some(client) = app.client.clone() else { return };
     let p = slot(app);
     let Some(fetch) = p.fetch.clone() else { return };
-    if p.loading || p.stale() || p.next_offsets.is_some() {
+    if p.loading || p.stale() {
         return;
     }
-    let limit = p.page_size.max(p.len().unwrap_or(0).min(1000));
+    let shown = p.len().unwrap_or(0);
+    let limit = p.page_size.max(shown.min(1000));
     p.loading = true;
     let seq = p.seq;
     app.net.run(
-        move || fetch(&client, limit, 0, None),
+        move || -> ApiResult<(PageResult<T>, usize)> {
+            let mut page = fetch(&client, limit, 0, None)?;
+            let mut items = std::mem::take(&mut page.items);
+            let mut last = items.len();
+            while items.len() < shown && more_after(&page, last, items.len()) {
+                page = fetch(&client, limit, items.len(), page.next_offsets.as_ref())?;
+                last = page.items.len();
+                items.append(&mut page.items);
+            }
+            page.items = items;
+            Ok((page, last))
+        },
         move |app, result| {
             let p = slot(app);
             if p.seq != seq {
                 return;
             }
             p.loading = false;
-            if let Ok(page) = result {
-                p.has_more = (page.items.len() as u64) < page.total;
-                p.total = Some(page.total);
-                p.items = Some(page.items);
-                p.loaded_at = Some(std::time::Instant::now());
-                p.error = None;
+            let Ok((page, last)) = result else { return };
+            let more = more_after(&page, last, page.items.len());
+            p.has_more = more;
+            p.total = if page.next_offsets.is_some() && more { None } else { Some(page.total) };
+            p.next_offsets = page.next_offsets.clone();
+            p.items = Some(page.items.clone());
+            p.loaded_at = Some(std::time::Instant::now());
+            p.error = None;
+            let on_page = p.on_page;
+            if let Some(f) = on_page {
+                f(app, &page, true);
             }
         },
     );
@@ -226,4 +249,45 @@ pub fn sentinel<T: Clone + Send + 'static>(t: &Theme, key: &str, p: &Paged<T>, s
         out.push(crate::ui::kit::loading_state(t, "Loading more…"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::TrackListItem;
+    use std::sync::Mutex;
+
+    /// A search's pages (80 rows at most, of 250), each read from the
+    /// offsets the one before returned; the offsets it was asked from, logged.
+    fn search_like(log: Arc<Mutex<Vec<Option<u64>>>>) -> Fetch<TrackListItem> {
+        Arc::new(move |_, limit, _, offsets| {
+            let from = offsets.map(|o| o["local"]);
+            log.lock().unwrap().push(from);
+            let from = from.unwrap_or(0) as usize;
+            let to = (from + limit.min(80)).min(250);
+            let next = if to < 250 { SearchOffsets::from([("local".to_string(), to as u64)]) } else { SearchOffsets::new() };
+            let items = (from..to).map(|i| TrackListItem { id: format!("t{i}"), ..Default::default() }).collect();
+            Ok(PageResult { items, total: 0, next_offsets: Some(next), warnings: Vec::new() })
+        })
+    }
+
+    #[test]
+    fn a_quiet_refresh_reads_every_search_page_shown_again() {
+        let mut app = App::for_tests(Some(Client::new("http://127.0.0.1:9", None)));
+        let slot: Slot<TrackListItem> = |a| &mut a.pages.library.tracks;
+        let log = Arc::new(Mutex::new(Vec::new()));
+        reload(&mut app, slot, "q".into(), search_like(log.clone()), true, None);
+        while crate::net::Net::drain(&mut app) {}
+        load_more(&mut app, slot);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(slot(&mut app).len(), Some(160));
+        log.lock().unwrap().clear();
+        revalidate(&mut app, slot);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(*log.lock().unwrap(), [None, Some(80)]);
+        let p = slot(&mut app);
+        let ids: Vec<&str> = p.items.iter().flatten().map(|t| t.id.as_str()).collect();
+        assert_eq!((ids.len(), ids[159], p.has_more), (160, "t159", true));
+        assert_eq!(p.next_offsets.as_ref().map(|o| o["local"]), Some(160));
+    }
 }
