@@ -359,6 +359,12 @@ pub fn format_count(n: f64) -> String {
 /// `PlayListButton`: the primary button that plays a whole list, from its
 /// first playable track or, with shuffle on, a random one.
 pub fn play_list_button(t: &Theme, key: &str, label: &str, source: Source, disabled: bool) -> El {
+    play_button(t, key, label, source, disabled, true)
+}
+
+/// The primary Play button; `follow_shuffle` false always starts the list at
+/// its first playable track (`startListPlayback(play, tracks, false)`).
+fn play_button(t: &Theme, key: &str, label: &str, source: Source, disabled: bool, follow_shuffle: bool) -> El {
     Btn::new(key, label)
         .primary()
         .icon(&i::PLAY_FILLED)
@@ -367,7 +373,7 @@ pub fn play_list_button(t: &Theme, key: &str, label: &str, source: Source, disab
         .build(t)
         .on_press(move |app: &mut App| {
             let tracks = source(app).to_vec();
-            let shuffle = app.player.shuffle;
+            let shuffle = follow_shuffle && app.player.shuffle;
             crate::ui::track_row::start_list(app, &tracks, shuffle);
         })
 }
@@ -388,8 +394,10 @@ pub fn shuffle_list_button(t: &Theme, key: &str, source: Source, disabled: bool)
         })
 }
 
+/// Favorites' and Recent's Play all, which (as on the web) always starts from
+/// the top whatever the shuffle mode, and the native Shuffle play beside it.
 pub fn list_play_actions(t: &Theme, key: &str, source: Source, disabled: bool) -> El {
     row().gap(8.0).flex_wrap().items_center()
-        .child(play_list_button(t, &format!("{key}-play"), "Play all", source, disabled))
+        .child(play_button(t, &format!("{key}-play"), "Play all", source, disabled, false))
         .child(shuffle_list_button(t, &format!("{key}-shuffle"), source, disabled))
 }
