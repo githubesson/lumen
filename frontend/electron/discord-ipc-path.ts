@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createConnection, type Socket } from "node:net";
 import { join } from "node:path";
 
 // Sandboxed Linux Discord builds put their socket in a per-app folder under
@@ -27,15 +28,39 @@ export function discordIpcPaths(
   return dirs.flatMap((dir) => Array.from({ length: 10 }, (_, id) => `${dir}/discord-ipc-${id}`));
 }
 
-/** The first socket that exists, or undefined to let discord-rpc search as before. */
-export function findDiscordIpcPath(): string | undefined {
-  if (process.platform !== "linux") return undefined;
-  return discordIpcPaths().find((path) => existsSync(path));
+/** The sockets that exist, most likely first: empty to let discord-rpc search as before. */
+export function existingDiscordIpcPaths(): string[] {
+  if (process.platform !== "linux") return [];
+  return discordIpcPaths().filter((path) => existsSync(path));
+}
+
+/**
+ * Connects to the first of `paths` that answers. A socket file can outlive
+ * the Discord that made it (a crash, or another build that's since quit):
+ * that one refuses, and the next is tried, as discord-rpc tries id after id.
+ */
+export async function connectFirstSocket(paths: readonly string[]): Promise<Socket> {
+  let lastError: unknown = new Error("no Discord socket");
+  for (const path of paths) {
+    try {
+      return await new Promise<Socket>((resolve, reject) => {
+        const socket = createConnection(path, () => {
+          socket.removeListener("error", reject);
+          resolve(socket);
+        });
+        socket.once("error", reject);
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 /**
  * The discord-rpc transport to use: on Linux, its IPC transport connecting to
- * the socket found above (Flatpak/Snap/Vesktop included), else plain "ipc".
+ * the first live socket found above (Flatpak/Snap/Vesktop included), else
+ * plain "ipc".
  */
 export function discordTransport(): string {
   if (process.platform !== "linux") return "ipc";
@@ -43,19 +68,12 @@ export function discordTransport(): string {
   const transports = require("discord-rpc/src/transports");
   if (!transports["lumen-ipc"]) {
     const IPC = transports.ipc;
-    const net = require("node:net");
     transports["lumen-ipc"] = class extends IPC {
       async connect(this: any): Promise<void> {
-        const path = findDiscordIpcPath();
-        if (!path) return super.connect();
-        // Same as discord-rpc's IPCTransport.connect, on the socket found above.
-        const socket = (this.socket = await new Promise<any>((resolve, reject) => {
-          const s = net.createConnection(path, () => {
-            s.removeListener("error", reject);
-            resolve(s);
-          });
-          s.once("error", reject);
-        }));
+        const paths = existingDiscordIpcPaths();
+        if (paths.length === 0) return super.connect();
+        // Same as discord-rpc's IPCTransport.connect, on a socket found above.
+        const socket = (this.socket = await connectFirstSocket(paths));
         socket.on("close", this.onClose.bind(this));
         socket.on("error", this.onClose.bind(this));
         this.emit("open");

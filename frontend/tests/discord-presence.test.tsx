@@ -227,6 +227,23 @@ it("clears the card when the queue runs out instead of showing the last track pa
   expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({ trackId: "local-track", isPlaying: true }));
 });
 
+it("leaves a playing remote device's card up when the local queue runs out", async () => {
+  mock.player = { current: local, isPlaying: true };
+  const { rerender } = renderHook(() => useDiscordPresence());
+  await act(async () => {});
+  mock.latest = remote.activity;
+  act(() => mock.events.get("pause")!());
+  mock.player = { current: local, isPlaying: false };
+  rerender();
+  await act(async () => {});
+  expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({ trackId: "remote-track" }));
+  act(() => mock.events.get("ended")!());
+  await act(async () => {});
+  // The phone's card stays: nothing clears it or replaces it with the local track.
+  expect(mock.clear).not.toHaveBeenCalled();
+  expect(mock.push).toHaveBeenLastCalledWith(expect.objectContaining({ trackId: "remote-track" }));
+});
+
 it("still shows an ordinary pause", async () => {
   mock.player = { current: local, isPlaying: true };
   const { rerender } = renderHook(() => useDiscordPresence());

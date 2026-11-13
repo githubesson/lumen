@@ -253,9 +253,10 @@ export function useDiscordPresence() {
     });
     // The element fires `pause` before `ended`, so the paused card is already
     // out by now: take it down here. A next track (or repeat) pushes again.
+    // As with a pause, a device that's playing elsewhere keeps its card.
     const offEnded = adapter.on("ended", () => {
       endedTrackRef.current = currentRef.current?.id ?? null;
-      pushLocal({ isPlaying: false });
+      pushPreferred({ isPlaying: false });
     });
     const offPause = adapter.on("pause", () =>
       pushPreferred({ isPlaying: false }),
