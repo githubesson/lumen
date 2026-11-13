@@ -11,12 +11,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/githubesson/lumen/internal/models"
+	"github.com/githubesson/lumen/internal/pathsafe"
 	"github.com/githubesson/lumen/internal/safego"
 	"github.com/githubesson/lumen/internal/storage"
 )
@@ -122,6 +124,12 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 	type result struct {
 		File     string `json:"file"`
 		Inserted bool   `json:"inserted"`
+		// Promoted: a shared upload that took over someone's personal copy
+		// of the same audio. Inserted into the shared library, but the track
+		// isn't new, so a cancel must not delete it. Always sent, false
+		// included: a client can then tell this server from an older one
+		// that doesn't say, and leave a shared upload's tracks alone there.
+		Promoted bool   `json:"promoted"`
 		Dedup    bool   `json:"dedup,omitempty"`
 		Skipped  bool   `json:"skipped,omitempty"`
 		Error    string `json:"error,omitempty"`
@@ -142,7 +150,17 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Tracks this request added, undone if the client goes away mid-request.
+	// A failed shared upload keeps its file, cancelled or not: the watcher
+	// ingests it a moment later and may promote a user's personal copy of the
+	// same audio onto it, which removing the file under it would leave
+	// pointing at nothing (ingest's dropIfVanished covers new rows only). A
+	// cancel doesn't cut a shared ingest short (below), so this is rare.
+	var added []uuid.UUID
 	for _, fh := range files {
+		if r.Context().Err() != nil {
+			break // the client cancelled: nothing after this file is wanted
+		}
 		name := filepath.Base(fh.Filename)
 		if !ingest.IsSupported(name) {
 			results = append(results, result{File: fh.Filename, Skipped: true})
@@ -194,7 +212,19 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		res := h.Ingest.IngestFileAs(r.Context(), dst, ownerID)
+		// A shared file's ingest isn't cut short by a cancel: one left
+		// half-done stays in uploads/ for the watcher, which would add it
+		// (or promote a user's copy of it) after the dialog said it was
+		// undone. Finished, its outcome is known and the undo below takes
+		// back a new track and leaves a promoted one. A cancel waits for at
+		// most this one file. A personal upload's failed file is removed
+		// instead, so it can stop at once.
+		ingestCtx, stop := r.Context(), context.CancelFunc(func() {})
+		if ownerID == nil {
+			ingestCtx, stop = context.WithTimeout(context.WithoutCancel(r.Context()), sharedIngestTimeout)
+		}
+		res := h.Ingest.IngestFileAs(ingestCtx, dst, ownerID)
+		stop()
 		// res.Skipped must be honoured: a file that vanished between write and
 		// stat comes back Inserted=false, Err=nil, and was reported as
 		// `dedup: true` — a success. The nil track id likewise has to stay out of
@@ -202,11 +232,15 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		rr := result{
 			File:     fh.Filename,
 			Inserted: res.Inserted,
+			Promoted: res.Promoted,
 			Skipped:  res.Skipped,
 			Dedup:    !res.Inserted && !res.Skipped && res.Err == nil,
 		}
 		if res.TrackID != uuid.Nil {
 			rr.TrackID = res.TrackID.String()
+			if addedByUpload(res) {
+				added = append(added, res.TrackID)
+			}
 		}
 		if res.Err != nil {
 			h.log().Error("upload: ingest failed after the file was written to disk",
@@ -219,6 +253,13 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		results = append(results, rr)
+	}
+
+	if r.Context().Err() != nil {
+		// Nobody will see the results, so nothing this request added may stay
+		// behind taking up space (and quota) the user didn't mean to use.
+		h.undoCancelledUpload(context.WithoutCancel(r.Context()), u.ID, ownerID, destDir, added)
+		return
 	}
 
 	// Summary line: one glance at the logs shows whether an upload batch went
@@ -331,6 +372,54 @@ func (h *Library) Errors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ingestErrorsResp{Errors: errs, Total: total})
+}
+
+// sharedIngestTimeout bounds a shared upload's per-file ingest, which a
+// cancel doesn't interrupt (see Upload).
+const sharedIngestTimeout = 5 * time.Minute
+
+// addedByUpload reports whether a cancelled upload should take this file's
+// track back: a new track only. A dedup hit, or a promotion (a shared upload
+// taking over a user's personal row of the same audio), was already there.
+func addedByUpload(res ingest.Outcome) bool {
+	return res.Inserted && !res.Promoted && res.Err == nil && res.TrackID != uuid.Nil
+}
+
+// undoCancelledUpload removes the tracks an upload request added before its
+// client went away: their rows, then their files, but only files inside this
+// upload's own destination directory (never another user's or a library
+// file that a row also points at).
+func (h *Library) undoCancelledUpload(ctx context.Context, userID uuid.UUID, ownerID *uuid.UUID, destDir string, added []uuid.UUID) {
+	removed := 0
+	for _, id := range added {
+		var paths []string
+		if ownerID != nil {
+			p, err := h.Library.DeletePersonalTrack(ctx, id, *ownerID)
+			if err != nil {
+				h.log().Warn("cancelled upload: removing an added personal track failed", "track", id, "user", userID, "err", err)
+				continue
+			}
+			paths = []string{p}
+		} else {
+			ps, err := h.Library.DeleteGlobalTrack(ctx, id)
+			if err != nil {
+				h.log().Warn("cancelled upload: removing an added track failed", "track", id, "user", userID, "err", err)
+				continue
+			}
+			paths = ps
+		}
+		for _, p := range paths {
+			if inDest, _ := pathsafe.WithinRoot(destDir, p); !inDest || p == "" {
+				continue
+			}
+			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+				h.log().Warn("cancelled upload: removing a file failed", "path", p, "err", err)
+			}
+		}
+		removed++
+	}
+	h.log().Info("upload cancelled by the client; undid what it added",
+		"user", userID, "added", len(added), "removed", removed)
 }
 
 // removeFailedUpload deletes a personal upload whose ingest failed. Ingest

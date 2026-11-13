@@ -3,7 +3,7 @@
  * the web dialog and the phone's upload screen.
  */
 
-import type { UploadResult } from "./api";
+import { ApiError, errorMessage, type UploadResult } from "./api";
 
 export type UploadScope = "personal" | "global";
 
@@ -43,6 +43,14 @@ export function isUploadableFile(name: string): boolean {
  */
 export const UPLOAD_REQUEST_MAX_BYTES = 512 << 20;
 
+/**
+ * How much to group into one request. Proxies in front of a server cap
+ * bodies below the server's own limit (Cloudflare's free plan: 100 MB, as
+ * 413 Payload Too Large), so files are grouped under this; a bigger file
+ * still goes alone, up to the server's cap.
+ */
+export const UPLOAD_BATCH_MAX_BYTES = 90 << 20;
+
 // Room for the scope field and the closing boundary, and for each file's part
 // headers (its name included), so a planned batch never meets the cap.
 const UPLOAD_FORM_OVERHEAD_BYTES = 64 << 10;
@@ -66,8 +74,10 @@ export function planUploadBatches<T>(
   files: readonly T[],
   sizeOf: (file: T) => number | null | undefined,
   maxRequestBytes: number = UPLOAD_REQUEST_MAX_BYTES,
+  batchBytes: number = UPLOAD_BATCH_MAX_BYTES,
 ): UploadBatchPlan<T> {
   const budget = maxRequestBytes - UPLOAD_FORM_OVERHEAD_BYTES;
+  const groupBudget = Math.min(batchBytes, maxRequestBytes) - UPLOAD_FORM_OVERHEAD_BYTES;
   const batches: T[][] = [];
   const tooLarge: T[] = [];
   let batch: T[] = [];
@@ -89,12 +99,67 @@ export function planUploadBatches<T>(
       tooLarge.push(file);
       continue;
     }
-    if (used + cost > budget) flush();
+    if (cost > groupBudget) {
+      // Too big to group, small enough for the server: on its own.
+      flush();
+      batches.push([file]);
+      continue;
+    }
+    if (used + cost > groupBudget) flush();
     batch.push(file);
     used += cost;
   }
   flush();
   return { batches, tooLarge };
+}
+
+/** How many times one request waits out the server's rate limit. */
+const UPLOAD_RATE_LIMIT_WAITS = 5;
+
+/**
+ * Sends one request of an upload: a batch, or a cover. The server allows so
+ * many upload requests a minute, which a fast connection can reach with many
+ * small batches: a 429 waits out its Retry-After (1 to 60 s) and tries again,
+ * up to a few times, rather than failing the rest of the selection. Aborting
+ * `signal` ends the wait with an AbortError.
+ */
+export async function waitOutRateLimit<T>(send: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let waits = 0; ; waits++) {
+    try {
+      return await send();
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 429 || waits >= UPLOAD_RATE_LIMIT_WAITS || signal?.aborted) {
+        throw err;
+      }
+      const seconds = Math.min(Math.max(err.retryAfterSeconds ?? 5, 1), 60);
+      await new Promise<void>((resolve, reject) => {
+        const aborted = () => {
+          clearTimeout(timer);
+          // A plain Error, as the transport's: React Native has no DOMException.
+          const error = new Error("The upload was cancelled.");
+          error.name = "AbortError";
+          reject(error);
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", aborted);
+          resolve();
+        }, seconds * 1000);
+        signal?.addEventListener("abort", aborted, { once: true });
+      });
+    }
+  }
+}
+
+/** One batch of an upload, through {@link waitOutRateLimit}. */
+export const sendUploadBatch = (send: () => Promise<UploadResult[]>, signal?: AbortSignal) =>
+  waitOutRateLimit(send, signal);
+
+/** An upload request's error, readable: a 413 is usually a proxy's body cap. */
+export function uploadErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 413) {
+    return "The server (or a proxy in front of it, like Cloudflare) refused a request this large.";
+  }
+  return errorMessage(err, "Upload failed.");
 }
 
 /** The result row for a file refused before sending, worded as the server words it. */

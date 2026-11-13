@@ -22,7 +22,7 @@ function file(name: string, size = 1) {
 
 async function pick(files: File[]) {
   render(<UploadDialog open isAdmin={false} onClose={() => {}} />);
-  const input = await screen.findByLabelText(/Drop files here/);
+  const input = await screen.findByLabelText(/Drop files or folders here/);
   fireEvent.change(input, { target: { files } });
 }
 
@@ -74,4 +74,313 @@ it("keeps the selection to try again when the first batch fails", async () => {
   });
   expect(screen.getByText("Upload failed.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Upload 1" })).toBeTruthy();
+});
+
+it("adds a picked folder to picked files, shows paths, and skips repeats", async () => {
+  await pick([file("single.mp3")]);
+  const inFolder = (path: string) => {
+    const f = file(path.split("/").pop()!);
+    Object.defineProperty(f, "webkitRelativePath", { value: path });
+    return f;
+  };
+  const folder = screen.getByLabelText("Choose a folder") as HTMLInputElement;
+  expect(folder.hasAttribute("webkitdirectory")).toBe(true);
+  const track = inFolder("Album/01.flac");
+  fireEvent.change(folder, { target: { files: [track, inFolder("Album/cover.jpg")] } });
+  fireEvent.change(folder, { target: { files: [track] } });
+  expect(screen.getByText("2 files selected")).toBeTruthy();
+  expect(screen.getByText("Album/01.flac")).toBeTruthy();
+  expect(screen.getByText(/left out.*Album\/cover.jpg/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(screen.queryByText(/selected/)).toBeNull();
+});
+
+it("walks a dropped folder, nested ones included", async () => {
+  render(<UploadDialog open isAdmin={false} onClose={() => {}} />);
+  await screen.findByLabelText(/Drop files or folders here/);
+  const fileEntry = (name: string, fullPath: string) => ({
+    isFile: true, isDirectory: false, name, fullPath,
+    file: (ok: (f: File) => void) => ok(file(name)),
+  });
+  const dirEntry = (fullPath: string, children: unknown[]) => ({
+    isFile: false, isDirectory: true, fullPath,
+    createReader: () => {
+      let pages = [children, []];
+      return { readEntries: (ok: (e: unknown[]) => void) => { ok(pages[0]); pages = pages.slice(1); } };
+    },
+  });
+  const root = dirEntry("/Mix", [
+    fileEntry("a.mp3", "/Mix/a.mp3"),
+    dirEntry("/Mix/Disc 2", [fileEntry("b.opus", "/Mix/Disc 2/b.opus")]),
+  ]);
+  await act(async () => {
+    fireEvent.drop(document.querySelector(".fixed")!, {
+      dataTransfer: { items: [{ kind: "file", webkitGetAsEntry: () => root }], files: [] },
+    });
+  });
+  expect(await screen.findByText("2 files selected")).toBeTruthy();
+  expect(screen.getByText("Mix/Disc 2/b.opus")).toBeTruthy();
+});
+
+it("explains a proxy's 413 instead of showing its HTML page", async () => {
+  const { ApiError } = await import("../../core/src/api-transport");
+  mock.uploadMusic.mockRejectedValueOnce(new ApiError(413, "<html><title>413 Payload Too Large</title></html>"));
+  await pick([file("one.flac", 1 * MB)]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect(screen.getByText(/proxy in front of it, like Cloudflare/)).toBeTruthy();
+  expect(screen.queryByText(/<html>/)).toBeNull();
+});
+
+it("applies details typed before uploading to what the upload adds", async () => {
+  mock.uploadMusic.mockImplementation(async (files: File[]) =>
+    files.map((f, i) => ({ file: f.name, inserted: true, track_id: `t${i}` })),
+  );
+  (mock as Record<string, unknown>).updateTrack = vi.fn(async (id: string) => ({ id, album_id: "al" }));
+  await pick([file("Zhnoi - 01 cute girls.flac")]);
+  fireEvent.click(screen.getByRole("switch"));
+  fireEvent.change(screen.getByLabelText("Title for Zhnoi - 01 cute girls.flac"), { target: { value: "cute girls doing cute things" } });
+  fireEvent.change(screen.getByLabelText("Artists for Zhnoi - 01 cute girls.flac"), { target: { value: "Zhnoi" } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect((mock as unknown as { updateTrack: ReturnType<typeof vi.fn> }).updateTrack).toHaveBeenCalledWith("t0", {
+    title: "cute girls doing cute things",
+    artists: ["Zhnoi"],
+  }, { signal: expect.any(AbortSignal) });
+  expect(screen.getByText("Added")).toBeTruthy();
+});
+
+it("cancels mid-upload: stops sending and removes what earlier requests added", async () => {
+  const m = mock as unknown as Record<string, ReturnType<typeof vi.fn>>;
+  m.deleteTrack = vi.fn(async () => {});
+  m.deleteGlobalTrack = vi.fn(async () => {});
+  mock.uploadMusic
+    .mockImplementationOnce(async (files: File[]) => files.map((f, i) => ({ file: f.name, inserted: true, track_id: `t${i}` })))
+    .mockImplementationOnce((_files: File[], _scope: string, { signal }: { signal: AbortSignal }) =>
+      new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    );
+  await pick([file("one.flac", 60 * MB), file("two.flac", 60 * MB), file("three.flac", 60 * MB)]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 3" }));
+  });
+  // The first request is done and the second is in flight; Cancel works now.
+  const cancelButton = screen.getByRole("button", { name: "Cancel upload" });
+  expect((cancelButton as HTMLButtonElement).disabled).toBe(false);
+  await act(async () => {
+    fireEvent.click(cancelButton);
+  });
+  expect(m.deleteTrack).toHaveBeenCalledWith("t0");
+  expect(mock.uploadMusic).toHaveBeenCalledTimes(2); // the third file never went
+  expect(screen.getByText(/Upload cancelled\. Removed the 1 track it had already added\./)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Upload 3" })).toBeTruthy(); // selection kept for a retry
+});
+
+it("keeps uploading through Escape and the close button, and a cancel leaves a promoted track", async () => {
+  const m = mock as unknown as Record<string, ReturnType<typeof vi.fn>>;
+  m.deleteTrack = vi.fn(async () => {});
+  m.deleteGlobalTrack = vi.fn(async () => {});
+  const onClose = vi.fn();
+  mock.uploadMusic
+    // The shared upload took over someone's personal copy: inserted, but not new.
+    .mockImplementationOnce(async (files: File[]) => files.map((f) => ({ file: f.name, inserted: true, promoted: true, track_id: "t-theirs" })))
+    .mockImplementationOnce((_files: File[], _scope: string, { signal }: { signal: AbortSignal }) =>
+      new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    );
+  render(<UploadDialog open isAdmin onClose={onClose} />);
+  fireEvent.change(await screen.findByLabelText(/Drop files or folders here/), {
+    target: { files: [file("one.flac", 60 * MB), file("two.flac", 60 * MB)] },
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 2" }));
+  });
+  const dialog = screen.getByRole("dialog");
+  const close = screen.getByRole("button", { name: "Close" }) as HTMLButtonElement;
+  expect(close.disabled).toBe(true);
+  screen.getByRole("button", { name: "Cancel upload" }).focus();
+  await act(async () => {
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    fireEvent.click(close);
+  });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(dialog.isConnected).toBe(true);
+  // Still going: the second request was never aborted.
+  expect(screen.getByRole("button", { name: "Cancel upload" })).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Cancel upload" }));
+  });
+  expect(m.deleteTrack).not.toHaveBeenCalled();
+  expect(m.deleteGlobalTrack).not.toHaveBeenCalled();
+  expect(screen.getByText("Upload cancelled. Nothing was added.")).toBeTruthy();
+});
+
+it("asks for an album title before an album artist, instead of dropping it", async () => {
+  await pick([file("one.flac")]);
+  fireEvent.click(screen.getByRole("switch", { name: "Edit details before uploading" }));
+  fireEvent.change(screen.getByLabelText("Album artist"), { target: { value: "Baby Smoove" } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect(screen.getByText("Add an album title to set its album artist.")).toBeTruthy();
+  expect(mock.uploadMusic).not.toHaveBeenCalled();
+});
+
+it("adds two folder walks that finish out of order to each other", async () => {
+  render(<UploadDialog open isAdmin={false} onClose={() => {}} />);
+  const input = await screen.findByLabelText(/Drop files or folders here/);
+  // Both change events read the same render's selection.
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [file("a.flac")] } });
+    fireEvent.change(input, { target: { files: [file("b.flac")] } });
+  });
+  expect(screen.getByRole("button", { name: "Upload 2" })).toBeTruthy();
+});
+
+it("doesn't take more files while an upload is going", async () => {
+  mock.uploadMusic.mockImplementationOnce(() => new Promise(() => {}));
+  await pick([file("one.flac")]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  const input = screen.getByLabelText(/Drop files or folders here/) as HTMLInputElement;
+  expect(input.disabled).toBe(true);
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [file("late.flac")] } });
+  });
+  expect(screen.getByRole("button", { name: "Uploading 0 of 1…" })).toBeTruthy();
+});
+
+it("starts a new selection once after results, then adds the next walk to it", async () => {
+  mock.uploadMusic.mockImplementationOnce(async (files: File[]) => files.map((f) => ({ file: f.name, inserted: true, track_id: "t" })));
+  await pick([file("first.flac")]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect(screen.getByText("first.flac")).toBeTruthy(); // the results are up
+  const input = screen.getByLabelText(/Drop files or folders here/);
+  // Two walks that both started while the results showed.
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [file("a.flac")] } });
+    fireEvent.change(input, { target: { files: [file("b.flac")] } });
+  });
+  expect(screen.getByRole("button", { name: "Upload 2" })).toBeTruthy();
+});
+
+it("leaves a shared upload's tracks when the server is too old to say which it promoted", async () => {
+  const m = mock as unknown as Record<string, ReturnType<typeof vi.fn>>;
+  m.deleteGlobalTrack = vi.fn(async () => {});
+  mock.uploadMusic
+    .mockImplementationOnce(async (files: File[]) => files.map((f, i) => ({ file: f.name, inserted: true, track_id: `old-${i}` })))
+    .mockImplementationOnce(async (files: File[]) => files.map((f, i) => ({ file: f.name, inserted: true, promoted: false, track_id: `new-${i}` })))
+    .mockImplementationOnce((_files: File[], _scope: string, { signal }: { signal: AbortSignal }) =>
+      new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    );
+  render(<UploadDialog open isAdmin onClose={() => {}} />);
+  fireEvent.change(await screen.findByLabelText(/Drop files or folders here/), {
+    target: { files: [file("one.flac", 60 * MB), file("two.flac", 60 * MB), file("three.flac", 60 * MB)] },
+  });
+  fireEvent.click(screen.getByRole("radio", { name: /Global/ }));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 3" }));
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Cancel upload" }));
+  });
+  // Only the one the server said is new goes; the unknown one stays, and the note says so.
+  expect(m.deleteGlobalTrack.mock.calls.map(([id]) => id)).toEqual(["new-0"]);
+  expect(screen.getByText(/Removed 1 of 2 tracks it had added; delete the rest from your library\./)).toBeTruthy();
+});
+
+it("doesn't add a dropped folder whose walk ends after the upload started", async () => {
+  mock.uploadMusic.mockImplementationOnce(() => new Promise(() => {}));
+  await pick([file("one.flac")]);
+  // A folder whose one file is still being read.
+  let finish: (f: File) => void = () => {};
+  const root = {
+    isFile: false, isDirectory: true, fullPath: "/Late",
+    createReader: () => {
+      let pages: unknown[][] = [[{ isFile: true, isDirectory: false, name: "late.flac", fullPath: "/Late/late.flac", file: (ok: (f: File) => void) => { finish = ok; } }], []];
+      return { readEntries: (ok: (e: unknown[]) => void) => { ok(pages[0]); pages = pages.slice(1); } };
+    },
+  };
+  await act(async () => {
+    fireEvent.drop(document.querySelector(".fixed")!, {
+      dataTransfer: { items: [{ kind: "file", webkitGetAsEntry: () => root }], files: [] },
+    });
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  await act(async () => { finish(file("late.flac")); });
+  expect(screen.getByRole("button", { name: "Uploading 0 of 1…" })).toBeTruthy();
+  expect(screen.queryByText("Late/late.flac")).toBeNull();
+  // Not silently: the dialog says the folder didn't go.
+  expect(screen.getByText("A dropped folder wasn't added: the upload had already started.")).toBeTruthy();
+});
+
+it("reloads the library after a cancel, and once more for a shared upload that finishes its file first", async () => {
+  const { libraryChanged } = await import("../src/lib/events");
+  const emits = vi.fn();
+  const off = libraryChanged.on(emits);
+  const hang = (_files: File[], _scope: string, { signal }: { signal: AbortSignal }) =>
+    new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+  try {
+    for (const shared of [false, true]) {
+      cleanup();
+      emits.mockClear();
+      mock.uploadMusic.mockImplementationOnce(hang);
+      render(<UploadDialog open isAdmin={shared} onClose={() => {}} />);
+      fireEvent.change(await screen.findByLabelText(/Drop files or folders here/), { target: { files: [file("one.flac")] } });
+      if (shared) fireEvent.click(screen.getByRole("radio", { name: /Global/ }));
+      else if (screen.queryByRole("radio", { name: /Personal/ })) fireEvent.click(screen.getByRole("radio", { name: /Personal/ }));
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+        });
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name: "Cancel upload" }));
+        });
+        expect(emits).toHaveBeenCalledTimes(1);
+        await act(async () => { vi.advanceTimersByTime(2_000); });
+        expect(emits).toHaveBeenCalledTimes(2);
+        await act(async () => { vi.advanceTimersByTime(30_000); });
+        expect(emits).toHaveBeenCalledTimes(shared ? 3 : 2);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  } finally {
+    off();
+  }
+});
+
+it("keeps the dropped-folder note when the upload then fails", async () => {
+  let fail: (err: Error) => void = () => {};
+  mock.uploadMusic.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
+  await pick([file("one.flac")]);
+  let finish: (f: File) => void = () => {};
+  const root = {
+    isFile: false, isDirectory: true, fullPath: "/Late",
+    createReader: () => {
+      let pages: unknown[][] = [[{ isFile: true, isDirectory: false, name: "late.flac", fullPath: "/Late/late.flac", file: (ok: (f: File) => void) => { finish = ok; } }], []];
+      return { readEntries: (ok: (e: unknown[]) => void) => { ok(pages[0]); pages = pages.slice(1); } };
+    },
+  };
+  await act(async () => {
+    fireEvent.drop(document.querySelector(".fixed")!, {
+      dataTransfer: { items: [{ kind: "file", webkitGetAsEntry: () => root }], files: [] },
+    });
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  await act(async () => { finish(file("late.flac")); });
+  await act(async () => { fail(new Error("offline")); });
+  // Both stand: the failure, and that the folder wasn't added.
+  expect(screen.getByText("A dropped folder wasn't added: the upload had already started.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Upload 1" })).toBeTruthy();
+  expect(screen.getByText(/^(offline|Upload failed\.)$/)).toBeTruthy();
 });

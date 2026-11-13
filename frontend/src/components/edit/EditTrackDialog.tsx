@@ -1,11 +1,13 @@
 import { buildTrackPatch, trackEditForm } from "@music-library/core/metadata-edit";
 import { useEditDraft } from "@music-library/core/use-edit-draft";
-import { FormEvent, useState, type ReactNode } from "react";
+import { FormEvent, useRef, useState, type ReactNode } from "react";
+import { Image as PhotoIcon } from "lucide-react";
 import {
   api,
   errorMessage,
   type TrackDetail,
 } from "../../api";
+import { Button } from "../Button";
 import { SaveCancelFooter } from "../DialogFooter";
 import { DialogShell } from "../DialogShell";
 import ErrorBanner from "../ErrorBanner";
@@ -62,14 +64,37 @@ function TrackEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Only the fields changed from what the form was filled from are sent.
-  const { base, draft, setField } = useEditDraft(track, trackEditForm);
+  const { base, draft, setField, rebase } = useEditDraft(track, trackEditForm);
+  // The uploader's own cover art for a personal track.
+  const [cover, setCover] = useState<File | null>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const updated = await api.updateTrack(trackId, buildTrackPatch(base, draft));
+      const patch = buildTrackPatch(base, draft);
+      // Cover art hangs on an album: a loose track becomes its own single.
+      if (cover && !draft.albumTitle.trim()) {
+        patch.album_title = draft.title.trim() || track.title;
+        patch.album_artist = draft.artists.split(",")[0]?.trim() || undefined;
+      }
+      let updated = await api.updateTrack(trackId, patch);
+      if (cover) {
+        try {
+          updated = await api.setTrackCover(trackId, cover);
+        } catch (err) {
+          // The details went in: show them, and diff a retry against them,
+          // or changing a field back would send nothing.
+          rebase(updated);
+          if (patch.album_title !== undefined) setField("albumTitle", updated.album_title ?? "");
+          libraryChanged.emit();
+          onSaved?.(updated);
+          setError(`Details saved, but the cover art wasn't: ${errorMessage(err, "upload failed")}`);
+          return;
+        }
+      }
       libraryChanged.emit();
       onSaved?.(updated);
       onClose();
@@ -149,6 +174,36 @@ function TrackEditor({
           />
         </Field>
       </FieldRow>
+      {track.owned && (
+        <Field
+          label="Cover art"
+          hint={
+            draft.albumTitle.trim()
+              ? "Only you see it. Shared album art, if any, still shows first."
+              : "Only you see it. With no album set, the track becomes its own single."
+          }
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <Button variant="ghost" onClick={() => coverInputRef.current?.click()} disabled={busy}>
+              <PhotoIcon className="size-3.5" />
+              {cover ? "Change image" : "Choose image"}
+            </Button>
+            {cover && (
+              <span className="mono" style={{ fontSize: 12, color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {cover.name}
+              </span>
+            )}
+            <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            aria-label="Cover art"
+            hidden
+            onChange={(e) => setCover(e.currentTarget.files?.[0] ?? null)}
+            />
+          </div>
+        </Field>
+      )}
       {error && <ErrorBanner message={error} />}
     </TrackForm>
   );

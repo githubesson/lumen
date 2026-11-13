@@ -9,7 +9,9 @@ on:
 
 jobs:
   hifi-extension:
-    runs-on: ubuntu-latest
+    # setup-python has no 3.13.10 build for ubuntu-latest's Ubuntu 26.04
+    # image; 24.04 has it, and the version must match the hifi-api image.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:

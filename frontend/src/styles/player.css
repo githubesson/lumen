@@ -142,6 +142,52 @@
   text-overflow: ellipsis;
   cursor: pointer;
 }
+/* Titles, artists, albums and covers that open their pages; text until
+   hovered. Inline, so a line's ellipsis truncates them with the rest. */
+.entity-link {
+  color: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+/* In the player bar the title and the artist line are both links: the gap
+   keeps a 24px circle around each clear of the other (WCAG 2.5.8). It stays
+   while a failure replaces the links, so the lines don't jump. */
+html:not([data-mini-player]) .player-bar .np-text {
+  gap: 6px;
+}
+/* The player's title is the whole line: it truncates itself, so the link
+   ends where its text is cut rather than running on under the controls. */
+.np-title > .entity-link {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Over a row's stretched click area, so they get the click, not the row. */
+.board-row .entity-link {
+  position: relative;
+  z-index: 1;
+}
+/* A cover that opens its album: the cover itself, no underline. */
+.entity-link.hero-art-link {
+  display: block;
+  border-radius: var(--radius-lg);
+}
+.entity-link.hero-art-link:hover {
+  text-decoration: none;
+  filter: brightness(1.06);
+}
+.entity-link:hover,
+.entity-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.entity-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
 .np-error-btn:hover,
 .np-error-btn[aria-expanded="true"] {
   text-decoration: underline;

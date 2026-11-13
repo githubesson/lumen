@@ -1,3 +1,4 @@
+import { ArtistLinks } from "../EntityLinks";
 import type { CSSProperties, MouseEventHandler, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ListMusic as QueueListIcon, Play as PlayIcon } from "lucide-react";
@@ -162,7 +163,7 @@ export function BoardTrackList({
               label={track.album_title || track.title}
             />
           )}
-          <div className="board-row-text">
+          <div className="board-row-text board-row-text-linked">
             {/* An unavailable track's button is aria-disabled rather than
                 disabled: it covers the row, and the browser sends no
                 mouse events to a disabled control, so a right-click on
@@ -178,14 +179,24 @@ export function BoardTrackList({
               <span className="sr-only">Play</span>{" "}
               {displayText(track.title)}
             </button>
-            <div className="card-sub">{displayText(track.artist, "Unknown artist")}</div>
+            <div className="card-sub"><ArtistLinks track={track} /></div>
           </div>
           <span className="board-row-end">
             <span className="board-row-meta">{meta(track)}</span>
-            {!ranked && (
-              <span className="board-play" aria-hidden="true">
+            {!ranked && !track.unavailable && (
+              // A pointer shortcut, like the shelf arrows: the row's title
+              // button already plays the track from the keyboard and names
+              // it for screen readers, so this one stays out of the tab
+              // order and the accessibility tree.
+              <button
+                type="button"
+                className="board-play"
+                tabIndex={-1}
+                aria-hidden="true"
+                onClick={() => onPlay(track)}
+              >
                 <PlayIcon className="size-3.5" />
-              </span>
+              </button>
             )}
           </span>
         </li>

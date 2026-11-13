@@ -834,7 +834,8 @@ describe("usePlayerCore playback errors", () => {
   it.each([
     ["a library track's refusal", t("a"), () => new Response(refusal, { status: 502 }), `HTTP 502 · ${refusal}`],
     ["a library file gone from disk", t("a"), () => new Response("file missing on disk", { status: 410 }), "HTTP 410 · file missing on disk"],
-    ["a reverse proxy's HTML page", tidal("1"), () => new Response("<html><body>502 Bad Gateway</body></html>", { status: 502 }), "HTTP 502"],
+    ["a reverse proxy's HTML page", tidal("1"), () => new Response("<html><body>502 Bad Gateway</body></html>", { status: 502 }), "HTTP 502 · an HTML error page, likely from a proxy in front of Lumen's server"],
+    ["Cloudflare's error page", tidal("1"), () => new Response("<html><head><title>example.net | 502: Bad gateway</title></head><body>cloudflare</body></html>", { status: 502 }), `HTTP 502 · a proxy's error page ("example.net | 502: Bad gateway") from Cloudflare, not Lumen's server`],
     ["a stream that answers now", tidal("1"), () => new Response("#EXTM3U\n", { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl" } }), "HTTP 200 · application/vnd.apple.mpegurl"],
     ["an error that isn't TIDAL's", tidal("1"), () => new Response("internal error", { status: 500 }), "HTTP 500 · internal error"],
     ["an unreachable server", tidal("1"), () => Promise.reject(new TypeError("Failed to fetch")), "No answer: TypeError: Failed to fetch"],

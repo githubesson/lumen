@@ -39,6 +39,16 @@ describe("trackActions", () => {
     expect(trackActions(track({ source: undefined }), { isAdmin: true }).editMetadata).toBe(true);
   });
 
+  it("lets an uploader edit their own personal track, and nothing else of admin's", () => {
+    expect(trackActions(track({ owned: true }), { isAdmin: false })).toMatchObject({
+      editMetadata: true,
+      editAlbum: false,
+      moveToAlbum: false,
+      adminRemove: false,
+      deleteOwnUpload: true,
+    });
+  });
+
   it("never offers an admin edits of a TIDAL track, which the server rejects", () => {
     const actions = trackActions(
       track({ source: "tidal", album_id: "hidden", source_album_id: "1" }),

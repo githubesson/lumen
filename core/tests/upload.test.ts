@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
-import type { UploadResult } from "../src/api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError, type UploadResult } from "../src/api";
 import {
+  UPLOAD_BATCH_MAX_BYTES,
   UPLOAD_REQUEST_MAX_BYTES,
   defaultUploadScope,
   isUploadableFile,
   planUploadBatches,
+  sendUploadBatch,
   summarizeUploadResults,
   tooLargeUploadResult,
   uploadAddedAny,
@@ -108,8 +110,9 @@ describe("isUploadableFile", () => {
 describe("planUploadBatches", () => {
   const MiB = 1 << 20;
   const file = (name: string, size?: number) => ({ name, size });
-  const plan = (files: { name: string; size?: number }[], max?: number) => {
-    const { batches, tooLarge } = planUploadBatches(files, (f) => f.size, max);
+  // These cases are about the server's cap, so group up to it.
+  const plan = (files: { name: string; size?: number }[], max?: number, batch = max ?? UPLOAD_REQUEST_MAX_BYTES) => {
+    const { batches, tooLarge } = planUploadBatches(files, (f) => f.size, max, batch);
     return {
       batches: batches.map((batch) => batch.map((f) => f.name)),
       tooLarge: tooLarge.map((f) => f.name),
@@ -147,6 +150,18 @@ describe("planUploadBatches", () => {
     });
   });
 
+  it("groups under a proxy's body cap by default, and sends a bigger file alone", () => {
+    const { batches, tooLarge } = planUploadBatches(
+      [file("a", 40 * MiB), file("b", 40 * MiB), file("c", 40 * MiB), file("big", 200 * MiB), file("d", 1 * MiB)],
+      (f) => f.size,
+    );
+    expect(batches.map((b) => b.map((f) => f.name))).toEqual([["a", "b"], ["c"], ["big"], ["d"]]);
+    expect(tooLarge).toEqual([]);
+    for (const b of batches.filter((b) => b.length > 1)) {
+      expect(b.reduce((n, f) => n + (f.size ?? 0), 0)).toBeLessThan(UPLOAD_BATCH_MAX_BYTES);
+    }
+  });
+
   it("takes a smaller cap", () => {
     expect(plan([file("a", 100 * 1024), file("b", 100 * 1024)], 256 * 1024).batches).toEqual([["a"], ["b"]]);
   });
@@ -158,5 +173,49 @@ describe("tooLargeUploadResult", () => {
     expect(uploadResultStatus(refused)).toBe("failed");
     expect(uploadResultDetail(refused)).toBe("file too large");
     expect(summarizeUploadResults([refused, result({ inserted: true })])).toEqual({ added: 1, duplicate: 0, skipped: 0, failed: 1 });
+  });
+});
+
+describe("sendUploadBatch", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const ok = [result({ inserted: true })];
+
+  it("waits out a 429's Retry-After and sends the batch again", async () => {
+    vi.useFakeTimers();
+    const send = vi.fn().mockRejectedValueOnce(new ApiError(429, "rate limit exceeded", 7)).mockResolvedValue(ok);
+    const sent = sendUploadBatch(send);
+    await vi.advanceTimersByTimeAsync(6_999);
+    expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(sent).resolves.toBe(ok);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after a few waits, and never retries other failures", async () => {
+    vi.useFakeTimers();
+    const limited = vi.fn().mockRejectedValue(new ApiError(429, "rate limit exceeded", 1));
+    const sent = sendUploadBatch(limited);
+    const caught = expect(sent).rejects.toMatchObject({ status: 429 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await caught;
+    expect(limited).toHaveBeenCalledTimes(6);
+
+    const tooLarge = vi.fn().mockRejectedValue(new ApiError(413, "too large"));
+    await expect(sendUploadBatch(tooLarge)).rejects.toMatchObject({ status: 413 });
+    expect(tooLarge).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops waiting when the upload is cancelled", async () => {
+    vi.useFakeTimers();
+    const ctrl = new AbortController();
+    const send = vi.fn().mockRejectedValue(new ApiError(429, "rate limit exceeded", 30));
+    const sent = sendUploadBatch(send, ctrl.signal);
+    const caught = expect(sent).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    ctrl.abort();
+    await caught;
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

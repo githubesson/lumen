@@ -102,8 +102,9 @@ export function isTidalTrack(track: Pick<TrackListItem, "source">): boolean {
 /**
  * Which track actions to offer, so the web context menu and the mobile action
  * menu gate them the same way. Each mirrors what the server accepts: editing,
- * moving and both deletes take local track ids only, and editing, moving and
- * the shared-library removal are admin routes. A platform that lacks an
+ * moving and both deletes take local track ids only; moving and the
+ * shared-library removal are admin routes, and editing is an admin's, or the
+ * uploader's on their own personal tracks. A platform that lacks an
  * action (mobile has no move or admin removal) just ignores its flag.
  */
 export interface TrackActions {
@@ -133,7 +134,7 @@ export function trackActions(
     download: !track.unavailable,
     viewAlbum: Boolean(track.album_id || track.album_title || isTidalTrack(track)),
     share: canShareTrack(track),
-    editMetadata: isAdmin && local,
+    editMetadata: local && (isAdmin || owned),
     editAlbum: isAdmin && local && Boolean(track.album_id),
     moveToAlbum: isAdmin && local,
     deleteOwnUpload: owned,

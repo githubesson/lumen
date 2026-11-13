@@ -3,6 +3,7 @@ import {
   albumArtistName,
   albumArtists,
   albumCredits,
+  tidalAlbumCredits,
   albumLength,
   albumSubtitle,
   artistMetaParts,
@@ -212,5 +213,15 @@ describe("creditsOnly", () => {
     expect(creditsOnly("  ", ["Band"])).toBe(false);
     expect(creditsOnly("Band", [])).toBe(false);
     expect(creditsOnly("Band", [""])).toBe(false);
+  });
+});
+
+describe("tidalAlbumCredits", () => {
+  it("gives a TIDAL album's main artist their TIDAL page, and leaves the others to search", () => {
+    expect(tidalAlbumCredits({ artist_id: "777", artist: "Shoreline Mafia", artists: ["Shoreline Mafia", "OhGeesy"] })).toEqual([
+      { name: "Shoreline Mafia", tidalArtistId: "777" },
+      { name: "OhGeesy" },
+    ]);
+    expect(tidalAlbumCredits({ artist: "Solo" })).toEqual([{ name: "Solo" }]);
   });
 });

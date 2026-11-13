@@ -30,6 +30,8 @@ import { DEFAULT_PERIOD, periodSub } from "./panelKinds";
 import { BOARD_ROW_HEIGHT, useBoardFill } from "./useBoardFill";
 import type { useTrackContextMenu } from "../../lib/useTrackContextMenu";
 import { useAuth } from "../../context/Auth";
+import { ArtistLinks, PageLink } from "../EntityLinks";
+import { trackAlbumHref } from "../../lib/nowPlayingLinks";
 import { usePlayerControls } from "../../context/Player";
 import type { FavoritesState } from "../../context/Favorites";
 import { useApiResource, type ApiResource } from "../../lib/useApiResource";
@@ -779,12 +781,18 @@ function HeroAlbum({
   return (
     <div className="hero board-resume">
       <div className="board-resume-head">
-        <CoverArt className="hero-art" src={trackCoverUrl(track)} label={track.album_title ?? track.title} />
+        <PageLink className="hero-art-link" named label={`Go to ${displayText(track.album_title ?? track.title)}`} href={() => trackAlbumHref(track)}>
+          <CoverArt className="hero-art" src={trackCoverUrl(track)} label={track.album_title ?? track.title} />
+        </PageLink>
         <div className="hero-body">
           <div className="hero-eyebrow">{title ?? (fromRecent ? "Jump back in" : "From your library")}</div>
-          <h1 className="hero-title">{displayText(track.album_title ?? track.title)}</h1>
+          <h1 className="hero-title">
+            <PageLink label={`Go to ${displayText(track.album_title ?? track.title)}`} href={() => trackAlbumHref(track)}>
+              {displayText(track.album_title ?? track.title)}
+            </PageLink>
+          </h1>
           <div className="hero-meta">
-            <span>{displayText(track.artist, "Unknown artist")}</span>
+            <span><ArtistLinks track={track} /></span>
             {year ? (
               <>
                 <span className="dot" aria-hidden="true" />

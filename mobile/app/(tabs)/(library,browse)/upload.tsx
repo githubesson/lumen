@@ -18,6 +18,7 @@ import {
   libraryChanged,
   planUploadBatches,
   pluralize,
+  sendUploadBatch,
   summarizeUploadResults,
   tooLargeUploadResult,
   uploadAddedAny,
@@ -113,10 +114,13 @@ export default function UploadScreen() {
     let failure: string | null = null;
     for (const batch of batches) {
       try {
+        // A 429 (the server's uploads-a-minute limit) waits and sends again.
         uploaded.push(
-          ...(await api.uploadMusic(
-            batch.map(({ uri, name, type }) => ({ uri, name, type })),
-            scope,
+          ...(await sendUploadBatch(() =>
+            api.uploadMusic(
+              batch.map(({ uri, name, type }) => ({ uri, name, type })),
+              scope,
+            ),
           )),
         );
         sent += batch.length;

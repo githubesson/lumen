@@ -136,9 +136,26 @@ async function probeStream(
     return {
       reason:
         readable && (error.status === 502 || error.status === 503) ? detailLine(readable) : null,
-      answer: detailLine(`HTTP ${error.status}${readable ? ` · ${readable}` : ""}`) ?? "",
+      answer:
+        detailLine(`HTTP ${error.status}${readable ? ` · ${readable}` : proxyPageNote(text)}`) ?? "",
     };
   }
+}
+
+/**
+ * Lumen's server answers a failure in plain text, so an HTML error page
+ * likely came from something in front of it. Say what it was, with the
+ * page's title, and name the proxy only when the page names itself, so a
+ * report points the right way without blaming a proxy that isn't there.
+ */
+function proxyPageNote(text: string): string {
+  if (!text.trimStart().startsWith("<")) return "";
+  const title = /<title[^>]*>([^<]{1,120})<\/title>/i.exec(text)?.[1]?.trim();
+  const named = title ? ` ("${title}")` : "";
+  const from = /cloudflare/i.test(text) ? "Cloudflare" : /nginx/i.test(text) ? "nginx" : null;
+  return from
+    ? ` · a proxy's error page${named} from ${from}, not Lumen's server`
+    : ` · an HTML error page${named}, likely from a proxy in front of Lumen's server`;
 }
 
 /**

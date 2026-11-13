@@ -75,6 +75,7 @@ export default function MiniPlayer() {
           artist={displayArtist}
           error={displayError}
           errorPanel={miniPlayerMode ? panelToggle("error") : undefined}
+          links={!miniPlayerMode}
           onContextMenu={
             displayCurrent && !isRemoteMode
               ? bindCtx(displayCurrent)

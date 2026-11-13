@@ -81,8 +81,32 @@ type Outcome struct {
 	Path     string
 	TrackID  uuid.UUID
 	Inserted bool // true = new track, false = dedup hit
+	// Promoted: Inserted by taking over a user's personal upload of the same
+	// audio (an admin's shared upload). The row and its id predate this
+	// ingest, so whoever undoes "what this upload added" must leave it.
+	Promoted bool
 	Skipped  bool // true = not a supported audio file, or source file gone (hard-deleted)
 	Err      error
+}
+
+// dropIfVanished undoes a fresh insert whose file is gone. A file can go
+// while it's being read: an upload cancelled under the watcher's re-ingest of
+// it deletes its track and file, and an insert committed after that would
+// leave a track with nothing to play. A removal before this check is caught
+// here; one after it fires a Remove event that finds the committed row. Only
+// for a new row: a promoted one was a user's track before this ingest, and
+// undoing that would take restoring its owner and file, so callers must not
+// remove a file a promotion may be reading (see the upload handler).
+func (s *Service) dropIfVanished(ctx context.Context, path string) bool {
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) || s.Library == nil {
+		return false
+	}
+	if err := s.Library.HardDeleteByPath(context.WithoutCancel(ctx), path); err != nil {
+		s.log().Warn("removing the track of a file deleted during its ingest failed", "path", path, "err", err)
+		return false
+	}
+	s.log().Info("file deleted during its ingest; its new track removed", "path", path)
+	return true
 }
 
 // IngestFile parses a single audio file and upserts everything as a global
@@ -360,6 +384,10 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 		s.recordErr(ctx, path, err)
 		return out
 	}
+	if inserted && replacedPath == "" && s.dropIfVanished(ctx, path) {
+		out.Skipped = true
+		return out
+	}
 
 	switch {
 	case inserted, dropPath == "":
@@ -379,6 +407,7 @@ func (s *Service) IngestFileAs(ctx context.Context, path string, ownerID *uuid.U
 
 	out.TrackID = trackID
 	out.Inserted = inserted
+	out.Promoted = replacedPath != ""
 	// Successful ingest clears any stale failure rows for this path so the
 	// errors list doesn't stay inflated after a fix (or a retry after a
 	// transient glitch).

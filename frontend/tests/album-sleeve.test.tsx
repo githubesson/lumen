@@ -69,9 +69,8 @@ it("links a credited artist to its page, keeping the library's tab and search", 
   expect(screen.getByRole("link", { name: "Band" }).getAttribute("href")).toBe(
     "/library?view=albums&q=rec&artist=ar-band",
   );
-  // No library page to open: plain text.
-  expect(screen.queryByRole("link", { name: "Guest" })).toBeNull();
-  expect(screen.getByText("Guest")).toBeTruthy();
+  // No library page to open: an artist search for the name.
+  expect(screen.getByRole("link", { name: "Guest" }).getAttribute("href")).toBe("/library?view=artists&q=Guest");
 });
 
 it("plays the list from its first playable track, or a random one with shuffle on", () => {

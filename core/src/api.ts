@@ -8,7 +8,7 @@ import {
   requestVoid,
 } from "./api-transport";
 import type { PageParams, RequestOptions, SearchOffsets } from "./api-transport";
-import type { LyricsResult, ReplayBucket, ReplayData } from "./api-media";
+import { markAlbumCoverChanged, type LyricsResult, type ReplayBucket, type ReplayData } from "./api-media";
 import type {
   AdminUser,
   Invite,
@@ -352,10 +352,11 @@ export const api = {
     request<TrackListItem[]>(`/api/artists/${pathID(id)}/tracks`, options),
   getTrack: (id: string, options: RequestOptions = {}) =>
     request<TrackDetail>(`/api/tracks/${trackPathID(id)}`, options),
-  updateTrack: (id: string, patch: TrackPatch) =>
+  updateTrack: (id: string, patch: TrackPatch, options: RequestOptions = {}) =>
     request<TrackDetail>(`/api/tracks/${trackPathID(id)}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
+      ...options,
     }),
   // Delete a track from the caller's personal library. Owner-scoped on the
   // server: only the user's own personal uploads can be removed (others 404).
@@ -386,14 +387,28 @@ export const api = {
   // Replace an album's cover art. `file` is a browser File (web) or the
   // RN-style { uri, name, type } part React Native's FormData accepts.
   // Admin-only on the server; returns the updated album.
-  setAlbumCover: (id: string, file: CoverUploadFile) => {
+  setAlbumCover: async (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
     const fd = new FormData();
     fd.append("file", file as unknown as Blob);
-    return request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd });
+    const album = await request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd, ...options });
+    markAlbumCoverChanged(id);
+    return album;
+  },
+  // The uploader's own cover for their personal track (on its album, seen
+  // only by them). The track needs an album; returns the updated track.
+  setTrackCover: async (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
+    const fd = new FormData();
+    fd.append("file", file as unknown as Blob);
+    const track = await request<TrackDetail>(`/api/tracks/${trackPathID(id)}/cover`, { method: "PUT", body: fd, ...options });
+    if (track.album_id) markAlbumCoverChanged(track.album_id);
+    return track;
   },
   // Clear an album's cover art, reverting it to the placeholder. Admin only.
-  removeAlbumCover: (id: string) =>
-    request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "DELETE" }),
+  removeAlbumCover: async (id: string) => {
+    const album = await request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "DELETE" });
+    markAlbumCoverChanged(id);
+    return album;
+  },
   recordPlay: (id: string, completion: number) =>
     requestVoid(`/api/tracks/${trackPathID(id)}/play`, {
       method: "POST",
@@ -431,13 +446,14 @@ export const api = {
 
   // Files are browser `File`s or React Native `{ uri, name, type }` parts.
   // `append`, not `set`: React Native's FormData has no `set`.
-  uploadMusic: (files: CoverUploadFile[], scope: "personal" | "global") => {
+  uploadMusic: (files: CoverUploadFile[], scope: "personal" | "global", options: RequestOptions = {}) => {
     const fd = new FormData();
     fd.append("scope", scope);
     for (const f of files) fd.append("files", f as unknown as Blob);
     return request<UploadResult[]>("/api/library/upload", {
       method: "POST",
       body: fd,
+      ...options,
     });
   },
 
@@ -1155,6 +1171,13 @@ export interface Artist {
 export interface UploadResult {
   file: string;
   inserted: boolean;
+  /**
+   * A shared upload that took over someone's personal copy of the same
+   * audio: inserted into the shared library, but not a new track, so undoing
+   * the upload must leave it. Missing from servers older than the field: a
+   * shared upload's result there can't be told apart, so it isn't undone.
+   */
+  promoted?: boolean;
   dedup?: boolean;
   skipped?: boolean;
   error?: string;

@@ -1,19 +1,19 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Album } from "../src/api";
 import Home from "../src/pages/Home";
 import { clearResourceCache } from "../src/lib/resourceCache";
 import { stubBoardLayout } from "./board-fill-layout";
 
 const mock = vi.hoisted(() => ({
-  recent: vi.fn(), tracks: vi.fn(), getAlbum: vi.fn(), replay: vi.fn(), albumTracks: vi.fn(), play: vi.fn(),
+  recent: vi.fn(), tracks: vi.fn(), getAlbum: vi.fn(), replay: vi.fn(), albumTracks: vi.fn(), play: vi.fn(), getTrack: vi.fn(),
 }));
 vi.mock("../../core/src/api", async (original) => ({
   ...await original<typeof import("../../core/src/api")>(),
   api: {
     listRecent: mock.recent, listTracks: mock.tracks, getAlbum: mock.getAlbum, getReplay: mock.replay,
-    listAlbumTracks: mock.albumTracks,
+    listAlbumTracks: mock.albumTracks, getTrack: mock.getTrack,
   },
 }));
 vi.mock("../src/context/Auth", () => ({ useAuth: () => ({ me: { id: "user", username: "Listener" } }) }));
@@ -158,4 +158,21 @@ it("keeps the hero in place and offers a retry when the album's tracks don't loa
   } finally {
     restore();
   }
+});
+
+it("opens the album from the hero's title and cover, and the artist from their name", async () => {
+  // A recently-played row without its album id: the detail fills it in.
+  mock.recent.mockResolvedValue([{ id: "t9", title: "Song", album_title: "Mafia Bidness", artist: "Shoreline Mafia", duration_ms: 1, source: "local" }]);
+  mock.getTrack.mockResolvedValue({ id: "t9", title: "Song", album_id: "al-9", artists: [{ id: "ar-5", name: "Shoreline Mafia", role: "primary" }] });
+  let at = "";
+  function Where() { const l = useLocation(); at = l.pathname + l.search; return null; }
+  render(<MemoryRouter><Home /><Routes><Route path="*" element={<Where />} /></Routes></MemoryRouter>);
+  await act(async () => {});
+  const hero = within(document.querySelector(".board-resume") as HTMLElement);
+  await act(async () => { fireEvent.click(hero.getByRole("link", { name: "Mafia Bidness" })); });
+  expect(at).toBe("/library?view=albums&album=al-9");
+  await act(async () => { fireEvent.click(hero.getByRole("link", { name: "Shoreline Mafia" })); });
+  expect(at).toBe("/library?view=artists&artist=ar-5");
+  await act(async () => { fireEvent.click(hero.getByRole("link", { name: "Go to Mafia Bidness" })); });
+  expect(at).toBe("/library?view=albums&album=al-9");
 });

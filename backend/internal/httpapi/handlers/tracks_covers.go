@@ -148,6 +148,54 @@ func (h *Tracks) PutAlbumCover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// PutTrackCover sets the caller's own cover art for a personal upload: it goes
+// on the track's album for that user only, never on the shared album row.
+// Same form as PutAlbumCover. Returns the updated track.
+func (h *Tracks) PutTrackCover(w http.ResponseWriter, r *http.Request) {
+	u, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+	ref, err := trackref.Parse(chi.URLParam(r, "id"))
+	if err != nil || ref.Source != trackref.SourceLocal {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	// Check ownership before anything reaches storage.
+	if t, err := h.Library.GetTrack(r.Context(), ref.LocalID, u.ID); err != nil || t.OwnerID == nil || *t.OwnerID != u.ID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	data, contentType, ok := readCoverUpload(w, r)
+	if !ok {
+		return
+	}
+	key, err := h.Ingest.StoreCoverImage(r.Context(), data, contentType)
+	if err != nil || key == "" {
+		h.log().Error("track cover: storing the uploaded image failed",
+			"track", ref.LocalID, "user", u.ID, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := h.Library.SetPersonalTrackCover(r.Context(), ref.LocalID, u.ID, key); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	h.log().Info("personal track cover set", "track", ref.LocalID, "user", u.ID, "key", key)
+	t, err := h.Library.GetTrack(r.Context(), ref.LocalID, u.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	favs, err := h.Library.FavoriteIDs(r.Context(), u.ID, []uuid.UUID{t.ID})
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	_, isFav := favs[t.ID]
+	writeJSON(w, http.StatusOK, makeTrackDetailResp(t, isFav, u.ID))
+}
+
 // readCoverUpload reads the single `file` part of a cover-upload form and
 // checks it is a real, supported image before it can reach storage. On
 // failure it has already written the error response.

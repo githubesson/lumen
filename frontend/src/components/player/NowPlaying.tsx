@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import { useInRouterContext } from "react-router-dom";
 import type { TrackListItem } from "@music-library/core";
+import { trackAlbumHref } from "../../lib/nowPlayingLinks";
+import { ArtistLinks, PageLink } from "../EntityLinks";
 import { trackCoverUrl } from "../../api";
 import { displayText } from "../../lib/format";
 import CoverArt from "../CoverArt";
@@ -13,6 +16,7 @@ export default function NowPlaying({
   error,
   errorPanel,
   onContextMenu,
+  links = true,
 }: {
   track: TrackListItem | null;
   title: string;
@@ -25,7 +29,10 @@ export default function NowPlaying({
   /** In the mini player the details open in its panel instead of a popover. */
   errorPanel?: MiniPanelToggle;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
+  /** Title, artists and album open their pages (off in the mini player). */
+  links?: boolean;
 }) {
+  const linked = useInRouterContext() && links && !!track && !error;
   const coverSrc = track ? trackCoverUrl(track) : null;
   // Held in state, as in DevicePickerButton: the popover reads them during
   // render.
@@ -52,7 +59,15 @@ export default function NowPlaying({
           forcePlaceholder={!track}
         />
         <div className="np-text">
-          <div className="np-title" title={title}>{title}</div>
+          <div className="np-title" title={title}>
+            {linked ? (
+              <PageLink label={`Go to the album of ${title}`} href={() => trackAlbumHref(track)}>
+                {title}
+              </PageLink>
+            ) : (
+              title
+            )}
+          </div>
           <div
             className={"np-artist" + (error ? " np-error" : "")}
             title={error ? undefined : artist}
@@ -85,7 +100,20 @@ export default function NowPlaying({
                 </button>
               )}
             </span>
-            {!error && artist}
+            {!error && !linked && artist}
+            {linked && (
+              <>
+                <ArtistLinks track={track} fallback="—" />
+                {track.album_title && (
+                  <>
+                    {" · "}
+                    <PageLink label={`Go to ${track.album_title}`} href={() => trackAlbumHref(track)}>
+                      {displayText(track.album_title)}
+                    </PageLink>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -99,3 +127,4 @@ export default function NowPlaying({
     </>
   );
 }
+

@@ -4,7 +4,7 @@ import type { Album, TrackDetail } from "../src/api";
 import { EditAlbumDialog } from "../src/components/edit/EditAlbumDialog";
 import { EditTrackDialog } from "../src/components/edit/EditTrackDialog";
 
-const mock = vi.hoisted(() => ({ updateAlbum: vi.fn(), getTrack: vi.fn(), updateTrack: vi.fn() }));
+const mock = vi.hoisted(() => ({ updateAlbum: vi.fn(), getTrack: vi.fn(), updateTrack: vi.fn(), setTrackCover: vi.fn() }));
 vi.mock("../../core/src/api", async (original) => ({
   ...(await original<typeof import("../../core/src/api")>()),
   api: mock,
@@ -68,4 +68,38 @@ it("loads the track into the form and sends only the edited fields", async () =>
   });
   expect(mock.updateTrack).toHaveBeenCalledWith("t1", { genre: "Jazz" });
   expect(onSaved).toHaveBeenCalledWith({ ...track, genre: "Jazz" });
+});
+
+it("keeps a retry honest when the details saved but the cover didn't", async () => {
+  const track: TrackDetail = {
+    id: "t1", source: "local", title: "A", album_title: "LP", duration_ms: 1, owned: true,
+    format: "flac", file_size: 1, artists: [{ id: "ar1", name: "Band", role: "primary" }],
+    has_cover: false, favorited: false,
+  };
+  mock.getTrack.mockResolvedValue(track);
+  mock.updateTrack.mockImplementation(async (_id: string, patch: { title?: string }) => ({ ...track, ...patch }));
+  mock.setTrackCover.mockRejectedValueOnce(new Error("not an image")).mockResolvedValue({ ...track, title: "A" });
+  const onSaved = vi.fn();
+  const onClose = vi.fn();
+  render(<EditTrackDialog open trackId="t1" onClose={onClose} onSaved={onSaved} />);
+  await waitFor(() => expect(screen.getByDisplayValue("A")).toBeTruthy());
+
+  fireEvent.change(screen.getByDisplayValue("A"), { target: { value: "B" } });
+  fireEvent.change(screen.getByLabelText("Cover art"), { target: { files: [new File(["x"], "bad.png")] } });
+  await act(async () => {
+    fireEvent.submit(screen.getByDisplayValue("B").closest("form")!);
+  });
+  // B went in, the cover didn't: the dialog stays, saying so, and the page hears of B.
+  expect(screen.getByText(/Details saved, but the cover art wasn't/)).toBeTruthy();
+  expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ title: "B" }));
+  expect(onClose).not.toHaveBeenCalled();
+
+  // Back to A with a good image: the title goes back too.
+  fireEvent.change(screen.getByDisplayValue("B"), { target: { value: "A" } });
+  fireEvent.change(screen.getByLabelText("Cover art"), { target: { files: [new File(["x"], "good.png")] } });
+  await act(async () => {
+    fireEvent.submit(screen.getByDisplayValue("A").closest("form")!);
+  });
+  expect(mock.updateTrack).toHaveBeenLastCalledWith("t1", { title: "A" });
+  expect(onClose).toHaveBeenCalled();
 });

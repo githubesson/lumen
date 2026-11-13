@@ -369,3 +369,85 @@ it("shuts the mini player's error panel when the failure clears", () => {
   rerender(<NowPlaying track={track} title="Song" artist="Artist · Album" error={null} errorPanel={panel(true)} />);
   expect(close).toHaveBeenCalled();
 });
+
+it("opens the album from the title and album, and each artist's page from their name", async () => {
+  const { MemoryRouter, Routes, Route, useLocation } = await import("react-router-dom");
+  const { api } = await import("../../core/src/api");
+  vi.spyOn(api, "getTrack").mockResolvedValue({
+    id: "t1", title: "The Sign", artists: [{ id: "a-nujabes", name: "Nujabes", role: "primary" }, { id: "a-pase", name: "Pase Rock", role: "featured" }],
+  } as never);
+  let at = "";
+  function Where() { at = useLocation().pathname + useLocation().search; return null; }
+  const song = { id: "t1", title: "The Sign", duration_ms: 1, source: "local" as const, album_id: "al-1", album_title: "Modal Soul", artist: "Nujabes, Pase Rock" };
+  render(
+    <MemoryRouter initialEntries={["/"]}>
+      <NowPlaying track={song} title="The Sign" artist="ignored" />
+      <Routes><Route path="*" element={<Where />} /></Routes>
+    </MemoryRouter>,
+  );
+  await act(async () => { screen.getByRole("link", { name: "The Sign" }).click(); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+  await act(async () => { screen.getByRole("link", { name: "Pase Rock" }).click(); });
+  expect(at).toBe("/library?view=artists&artist=a-pase");
+  await act(async () => { screen.getByRole("link", { name: "Modal Soul" }).click(); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+  // Links from the keyboard too: focusable, and Enter opens the page.
+  const nujabes = screen.getByRole("link", { name: "Nujabes" });
+  expect(nujabes.tabIndex).toBe(0);
+  await act(async () => { fireEvent.keyDown(nujabes, { key: "Enter" }); });
+  expect(at).toBe("/library?view=artists&artist=a-nujabes");
+});
+
+it("drops a slow artist lookup that a later link click overtook", async () => {
+  const { MemoryRouter, Routes, Route, useLocation } = await import("react-router-dom");
+  const { api } = await import("../../core/src/api");
+  let answer: (detail: unknown) => void = () => {};
+  vi.spyOn(api, "getTrack").mockReturnValue(new Promise((resolve) => { answer = resolve; }) as never);
+  let at = "";
+  function Where() { at = useLocation().pathname + useLocation().search; return null; }
+  const song = { id: "t1", title: "The Sign", duration_ms: 1, source: "local" as const, album_id: "al-1", album_title: "Modal Soul", artist: "Nujabes" };
+  render(
+    <MemoryRouter initialEntries={["/"]}>
+      <NowPlaying track={song} title="The Sign" artist="ignored" />
+      <Routes><Route path="*" element={<Where />} /></Routes>
+    </MemoryRouter>,
+  );
+  await act(async () => { screen.getByRole("link", { name: "Nujabes" }).click(); });
+  await act(async () => { screen.getByRole("link", { name: "Modal Soul" }).click(); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+  // The artist's detail arrives late: the album, opened since, stays.
+  await act(async () => { answer({ id: "t1", title: "The Sign", artists: [{ id: "a-nujabes", name: "Nujabes", role: "primary" }] }); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+});
+
+it("drops a pending lookup when its link goes away or the page changes, even back to the same one", async () => {
+  const { MemoryRouter, Routes, Route, useLocation, useNavigate } = await import("react-router-dom");
+  const { api } = await import("../../core/src/api");
+  const answers: ((detail: unknown) => void)[] = [];
+  vi.spyOn(api, "getTrack").mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }) as never);
+  const detail = { id: "t1", title: "The Sign", artists: [{ id: "a-nujabes", name: "Nujabes", role: "primary" }] };
+  let at = "";
+  let go: (to: string) => void = () => {};
+  function Where() { at = useLocation().pathname + useLocation().search; go = useNavigate(); return null; }
+  const song = { id: "t1", title: "The Sign", duration_ms: 1, source: "local" as const, album_id: "al-1", album_title: "Modal Soul", artist: "Nujabes" };
+  const view = (error: string | null) => (
+    <MemoryRouter initialEntries={["/"]}>
+      <NowPlaying track={song} title="The Sign" artist="ignored" error={error} />
+      <Routes><Route path="*" element={<Where />} /></Routes>
+    </MemoryRouter>
+  );
+  const { rerender } = render(view(null));
+
+  // Away and back while the lookup is out: the same URL, but not the same visit.
+  await act(async () => { screen.getByRole("link", { name: "Nujabes" }).click(); });
+  await act(async () => { go("/library"); });
+  await act(async () => { go("/"); });
+  await act(async () => { answers[0](detail); });
+  expect(at).toBe("/");
+
+  // A playback failure takes the links away while the lookup is out.
+  await act(async () => { screen.getByRole("link", { name: "Nujabes" }).click(); });
+  rerender(view("Playback failed"));
+  await act(async () => { answers[1](detail); });
+  expect(at).toBe("/");
+});
