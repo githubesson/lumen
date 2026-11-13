@@ -6,7 +6,8 @@
 //! footer's "Cancel upload" closes the connection of the request in flight
 //! (the server undoes what it had added, if it hadn't finished) and deletes
 //! what the earlier requests added; nothing else closes the dialog while an
-//! upload runs, and nothing in it changes.
+//! upload runs (but the session ending, which stops it: `session_ended`),
+//! and nothing in it changes.
 //!
 //! Drops land anywhere in the window while the dialog is open. Rune's open
 //! dialog picks one file at a time (the web input takes several); "Choose
@@ -24,7 +25,7 @@ use rune::{Color, Cursor, Cx, El, GrowthSpec, TextEdit, col, el, row, text};
 use super::edit::{grid_field, grid_row};
 use super::upload_edits::{self, Edits};
 use super::upload_files::{LeftOut, Picked, collect_files};
-use crate::api::{ApiResult, Cancel, UploadResult};
+use crate::api::{ApiResult, Cancel, Client, UploadResult};
 use crate::app::App;
 use crate::format::pluralize;
 use crate::theme::Theme;
@@ -128,6 +129,20 @@ pub fn close(app: &mut App) {
     if !s.busy && s.scanning > 0 {
         s.stop_walks();
     }
+}
+
+/// The session ended (a sign-out, another server): an upload under way
+/// stops, closing its request in flight, and sends nothing more (what its
+/// finished requests added stays: taking it back needs the session); folder
+/// walks stop; the dialog shuts and the next session starts it afresh.
+pub fn session_ended(app: &mut App) {
+    app.ui.upload_open = false;
+    let s = &mut app.overlays.upload;
+    if let Some(c) = &s.cancel {
+        c.cancel();
+    }
+    s.walks.cancel();
+    *s = State { session: s.session + 1, ..Default::default() };
 }
 
 /// Escape, the backdrop and the close button: nothing while an upload runs
@@ -281,12 +296,20 @@ struct Run {
     /// Albums whose cover was tried, across batches (`coveredAlbums`).
     covered: Arc<Mutex<HashSet<String>>>,
     cancel: Cancel,
+    /// The client for the session the upload started in: once that ends
+    /// (a sign-out, a sign-in), none of its requests go out. Over the
+    /// shared connections, for taking back what a cancelled upload added.
+    client: Client,
+    /// The same over connections of its own, which the cancel closes, kept
+    /// open from one batch to the next: for the batches and their edits.
+    sending: Client,
 }
 
 fn submit(app: &mut App) {
     let admin = is_admin(app);
+    let Some(client) = app.client.as_ref().map(Client::for_session) else { return };
     let s = &mut app.overlays.upload;
-    if s.files.is_empty() || s.busy || s.scanning > 0 || app.client.is_none() {
+    if s.files.is_empty() || s.busy || s.scanning > 0 {
         return;
     }
     if s.editing
@@ -313,6 +336,8 @@ fn submit(app: &mut App) {
         scope: upload_scope(admin, s.scope.unwrap_or(default_scope(admin))),
         edits: Arc::new(typed_edits(s)),
         covered: Arc::default(),
+        sending: client.with_cancel(&cancel),
+        client,
         cancel,
     };
     send_batch(app, run);
@@ -321,7 +346,7 @@ fn submit(app: &mut App) {
 /// Send the next batch, then the one after, collecting results.
 fn send_batch(app: &mut App, mut run: Run) {
     if run.cancel.is_cancelled() {
-        return take_back(app, run.uploaded, run.scope);
+        return take_back(app, run.client, run.uploaded, run.scope);
     }
     if run.next >= run.batches.len() {
         let added = upload_added_any(&run.uploaded);
@@ -334,17 +359,11 @@ fn send_batch(app: &mut App, mut run: Run) {
         }
         return;
     }
-    let Some(client) = app.client.clone() else {
-        return app.overlays.upload.finish();
-    };
     let session = app.overlays.upload.session;
     let files = run.batches[run.next].clone();
-    let (cancel, edits, scope, covered) = (run.cancel.clone(), run.edits.clone(), run.scope, run.covered.clone());
+    let (client, cancel, edits, scope, covered) = (run.sending.clone(), run.cancel.clone(), run.edits.clone(), run.scope, run.covered.clone());
     app.net.run(
         move || -> ApiResult<Vec<UploadResult>> {
-            // One set of connections for the batch and its edits, which the
-            // cancel closes.
-            let client = client.with_cancel(&cancel);
             let mut results = wait_out_rate_limit(&cancel, || crate::api::upload::upload_music(&client, &files, scope, &cancel))?;
             upload_edits::apply(&client, &files, &mut results, &edits, scope, &cancel, &covered);
             Ok(results)
@@ -360,7 +379,7 @@ fn send_batch(app: &mut App, mut run: Run) {
                     run.next += 1;
                     send_batch(app, run);
                 }
-                Err(_) if run.cancel.is_cancelled() => take_back(app, run.uploaded, run.scope),
+                Err(_) if run.cancel.is_cancelled() => take_back(app, run.client, run.uploaded, run.scope),
                 Err(e) => {
                     let message = upload_error_message(&e);
                     let s = &mut app.overlays.upload;
@@ -397,15 +416,9 @@ const CANCEL_SETTLE_SHARED: Duration = Duration::from_secs(30);
 
 /// A cancelled upload: take back what its finished requests added (the
 /// request in flight the server undoes itself), then say how that went.
-fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
+fn take_back(app: &mut App, client: Client, uploaded: Vec<UploadResult>, scope: Scope) {
     let cleanup = cancel_cleanup(&uploaded, scope);
     let added = cleanup.added;
-    let Some(client) = app.client.clone() else {
-        let s = &mut app.overlays.upload;
-        s.cancel_note = Some(upload_cancel_note(added, 0));
-        s.finish();
-        return settle(app, scope);
-    };
     let session = app.overlays.upload.session;
     app.net.run(
         move || {
@@ -432,16 +445,22 @@ fn take_back(app: &mut App, uploaded: Vec<UploadResult>, scope: Scope) {
 
 /// The library after a cancel: a batch the server finished as the cancel
 /// went out never reached `uploaded`, and its tracks stay, so it shows them
-/// rather than looking unchanged. Again a moment later: the server undoes
-/// the request in flight only once it notices the closed connection, so a
-/// reload right away can still list what it removes; and for a shared
-/// upload once more, after the file it was reading (a long one can take
-/// past that).
+/// rather than looking unchanged. Again later ([`settle_later`]).
 fn settle(app: &mut App, scope: Scope) {
     crate::pages::library_changed(app);
-    app.net.after(CANCEL_SETTLE, crate::pages::library_changed);
+    settle_later(app, scope);
+}
+
+/// The server undoes the request in flight only once it notices the closed
+/// connection, so a reload right away can still list what it removes: the
+/// lists read again a moment later, and for a shared upload once more,
+/// after the file it was reading (a long one can take past that). By then
+/// the dialog may be long shut, so they read in place, leaving a list
+/// scrolled since where it is.
+fn settle_later(app: &mut App, scope: Scope) {
+    app.net.after(CANCEL_SETTLE, crate::pages::library_settled);
     if scope == Scope::Global {
-        app.net.after(CANCEL_SETTLE_SHARED, crate::pages::library_changed);
+        app.net.after(CANCEL_SETTLE_SHARED, crate::pages::library_settled);
     }
 }
 
@@ -825,6 +844,126 @@ mod tests {
         assert!(!u.busy && u.results.is_none());
         // At once and once the server has undone the request in flight.
         assert_eq!(reloads(&s), 2);
+    }
+
+    /// A server that keeps connections open and answers every request with
+    /// `[]`: the client, and how many connections it took.
+    fn keep_alive_server() -> (crate::api::Client, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{BufRead, Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let connections = Arc::new(AtomicUsize::new(0));
+        let count = connections.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                count.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut stream = stream;
+                    loop {
+                        let mut head = String::new();
+                        loop {
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            if line == "\r\n" {
+                                break;
+                            }
+                            head.push_str(&line.to_ascii_lowercase());
+                        }
+                        let len: usize = head.lines().find_map(|l| l.strip_prefix("content-length:")).map_or(0, |v| v.trim().parse().unwrap());
+                        if head.contains("expect: 100-continue") {
+                            stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+                        }
+                        reader.by_ref().take(len as u64).read_to_end(&mut Vec::new()).unwrap();
+                        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n[]").unwrap();
+                    }
+                });
+            }
+        });
+        (crate::api::Client::new(&base, None), connections)
+    }
+
+    #[test]
+    fn an_uploads_batches_go_over_one_connection() {
+        let (client, connections) = keep_alive_server();
+        let mut app = App::for_tests(Some(client));
+        // Files of unknown size go one to a batch.
+        for name in ["a.mp3", "b.mp3", "c.mp3"] {
+            let path = crate::api::testing::temp_path(&format!("upload-batches-{name}"));
+            std::fs::write(&path, b"ID3audio").unwrap();
+            app.overlays.upload.files.push(Picked { display: name.into(), size: None, key: path.clone(), path });
+        }
+        submit(&mut app);
+        while crate::net::Net::drain(&mut app) {}
+        let u = &app.overlays.upload;
+        assert!(!u.busy && u.error.is_none() && u.results.is_some());
+        assert_eq!(u.progress, 3);
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn signing_out_stops_an_upload_and_sends_nothing_more() {
+        let s = server();
+        let mut app = App::for_tests(Some(s.client()));
+        open(&mut app);
+        for name in ["a.mp3", "b.mp3"] {
+            let path = crate::api::testing::temp_path(&format!("upload-signout-{name}"));
+            std::fs::write(&path, b"ID3audio").unwrap();
+            app.overlays.upload.files.push(Picked { display: name.into(), size: None, key: path.clone(), path });
+        }
+        // The first of two batches goes; its answer waits for the drain.
+        submit(&mut app);
+        let cancel = app.overlays.upload.cancel.clone().unwrap();
+        app.signed_out();
+        assert!(cancel.is_cancelled());
+        let u = &app.overlays.upload;
+        assert!(!app.ui.upload_open && !u.busy && u.files.is_empty() && u.results.is_none() && u.cancel_note.is_none());
+        while crate::net::Net::drain(&mut app) {}
+        let sent: Vec<(String, String)> = s.requests().into_iter().filter(|r| r.path.starts_with("/api/library/upload") || r.method == "DELETE").map(|r| (r.method, r.path)).collect();
+        assert_eq!(sent, [("POST".to_string(), "/api/library/upload".to_string())]);
+        assert!(!app.overlays.upload.busy && app.overlays.upload.results.is_none());
+    }
+
+    /// A library of 250 tracks, paged as `/api/tracks` pages them.
+    fn library_server() -> MockServer {
+        MockServer::with_handler(|req| {
+            if !req.path.starts_with("/api/tracks") {
+                return Res::json("[]");
+            }
+            let param = |k: &str| {
+                req.path.split(['?', '&']).find_map(|kv| kv.strip_prefix(k)?.strip_prefix('=')?.parse::<usize>().ok())
+            };
+            let (limit, offset) = (param("limit").unwrap_or(100), param("offset").unwrap_or(0));
+            let rows: Vec<String> = (offset..(offset + limit).min(250)).map(|i| format!(r#"{{"id":"t{i}","title":"T{i}"}}"#)).collect();
+            Res::json(&format!("[{}]", rows.join(","))).header("X-Total-Count", "250")
+        })
+    }
+
+    /// The reloads after a cancel's own come when the user may have scrolled
+    /// on: they read again the rows shown, in place.
+    #[test]
+    fn a_settling_cancel_rereads_the_library_where_it_was_scrolled() {
+        let s = library_server();
+        let mut app = App::for_tests(Some(s.client()));
+        app.navigate(crate::route::Location::parse("/library"));
+        while crate::net::Net::drain(&mut app) {}
+        crate::pages::library::paging::load_more(&mut app, |a| &mut a.pages.library.tracks);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(app.pages.library.tracks.len(), Some(200));
+        let before = s.requests().len();
+        settle_later(&mut app, Scope::Personal);
+        while crate::net::Net::drain(&mut app) {}
+        let reads: Vec<String> = s.requests()[before..].iter().map(|r| r.path.clone()).collect();
+        assert_eq!(reads, ["/api/tracks?limit=200&offset=0&sort=recent"]);
+        let tracks = &app.pages.library.tracks;
+        assert_eq!((tracks.len(), tracks.has_more, tracks.total), (Some(200), true, Some(250)));
+        // The cancel's own reload, right away, starts the list over.
+        crate::pages::library_changed(&mut app);
+        while crate::net::Net::drain(&mut app) {}
+        assert_eq!(app.pages.library.tracks.len(), Some(100));
     }
 
     #[test]

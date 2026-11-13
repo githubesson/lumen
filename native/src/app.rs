@@ -317,15 +317,20 @@ impl App {
     /// what its session showed goes, and the app connects to `url`.
     pub fn switch_server(&mut self, url: &str) {
         if let Some(old) = &self.client {
+            // Its work still out (an upload) goes no further, and a late 401
+            // from it can't end the new server's session.
+            old.advance_auth_generation();
             old.clear_cookies();
         }
         self.forget_session("/");
         self.connect(url);
     }
 
-    /// Drop what a session showed: the player's queue, the shell's data,
-    /// every page's state, and the history (which starts again at `at`).
+    /// Drop what a session showed: an upload under way, the player's queue,
+    /// the shell's data, every page's state, and the history (which starts
+    /// again at `at`).
     fn forget_session(&mut self, at: &str) {
+        crate::overlays::upload::session_ended(self);
         crate::ui::entity_links::overtake(self);
         self.player.stop();
         self.playlists = Res::default();

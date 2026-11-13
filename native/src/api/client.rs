@@ -149,8 +149,8 @@ pub enum Body {
     None,
     Json(serde_json::Value),
     /// A body read as it is sent (multipart uploads of files on disk), with
-    /// its exact length.
-    Stream { content_type: String, len: u64, reader: Box<dyn Read + Send> },
+    /// its exact length; `expect_continue` asks the server before sending it.
+    Stream { content_type: String, len: u64, reader: Box<dyn Read + Send>, expect_continue: bool },
 }
 
 /// When a 401 signs the user out (`notifyUnauthorized`).
@@ -198,6 +198,9 @@ pub struct Client {
     /// Set on a client [`Client::with_cancel`] made: the connections its
     /// requests go over instead of the shared ones.
     own: Option<Arc<Own>>,
+    /// Set on a client [`Client::for_session`] made: the auth generation
+    /// its requests belong to.
+    session: Option<u64>,
 }
 
 /// A [`Client::with_cancel`] client's own agent, shut down by its cancel.
@@ -219,6 +222,11 @@ struct Inner {
 }
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a [`Client::with_cancel`] request may take to resolve the
+/// server's name, and then to connect. A cancel can't cut either short, so
+/// it waits them out.
+const CANCELLABLE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl Client {
     /// A client for `base` (`https://host`, no trailing slash needed). The
@@ -252,6 +260,7 @@ impl Client {
                 on_unauthorized: Mutex::new(None),
             }),
             own: None,
+            session: None,
         }
     }
 
@@ -261,8 +270,10 @@ impl Client {
     /// aborted at once, and the server sees the client leave, as it sees a
     /// browser's abort (an upload in flight is undone). Each request carries
     /// the session as it stands, and cookies an answer sets land in the
-    /// shared jar. Resolving and connecting can't be interrupted; they give
-    /// up after [`REQUEST_TIMEOUT`] here.
+    /// shared jar. Resolving and connecting can't be interrupted: a cancel
+    /// waits for them, which give up after [`CANCELLABLE_CONNECT_TIMEOUT`]
+    /// each (one after the other). Its connections stay open between its
+    /// requests, so make one for all of the work, not one per request.
     pub fn with_cancel(&self, cancel: &Cancel) -> Client {
         if let Some(own) = &self.own
             && own.cancel.same(cancel)
@@ -270,8 +281,8 @@ impl Client {
             return self.clone();
         }
         let agent: ureq::Agent = crate::net::agent_config()
-            .timeout_resolve(Some(REQUEST_TIMEOUT))
-            .timeout_connect(Some(REQUEST_TIMEOUT))
+            .timeout_resolve(Some(CANCELLABLE_CONNECT_TIMEOUT))
+            .timeout_connect(Some(CANCELLABLE_CONNECT_TIMEOUT))
             .build()
             .into();
         let own = Arc::new(Own { agent, cancel: cancel.clone() });
@@ -282,7 +293,16 @@ impl Client {
                 own.agent.clone().shutdown();
             }
         });
-        Client { inner: self.inner.clone(), own: Some(own) }
+        Client { inner: self.inner.clone(), own: Some(own), session: self.session }
+    }
+
+    /// This client for one session's work (an upload that runs on for
+    /// minutes): once the session changes, by a sign-out or a sign-in, its
+    /// requests fail as aborted rather than go out with whatever session
+    /// the jar holds by then. A [`Client::with_cancel`] made from it is
+    /// bound the same way.
+    pub fn for_session(&self) -> Client {
+        Client { session: Some(self.inner.auth_generation.load(Ordering::Acquire)), ..self.clone() }
     }
 
     pub fn base(&self) -> &str {
@@ -370,6 +390,9 @@ impl Client {
         behavior: &Behavior,
     ) -> ApiResult<Reply> {
         let generation = self.inner.auth_generation.load(Ordering::Acquire);
+        if self.session.is_some_and(|s| s != generation) {
+            return Err(ApiError::aborted());
+        }
         let url = self.url(path);
         let (agent, cancel) = match &self.own {
             Some(own) => {
@@ -427,18 +450,24 @@ impl Client {
                     // closes the connection on the unread rest, and an
                     // answer written mid-body would be lost to that. Asked,
                     // it answers before the body goes; one that doesn't
-                    // reply to the ask gets the body after a second.
-                    Body::Stream { content_type, len, reader } => r
-                        .header("Content-Type", content_type)
-                        .header("Content-Length", len.to_string())
-                        .header("Expect", "100-continue")
-                        .send(ureq::SendBody::from_owned_reader(reader)),
+                    // reply to the ask gets the body after a second, and
+                    // one that refuses it (417) gets it sent again without
+                    // (`api::upload`).
+                    Body::Stream { content_type, len, reader, expect_continue } => {
+                        let mut r = r.header("Content-Type", content_type).header("Content-Length", len.to_string());
+                        if expect_continue {
+                            r = r.header("Expect", "100-continue");
+                        }
+                        r.send(ureq::SendBody::from_owned_reader(reader))
+                    }
                 }
             }
         }
         .map_err(|e| cut(transport_error(&e)))?;
 
-        if self.own.is_some() {
+        // An answer to a request sent before the session changed sets
+        // nothing: its clearing `Set-Cookie` would end the new session.
+        if self.own.is_some() && generation == self.inner.auth_generation.load(Ordering::Acquire) {
             self.keep_cookies(&response);
         }
         self.save_jar(false);
@@ -892,6 +921,50 @@ mod tests {
         assert_eq!(server.requests().len(), 3);
         // The shared connections stay up.
         shared.send("GET", "/api/four", Body::None).unwrap();
+    }
+
+    #[test]
+    fn a_cancellable_answer_from_before_the_session_changed_sets_no_cookies() {
+        use crate::api::testing::{MockServer, Res};
+        let shared: Arc<Mutex<Option<Client>>> = Arc::default();
+        let handle = shared.clone();
+        let server = MockServer::with_handler(move |req| match req.path.as_str() {
+            "/api/old" => Res::json("{}").header("Set-Cookie", "session=old; Path=/"),
+            "/api/new" => Res::json("{}").header("Set-Cookie", "session=new; Path=/"),
+            // A sign-out and a sign-in while this request waits on the
+            // server, which then clears the session it was sent with.
+            _ => {
+                let shared = handle.lock().unwrap().clone().unwrap();
+                shared.send("GET", "/api/new", Body::None).unwrap();
+                shared.advance_auth_generation();
+                Res::json("{}").header("Set-Cookie", "session=; Max-Age=0; Path=/")
+            }
+        });
+        let client = server.client();
+        *shared.lock().unwrap() = Some(client.clone());
+        client.send("GET", "/api/old", Body::None).unwrap();
+        client.with_cancel(&Cancel::new()).send("GET", "/api/logout", Body::None).unwrap();
+        assert_eq!(client.cookie_header().as_deref(), Some("session=new"));
+    }
+
+    #[test]
+    fn a_client_for_a_session_sends_nothing_once_it_changes() {
+        use crate::api::testing::{MockServer, Res};
+        let server = MockServer::start(vec![Res::json("{}")]);
+        let shared = server.client();
+        let bound = shared.for_session();
+        let own = bound.with_cancel(&Cancel::new());
+        bound.send("GET", "/api/one", Body::None).unwrap();
+        own.send("GET", "/api/two", Body::None).unwrap();
+        shared.advance_auth_generation();
+        for c in [&bound, &own] {
+            assert!(c.send("GET", "/api/three", Body::None).err().is_some_and(|e| e.is_aborted()));
+        }
+        assert_eq!(server.requests().len(), 2);
+        // The new session's work goes ahead.
+        shared.send("GET", "/api/four", Body::None).unwrap();
+        shared.for_session().send("GET", "/api/five", Body::None).unwrap();
+        assert_eq!(server.requests().len(), 4);
     }
 
     #[test]
