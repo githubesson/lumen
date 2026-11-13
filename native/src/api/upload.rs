@@ -374,6 +374,41 @@ mod tests {
         assert_eq!(server.requests().len(), 1);
     }
 
+    /// A server for one request: reads its head and hands it over with the
+    /// connection.
+    fn one_request(then: impl FnOnce(std::net::TcpStream, String) + Send + 'static) -> Client {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = Vec::new();
+            let mut byte = [0];
+            while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                head.push(byte[0]);
+            }
+            then(stream, String::from_utf8_lossy(&head).to_lowercase());
+        });
+        Client::new(&base, None)
+    }
+
+    #[test]
+    fn a_rate_limit_answered_before_the_body_is_read_isnt_lost() {
+        use std::io::Write;
+        // As Go answers from middleware: no 100 Continue, and the body left unread.
+        let client = one_request(|mut stream, head| {
+            assert!(head.contains("expect: 100-continue"), "{head}");
+            let _ = stream.write_all(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 7\r\nContent-Type: text/plain\r\nContent-Length: 19\r\nConnection: close\r\n\r\nrate limit exceeded",
+            );
+            let _ = stream.flush();
+        });
+        let path = temp_file("limited.mp3", &vec![7u8; 8 << 20]);
+        let err = upload_music(&client, &[path.clone()], crate::core::upload::UploadScope::Personal, &crate::api::Cancel::new()).unwrap_err();
+        let _ = std::fs::remove_file(path);
+        assert!(err.has_status(429), "{err:?}");
+        assert_eq!((err.message.as_str(), err.retry_after_seconds), ("rate limit exceeded", Some(7)));
+    }
+
     #[test]
     fn a_file_that_got_shorter_fails_the_body_instead_of_hanging() {
         let path = temp_file("shrinks.mp3", b"ID3audio-and-more");

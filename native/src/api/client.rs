@@ -373,9 +373,16 @@ impl Client {
                     Body::Json(v) => {
                         r.header("Content-Type", "application/json").send(v.to_string().into_bytes())
                     }
+                    // A file body asks first: a server that answers
+                    // without reading it (a rate limit, a proxy's size cap)
+                    // closes the connection on the unread rest, and an
+                    // answer written mid-body would be lost to that. Asked,
+                    // it answers before the body goes; one that doesn't
+                    // reply to the ask gets the body after a second.
                     Body::Stream { content_type, len, reader } => r
                         .header("Content-Type", content_type)
                         .header("Content-Length", len.to_string())
+                        .header("Expect", "100-continue")
                         .send(ureq::SendBody::from_owned_reader(reader)),
                 }
             }
