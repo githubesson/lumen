@@ -182,7 +182,7 @@ impl Read for SegmentReader {
                 match self.segs.pop_front() {
                     None => return Ok(0),
                     Some(Segment::Bytes(b)) => self.current = Some(Box::new(io::Cursor::new(b))),
-                    Some(Segment::File(p, len)) => self.current = Some(Box::new(File::open(p)?.take(len))),
+                    Some(Segment::File(p, len)) => self.current = Some(Box::new(WholeFile(File::open(p)?.take(len)))),
                 }
             }
             let n = self.current.as_mut().map_or(Ok(0), |r| r.read(buf))?;
@@ -196,6 +196,21 @@ impl Read for SegmentReader {
             }
             return Ok(n);
         }
+    }
+}
+
+/// A file part, read for exactly the length the body was measured with: a
+/// file that got shorter since fails the body, where stopping short of its
+/// `Content-Length` would leave the server waiting for the rest for good.
+struct WholeFile(io::Take<File>);
+
+impl Read for WholeFile {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.0.read(buf)?;
+        if n == 0 && !buf.is_empty() && self.0.limit() > 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "a file got shorter while it was being sent"));
+        }
+        Ok(n)
     }
 }
 
@@ -357,6 +372,28 @@ mod tests {
         assert!(err.is_aborted());
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(server.requests().len(), 1);
+    }
+
+    #[test]
+    fn a_file_that_got_shorter_fails_the_body_instead_of_hanging() {
+        let path = temp_file("shrinks.mp3", b"ID3audio-and-more");
+        let form = Multipart::new(vec![Part::text("scope", "personal"), Part::file("files", &path)]);
+        let Body::Stream { mut reader, .. } = form.into_body(None).unwrap() else { panic!("a form streams") };
+        std::fs::write(&path, b"ID3").unwrap();
+        let err = reader.read_to_end(&mut Vec::new()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        // Sent, the request fails rather than waiting on the server for good.
+        std::fs::write(&path, b"ID3audio-and-more").unwrap();
+        let server = MockServer::start(vec![Res::json("[]")]);
+        let body = Multipart::new(vec![Part::file("files", &path)]).into_body(None).unwrap();
+        std::fs::write(&path, b"ID3").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let client = server.client();
+        std::thread::spawn(move || {
+            let _ = tx.send(client.request("POST", "/api/library/upload", body, &[], &Default::default()).map(|_| ()));
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("the request ended");
+        assert_eq!(result.unwrap_err().kind, crate::api::ErrorKind::Network);
     }
 
     // api.test.ts: form upload fetch
