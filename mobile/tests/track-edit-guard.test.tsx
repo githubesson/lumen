@@ -76,10 +76,17 @@ it("explains instead of offering a form for a TIDAL track", () => {
   expect(html).not.toContain("Save changes");
 });
 
-it("explains instead of offering a form to a non-admin", () => {
+it("explains instead of offering a form to a non-admin who didn't upload it", () => {
   mock.role = "user";
   mock.track = detail({});
   const html = renderToStaticMarkup(<TrackEditScreen />);
-  expect(html).toContain("Only admins can edit track metadata.");
+  expect(html).toContain("Only admins, or the person who uploaded it, can edit this track.");
   expect(html).not.toContain("Save changes");
+});
+
+it("shows the form to the uploader of a personal track", () => {
+  mock.role = "user";
+  mock.track = detail({ owned: true });
+  const html = renderToStaticMarkup(<TrackEditScreen />);
+  expect(html).toContain("Save changes");
 });

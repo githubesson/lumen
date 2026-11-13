@@ -45,8 +45,9 @@ export default function TrackEditScreen() {
   });
 
   const track = trackQuery.data;
-  // The server only edits library tracks, and only for admins; a TIDAL track
-  // reached by a stale link or deep link gets an explanation, not a form.
+  // The server only edits library tracks, for admins or the uploader of a
+  // personal track; a TIDAL track reached by a stale link or deep link gets
+  // an explanation, not a form.
   const canEdit = track
     ? trackActions(track, { isAdmin: me?.role === "admin" }).editMetadata
     : false;
@@ -72,7 +73,7 @@ export default function TrackEditScreen() {
           fill
           message={
             isLocalTrack(track)
-              ? "Only admins can edit track metadata."
+              ? "Only admins, or the person who uploaded it, can edit this track."
               : "Only tracks in the library can be edited. This one streams from TIDAL."
           }
         />
