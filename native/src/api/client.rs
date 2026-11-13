@@ -195,6 +195,15 @@ type UnauthorizedHandler = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<Inner>,
+    /// Set on a client [`Client::with_cancel`] made: the connections its
+    /// requests go over instead of the shared ones.
+    own: Option<Arc<Own>>,
+}
+
+/// A [`Client::with_cancel`] client's own agent, shut down by its cancel.
+struct Own {
+    agent: ureq::Agent,
+    cancel: Cancel,
 }
 
 struct Inner {
@@ -242,7 +251,38 @@ impl Client {
                 unauthorized: AtomicBool::new(false),
                 on_unauthorized: Mutex::new(None),
             }),
+            own: None,
         }
+    }
+
+    /// This client for work `cancel` stops, as `fetch` with an `AbortSignal`:
+    /// its requests go over connections of their own, and cancelling closes
+    /// them, so a request waiting on the server (or still sending) fails as
+    /// aborted at once, and the server sees the client leave, as it sees a
+    /// browser's abort (an upload in flight is undone). Each request carries
+    /// the session as it stands, and cookies an answer sets land in the
+    /// shared jar. Resolving and connecting can't be interrupted; they give
+    /// up after [`REQUEST_TIMEOUT`] here.
+    pub fn with_cancel(&self, cancel: &Cancel) -> Client {
+        if let Some(own) = &self.own
+            && own.cancel.same(cancel)
+        {
+            return self.clone();
+        }
+        let agent: ureq::Agent = crate::net::agent_config()
+            .timeout_resolve(Some(REQUEST_TIMEOUT))
+            .timeout_connect(Some(REQUEST_TIMEOUT))
+            .build()
+            .into();
+        let own = Arc::new(Own { agent, cancel: cancel.clone() });
+        // Weak: once the client is dropped its connections close with it.
+        let weak = Arc::downgrade(&own);
+        cancel.on_cancel(move || {
+            if let Some(own) = weak.upgrade() {
+                own.agent.clone().shutdown();
+            }
+        });
+        Client { inner: self.inner.clone(), own: Some(own) }
     }
 
     pub fn base(&self) -> &str {
@@ -331,7 +371,16 @@ impl Client {
     ) -> ApiResult<Reply> {
         let generation = self.inner.auth_generation.load(Ordering::Acquire);
         let url = self.url(path);
-        let agent = &self.inner.agent;
+        let (agent, cancel) = match &self.own {
+            Some(own) => {
+                own.cancel.check()?;
+                self.lend_cookies(&own.agent);
+                (&own.agent, Some(&own.cancel))
+            }
+            None => (&self.inner.agent, None),
+        };
+        // A request the cancel cut short failed because of it.
+        let cut = |e: ApiError| if cancel.is_some_and(Cancel::is_cancelled) { ApiError::aborted() } else { e };
         let timeout = match body {
             Body::Stream { .. } => None,
             _ => behavior.timeout,
@@ -387,8 +436,11 @@ impl Client {
                 }
             }
         }
-        .map_err(|e| transport_error(&e))?;
+        .map_err(|e| cut(transport_error(&e)))?;
 
+        if self.own.is_some() {
+            self.keep_cookies(&response);
+        }
         self.save_jar(false);
         let status = response.status().as_u16();
         let header = |name: &str| {
@@ -407,7 +459,7 @@ impl Client {
                 .limit(u64::MAX)
                 .reader()
                 .read_to_end(&mut body)
-                .map_err(|e| ApiError::transport(e.to_string()))?;
+                .map_err(|e| cut(ApiError::transport(e.to_string())))?;
         }
         let ok = (200..300).contains(&status) || (behavior.allow_not_modified && status == 304);
         if !ok {
@@ -513,6 +565,38 @@ impl Client {
     /// [`Client::bytes`] with the whole reply (its `Cache-Control` and `ETag`).
     pub fn bytes_reply(&self, url: &str) -> ApiResult<Reply> {
         self.send_with("GET", url, Body::None, Some(REQUEST_TIMEOUT), &[("Accept", "*/*")])
+    }
+
+    /// Give a [`Client::with_cancel`] agent the shared jar's cookies, as
+    /// they stand now (all of them: the jar's JSON leaves out session
+    /// cookies).
+    fn lend_cookies(&self, to: &ureq::Agent) {
+        let jar = self.inner.agent.cookie_jar_lock();
+        let cookies: Vec<String> = jar.iter().map(|c| c.to_string()).collect();
+        jar.release();
+        let mut jar = to.cookie_jar_lock();
+        jar.clear();
+        if let Ok(uri) = self.inner.base.parse::<ureq::http::Uri>() {
+            for cookie in cookies {
+                if let Ok(cookie) = ureq::Cookie::parse(cookie, &uri) {
+                    let _ = jar.insert(cookie, &uri);
+                }
+            }
+        }
+        jar.release();
+    }
+
+    /// Cookies a [`Client::with_cancel`] answer set, into the shared jar.
+    fn keep_cookies(&self, response: &ureq::http::Response<ureq::Body>) {
+        use ureq::ResponseExt;
+        let uri = response.get_uri();
+        let mut jar = self.inner.agent.cookie_jar_lock();
+        for value in response.headers().get_all("set-cookie") {
+            if let Ok(cookie) = value.to_str().map_err(drop).and_then(|v| ureq::Cookie::parse(v.to_string(), uri).map_err(drop)) {
+                let _ = jar.insert(cookie, uri);
+            }
+        }
+        jar.release();
     }
 
     /// Write the jar to disk when it changed since the last write (a
@@ -650,10 +734,19 @@ pub fn seg(s: &str) -> String {
 }
 
 /// A cancellation flag shared with blocking work (`AbortSignal`): polling
-/// loops check it between requests and wake from their sleeps when it trips.
+/// loops check it between requests and wake from their sleeps when it trips,
+/// and a [`Client::with_cancel`] request in flight fails as it does.
 #[derive(Clone, Default)]
 pub struct Cancel {
-    inner: Arc<(Mutex<bool>, std::sync::Condvar)>,
+    inner: Arc<(Mutex<Flag>, std::sync::Condvar)>,
+}
+
+#[derive(Default)]
+struct Flag {
+    cancelled: bool,
+    /// Run once when it trips: closing the connections of the clients made
+    /// with it.
+    on_cancel: Vec<Box<dyn FnOnce() + Send>>,
 }
 
 impl Cancel {
@@ -662,11 +755,18 @@ impl Cancel {
     }
     pub fn cancel(&self) {
         let (flag, cv) = &*self.inner;
-        *flag.lock().unwrap() = true;
+        let hooks = {
+            let mut f = flag.lock().unwrap();
+            f.cancelled = true;
+            std::mem::take(&mut f.on_cancel)
+        };
         cv.notify_all();
+        for hook in hooks {
+            hook();
+        }
     }
     pub fn is_cancelled(&self) -> bool {
-        *self.inner.0.lock().unwrap()
+        self.inner.0.lock().unwrap().cancelled
     }
     /// Err([`ApiError::aborted`]) once cancelled.
     pub fn check(&self) -> ApiResult<()> {
@@ -676,39 +776,21 @@ impl Cancel {
     pub fn sleep(&self, d: Duration) -> bool {
         let (flag, cv) = &*self.inner;
         let guard = flag.lock().unwrap();
-        let (guard, _) = cv.wait_timeout_while(guard, d, |cancelled| !*cancelled).unwrap();
-        !*guard
+        let (guard, _) = cv.wait_timeout_while(guard, d, |f| !f.cancelled).unwrap();
+        !guard.cancelled
     }
-
-    /// A request the caller can give up on at any point, as `fetch` with a
-    /// signal: `send` runs on a thread of its own, and once this is
-    /// cancelled the call returns [`ApiError::aborted`] at once. The request
-    /// itself goes on to finish or fail by itself (its body may be sent
-    /// already, and a silent connection could hold it for good).
-    pub fn abortable<T: Send + 'static>(&self, send: impl FnOnce() -> ApiResult<T> + Send + 'static) -> ApiResult<T> {
-        self.check()?;
-        let done = Arc::new(Mutex::new(None));
-        let (slot, wake) = (done.clone(), self.clone());
-        std::thread::spawn(move || {
-            let result = send();
-            *slot.lock().unwrap() = Some(result);
-            // Under the flag's lock, so the waiter can't miss it between
-            // looking at the slot and sleeping.
-            let (flag, cv) = &*wake.inner;
-            let _held = flag.lock().unwrap();
-            cv.notify_all();
-        });
-        let (flag, cv) = &*self.inner;
-        let mut cancelled = flag.lock().unwrap();
-        loop {
-            if let Some(result) = done.lock().unwrap().take() {
-                return result;
-            }
-            if *cancelled {
-                return Err(ApiError::aborted());
-            }
-            cancelled = cv.wait(cancelled).unwrap();
+    /// Run `hook` when this is cancelled, or now if it is already.
+    fn on_cancel(&self, hook: impl FnOnce() + Send + 'static) {
+        let mut f = self.inner.0.lock().unwrap();
+        if f.cancelled {
+            drop(f);
+            hook();
+        } else {
+            f.on_cancel.push(Box::new(hook));
         }
+    }
+    fn same(&self, other: &Cancel) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
 
@@ -766,33 +848,50 @@ mod tests {
     }
 
     #[test]
-    fn an_abortable_request_returns_once_cancelled_or_done() {
+    fn a_cancel_runs_what_waits_on_it_once_and_at_once_when_already_cancelled() {
         let c = Cancel::new();
-        assert_eq!(c.abortable(|| Ok(7)), Ok(7));
-        assert_eq!(c.abortable(|| Err::<(), _>(ApiError::http(500, "boom"))).unwrap_err().status, 500);
-        // A request that never answers: the cancel ends the wait, not it.
-        let (c2, started) = (c.clone(), std::time::Instant::now());
-        let canceller = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(30));
-            c2.cancel();
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let r = runs.clone();
+        c.on_cancel(move || {
+            r.fetch_add(1, Ordering::SeqCst);
         });
-        let err = c.abortable(|| {
-            std::thread::sleep(Duration::from_secs(10));
-            Ok(())
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+        c.cancel();
+        c.cancel();
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        let r = runs.clone();
+        c.on_cancel(move || {
+            r.fetch_add(1, Ordering::SeqCst);
         });
-        canceller.join().unwrap();
-        assert!(err.unwrap_err().is_aborted());
-        assert!(started.elapsed() < Duration::from_secs(5));
-        // Already cancelled: nothing runs.
-        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let r2 = ran.clone();
-        let err = c.abortable(move || {
-            r2.store(true, Ordering::SeqCst);
-            Ok(())
-        });
-        assert!(err.unwrap_err().is_aborted());
-        std::thread::sleep(Duration::from_millis(20));
-        assert!(!ran.load(Ordering::SeqCst));
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_cancellable_client_carries_the_session_and_keeps_what_its_answers_set() {
+        use crate::api::testing::{MockServer, Res};
+        let server = MockServer::start(vec![
+            Res::json("{}").header("Set-Cookie", "session=old; Path=/"),
+            Res::json("{}").header("Set-Cookie", "session=new; Path=/"),
+            Res::json("{}"),
+        ]);
+        let shared = server.client();
+        shared.send("GET", "/api/me", Body::None).unwrap();
+        let cancel = Cancel::new();
+        let own = shared.with_cancel(&cancel);
+        own.send("GET", "/api/one", Body::None).unwrap();
+        assert_eq!(server.requests()[1].header("cookie").as_deref(), Some("session=old"));
+        assert_eq!(shared.cookie_header().as_deref(), Some("session=new"));
+        // The session as it stands when each request goes.
+        shared.clear_cookies();
+        own.send("GET", "/api/two", Body::None).unwrap();
+        assert_eq!(server.requests()[2].header("cookie"), None);
+        // Made again for the same cancel, it is the same client.
+        assert!(Arc::ptr_eq(own.own.as_ref().unwrap(), own.with_cancel(&cancel).own.as_ref().unwrap()));
+        cancel.cancel();
+        assert!(own.send("GET", "/api/three", Body::None).err().is_some_and(|e| e.is_aborted()));
+        assert_eq!(server.requests().len(), 3);
+        // The shared connections stay up.
+        shared.send("GET", "/api/four", Body::None).unwrap();
     }
 
     #[test]

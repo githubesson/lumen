@@ -3,9 +3,9 @@
 //! details if wanted, and send them to the library (admins choose the shared
 //! library or their own) in batches that stay under the server's request
 //! cap, one after another, each waiting out the server's rate limit. The
-//! footer's "Cancel upload" gives up the request in flight at once (the
-//! server undoes what it had added, if it hadn't finished) and deletes what
-//! the earlier requests added; nothing else closes the dialog while an
+//! footer's "Cancel upload" closes the connection of the request in flight
+//! (the server undoes what it had added, if it hadn't finished) and deletes
+//! what the earlier requests added; nothing else closes the dialog while an
 //! upload runs, and nothing in it changes.
 //!
 //! Drops land anywhere in the window while the dialog is open. Rune's open
@@ -341,6 +341,9 @@ fn send_batch(app: &mut App, mut run: Run) {
     let (cancel, edits, scope, covered) = (run.cancel.clone(), run.edits.clone(), run.scope, run.covered.clone());
     app.net.run(
         move || -> ApiResult<Vec<UploadResult>> {
+            // One set of connections for the batch and its edits, which the
+            // cancel closes.
+            let client = client.with_cancel(&cancel);
             let mut results = wait_out_rate_limit(&cancel, || crate::api::upload::upload_music(&client, &files, scope, &cancel))?;
             upload_edits::apply(&client, &files, &mut results, &edits, scope, &cancel, &covered);
             Ok(results)
@@ -756,3 +759,40 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::testing::{MockServer, Res};
+
+    fn server() -> MockServer {
+        MockServer::with_handler(|req| match (req.method.as_str(), req.path.as_str()) {
+            ("POST", "/api/library/upload") => Res::json(
+                r#"[{"file":"a.mp3","inserted":true,"track_id":"t1"},{"file":"b.mp3","inserted":true,"track_id":"t2"}]"#,
+            ),
+            ("DELETE", _) => Res::new(204),
+            _ => Res::json("[]"),
+        })
+    }
+
+    /// An answer read whole as the cancel went out still counts: what it
+    /// added is taken back, so "nothing was added" stays true.
+    #[test]
+    fn an_answer_that_lands_after_the_cancel_is_taken_back() {
+        let s = server();
+        let mut app = App::for_tests(Some(s.client()));
+        for name in ["a.mp3", "b.mp3"] {
+            let path = crate::api::testing::temp_path(&format!("upload-dialog-{name}"));
+            std::fs::write(&path, b"ID3audio").unwrap();
+            app.overlays.upload.files.push(Picked { display: name.into(), size: Some(8), key: path.clone(), path });
+        }
+        // Headless, the request runs inline and its answer waits for the drain.
+        submit(&mut app);
+        cancel_or_close(&mut app);
+        while crate::net::Net::drain(&mut app) {}
+        let deleted: Vec<String> = s.requests().iter().filter(|r| r.method == "DELETE").map(|r| r.path.clone()).collect();
+        assert_eq!(deleted, ["/api/tracks/t1", "/api/tracks/t2"]);
+        let u = &app.overlays.upload;
+        assert_eq!(u.cancel_note.as_deref(), Some("Upload cancelled. Removed the 2 tracks it had already added."));
+        assert!(!u.busy && u.results.is_none());
+    }
+}

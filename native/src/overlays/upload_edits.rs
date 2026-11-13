@@ -62,7 +62,7 @@ fn cover_worth_retrying(e: &ApiError) -> bool {
 /// `covered` is the albums tried so far, shared by every batch of one
 /// upload, so an album that spans batches gets its cover once. A track left
 /// without an album gets no cover and says so. A failure marks that file's
-/// result. Once `cancel` fires the request in flight is given up and the
+/// result. Once `cancel` fires the request in flight is cut off and the
 /// rest are left (what was added is then taken back anyway).
 pub fn apply(
     client: &Client,
@@ -73,6 +73,7 @@ pub fn apply(
     cancel: &Cancel,
     covered: &Mutex<HashSet<String>>,
 ) {
+    let client = &client.with_cancel(cancel);
     for (file, result) in files.iter().zip(results.iter_mut()) {
         if cancel.is_cancelled() {
             break;
@@ -84,10 +85,9 @@ pub fn apply(
         }
         // `Some(note)`: saved, but the cover couldn't go.
         let saved = (|| -> Result<Option<&'static str>, ApiError> {
-            let (c, track_id) = (client.clone(), id.clone());
-            let track = match patch.cloned() {
-                Some(patch) => cancel.abortable(move || crate::api::library::update_track(&c, &track_id, &patch))?,
-                None => cancel.abortable(move || crate::api::library::get_track(&c, &track_id))?,
+            let track = match patch {
+                Some(patch) => crate::api::library::update_track(client, &id, patch)?,
+                None => crate::api::library::get_track(client, &id)?,
             };
             let Some(cover) = &edits.cover else { return Ok(None) };
             let Some(album) = track.album_id.filter(|a| !a.is_empty()) else { return Ok(Some(NO_ALBUM_FOR_COVER)) };
@@ -96,12 +96,9 @@ pub fn apply(
             if !covered.lock().unwrap().insert(album.clone()) {
                 return Ok(None);
             }
-            let sent = wait_out_rate_limit(cancel, || {
-                let (c, cover, album, id) = (client.clone(), cover.clone(), album.clone(), id.clone());
-                cancel.abortable(move || match scope {
-                    UploadScope::Global => crate::api::upload::set_album_cover(&c, &album, &cover).map(drop),
-                    UploadScope::Personal => crate::api::upload::set_track_cover(&c, &id, &cover).map(drop),
-                })
+            let sent = wait_out_rate_limit(cancel, || match scope {
+                UploadScope::Global => crate::api::upload::set_album_cover(client, &album, cover).map(drop),
+                UploadScope::Personal => crate::api::upload::set_track_cover(client, &id, cover).map(drop),
             });
             if let Err(e) = sent {
                 if cover_worth_retrying(&e) {
