@@ -2,8 +2,11 @@
 //! recursively, each with its place in the folder it came from.
 //!
 //! What the person picked or dropped is taken as given, a link or a hidden
-//! name included. Inside a folder the walk skips hidden entries (`.DS_Store`,
-//! macOS's `._Track.mp3`, `.git/`) and links, so it never loops.
+//! name included: a picked link uploads under its own name, and only the
+//! file it names decides whether it was picked twice. Inside a folder the
+//! walk skips hidden entries (`.DS_Store`, macOS's `._Track.mp3`, `.git/`)
+//! and links, so it never loops. Sizes are read here, on the worker, for
+//! planning the upload's batches.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -14,18 +17,54 @@ use crate::core::upload::is_uploadable_file;
 /// A file to upload, with where it sat in its picked folder (`displayPath`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Picked {
+    /// The path as picked (a link stays the link): what's sent, and its name.
     pub path: PathBuf,
     /// Its place in the picked or dropped folder ("Album/01 Song.flac"),
     /// else its name.
     pub display: String,
+    /// Its size when walked (`File.size`), for batching; `None` if unread.
+    pub size: Option<u64>,
+    /// The file it is (a picked link resolved): the same file picked twice
+    /// stays once.
+    pub key: PathBuf,
+}
+
+/// How many left-out names are kept; the line shows the count and these.
+pub const LEFT_OUT_NAMED: usize = 40;
+
+/// Files the server wouldn't ingest, left out of a selection: how many, and
+/// the first [`LEFT_OUT_NAMED`] by their display paths (a folder can hold
+/// thousands).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LeftOut {
+    pub count: usize,
+    pub names: Vec<String>,
+}
+
+impl LeftOut {
+    pub fn push(&mut self, name: String) {
+        self.count += 1;
+        if self.names.len() < LEFT_OUT_NAMED {
+            self.names.push(name);
+        }
+    }
+
+    pub fn extend(&mut self, other: LeftOut) {
+        self.count += other.count;
+        let room = LEFT_OUT_NAMED.saturating_sub(self.names.len());
+        self.names.extend(other.names.into_iter().take(room));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
 }
 
 /// What a walk found.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Walk {
     pub files: Vec<Picked>,
-    /// Files the server wouldn't ingest, by their display paths.
-    pub left_out: Vec<String>,
+    pub left_out: LeftOut,
 }
 
 fn name_of(path: &Path) -> String {
@@ -65,10 +104,11 @@ pub fn collect_files(list: Vec<PathBuf>, stop: &Cancel) -> Walk {
                 continue;
             }
             // Picked twice (a file and its folder, or a link and its
-            // target): the first stays.
-            let path = if top { path.canonicalize().unwrap_or(path) } else { path };
-            if seen.insert(path.clone()) {
-                walk.files.push(Picked { path, display });
+            // target): the first stays. A walked file's path is already
+            // the file's own (its folder resolved, links skipped).
+            let key = if top { path.canonicalize().unwrap_or_else(|_| path.clone()) } else { path.clone() };
+            if seen.insert(key.clone()) {
+                walk.files.push(Picked { path, display, size: Some(meta.len()), key });
             }
         }
     }
@@ -100,8 +140,9 @@ mod tests {
         let root = tree("walk-order");
         let w = collect_files(vec![root.join("Album"), root.join("Album/01 One.flac")], &Cancel::new());
         assert_eq!(displays(&w), vec!["Album/01 One.flac", "Album/Disc 2/01 Two.mp3"]);
-        assert_eq!(w.left_out, vec!["Album/cover.jpg"]);
-        assert_eq!(w.files[0].path, root.join("Album/01 One.flac").canonicalize().unwrap());
+        assert_eq!(w.left_out, LeftOut { count: 1, names: vec!["Album/cover.jpg".into()] });
+        assert_eq!(w.files[0].key, root.join("Album/01 One.flac").canonicalize().unwrap());
+        assert_eq!(w.files[0].size, Some(0));
         // A file picked on its own shows its name.
         let w = collect_files(vec![root.join("Album/Disc 2/01 Two.mp3")], &Cancel::new());
         assert_eq!(displays(&w), vec!["01 Two.mp3"]);
@@ -131,7 +172,30 @@ mod tests {
         assert_eq!(displays(&w), vec!["Linked album/01 One.flac", "Linked album/Disc 2/01 Two.mp3"]);
         // The folder of links itself: its links are skipped.
         assert!(collect_files(vec![picks.clone()], &Cancel::new()).files.is_empty());
+        // A linked file picked on its own goes as the link, by the link's
+        // name; it's the same file as its target all the same.
+        let w = collect_files(vec![picks.join("song.flac")], &Cancel::new());
+        assert_eq!(displays(&w), vec!["song.flac"]);
+        assert_eq!(w.files[0].path, picks.join("song.flac"));
+        assert_eq!(w.files[0].key, root.join("Album/01 One.flac").canonicalize().unwrap());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keeps_the_count_of_left_out_files_but_only_the_first_names() {
+        let mut left = LeftOut::default();
+        for n in 0..30 {
+            left.push(format!("a{n}.txt"));
+        }
+        let mut more = LeftOut::default();
+        for n in 0..1000 {
+            more.push(format!("b{n}.txt"));
+        }
+        assert_eq!((more.count, more.names.len()), (1000, LEFT_OUT_NAMED));
+        left.extend(more);
+        assert_eq!(left.count, 1030);
+        assert_eq!(left.names.len(), LEFT_OUT_NAMED);
+        assert_eq!((left.names[29].as_str(), left.names[39].as_str()), ("a29.txt", "b9.txt"));
     }
 
     #[test]

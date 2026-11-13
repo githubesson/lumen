@@ -20,9 +20,9 @@ use std::sync::{Arc, Mutex};
 
 use rune::{Color, Cursor, Cx, El, GrowthSpec, TextEdit, col, el, row, text};
 
-use super::edit::{grid_field, grid_row, input};
+use super::edit::{grid_field, grid_row};
 use super::upload_edits::{self, Edits};
-use super::upload_files::{Picked, collect_files};
+use super::upload_files::{LeftOut, Picked, collect_files};
 use crate::api::{ApiResult, Cancel, UploadResult};
 use crate::app::App;
 use crate::format::pluralize;
@@ -53,10 +53,11 @@ struct FileEdits {
 pub struct State {
     pub scope: Option<Scope>,
     pub files: Vec<Picked>,
-    /// The paths in `files`, so a file added twice stays once (`mergeFiles`).
+    /// The files in `files` (their keys), so a file added twice stays once
+    /// (`mergeFiles`).
     seen: HashSet<PathBuf>,
     /// Picked or dropped files the server wouldn't ingest, left out up front.
-    pub left_out: Vec<String>,
+    pub left_out: LeftOut,
     pub results: Option<Vec<UploadResult>>,
     pub busy: bool,
     /// Files sent so far, for "Uploading 120 of 450…".
@@ -166,7 +167,7 @@ fn clear(app: &mut App) {
     s.stop_walks();
     s.files.clear();
     s.seen.clear();
-    s.left_out.clear();
+    s.left_out = LeftOut::default();
     s.per_file.clear();
     s.album = TextEdit::default();
     s.album_artist = TextEdit::default();
@@ -195,11 +196,11 @@ pub fn accept(app: &mut App, list: Vec<PathBuf>) {
             if s.results.take().is_some() {
                 s.files.clear();
                 s.seen.clear();
-                s.left_out.clear();
+                s.left_out = LeftOut::default();
                 s.per_file.clear();
             }
             for f in walk.files {
-                if s.seen.insert(f.path.clone()) {
+                if s.seen.insert(f.key.clone()) {
                     s.files.push(f);
                 }
             }
@@ -233,6 +234,9 @@ fn pick_folder(app: &mut App, tx: &mut rune::Tx) {
 }
 
 fn pick_cover(app: &mut App, tx: &mut rune::Tx) {
+    if app.overlays.upload.busy {
+        return;
+    }
     let session = app.overlays.upload.session;
     let options = rune::FileDialogOptions { title: "Cover art for all files".into(), ..Default::default() }.filter("Images", &["jpg", "jpeg", "png", "webp"]);
     tx.open_file(options, move |app: &mut App, result, _| {
@@ -298,7 +302,8 @@ fn submit(app: &mut App) {
     s.cancel = Some(cancel.clone());
     // One request over the server's cap fails whole, so a big selection goes
     // up in batches; a file too big to send at all is reported, not sent.
-    let plan = plan_upload_batches(&s.files, |f| std::fs::metadata(&f.path).ok().map(|m| m.len()), UPLOAD_REQUEST_MAX_BYTES);
+    // Sizes are as the walk read them.
+    let plan = plan_upload_batches(&s.files, |f| f.size, UPLOAD_REQUEST_MAX_BYTES);
     let run = Run {
         batches: plan.batches.into_iter().map(|b| b.into_iter().map(|f| f.path).collect()).collect(),
         next: 0,
@@ -451,6 +456,13 @@ fn file_list(t: &Theme, n: usize) -> El {
     scroll_area_fit(t, "upload-files", rows, false, Some(128.0))
 }
 
+/// `.input` in the details' `<fieldset disabled={busy}>`: while an upload
+/// runs it takes no focus, so what was typed can't change underneath it.
+fn detail_input(t: &Theme, key: &str, edit: &TextEdit, placeholder: &str, label: String, busy: bool, bind: impl Fn(&mut App) -> &mut TextEdit + 'static) -> El {
+    let field = text_field(t, key, edit, font(14.0, 400.0), placeholder).label(label).min_w(0.0).disabled(busy).on_edit(bind);
+    input_box(t, key, edit.focused && !busy, field).min_w(0.0)
+}
+
 /// One file's title and artists, under its path.
 fn file_edit_row(app: &App, t: &Theme, f: &Picked, last: bool) -> El {
     let s = &app.overlays.upload;
@@ -460,11 +472,10 @@ fn file_edit_row(app: &App, t: &Theme, f: &Picked, last: bool) -> El {
         let key = format!("upload-{which}:{}", f.path.to_string_lossy());
         let path = f.path.clone();
         let label = format!("{} for {}", if which == "title" { "Title" } else { "Artists" }, f.display);
-        let field = text_field(t, &key, edit, font(14.0, 400.0), placeholder).label(label).min_w(0.0).on_edit(move |app: &mut App| {
+        detail_input(t, &key, edit, placeholder, label, s.busy, move |app: &mut App| {
             let own = app.overlays.upload.per_file.entry(path.clone()).or_default();
             if which == "title" { &mut own.title } else { &mut own.artists }
-        });
-        input_box(t, &key, edit.focused, field).min_w(0.0)
+        })
     };
     col()
         .w_full()
@@ -481,12 +492,17 @@ fn file_edit_row(app: &App, t: &Theme, f: &Picked, last: bool) -> El {
 /// cover for every file and each file's title and artists.
 fn details(app: &App, t: &Theme, admin: bool, scope: Scope) -> El {
     let s = &app.overlays.upload;
-    let toggle = |app: &mut App| app.overlays.upload.editing = !app.overlays.upload.editing;
+    let toggle = |app: &mut App| {
+        let s = &mut app.overlays.upload;
+        if !s.busy {
+            s.editing = !s.editing;
+        }
+    };
     let mut c = col().w_full().mt(12.0).child(
         row()
             .gap(8.0)
             .items_center()
-            .child(switch(t, "upload-edit", s.editing, false, toggle).label("Edit details before uploading"))
+            .child(switch(t, "upload-edit", s.editing, s.busy, toggle).label("Edit details before uploading"))
             .child(text("Edit details before uploading").font(font(14.0, 400.0)).color(t.c.foreground).on_press(toggle)),
     );
     if !s.editing {
@@ -526,11 +542,18 @@ fn details(app: &App, t: &Theme, admin: bool, scope: Scope) -> El {
                     .wrap(),
             )
             .child(grid_row(vec![
-                grid_field(t, "Album (all files)", input(t, "upload-album", &s.album, "", "Album (all files)", |a| &mut a.overlays.upload.album, None), None),
+                grid_field(
+                    t,
+                    "Album (all files)",
+                    detail_input(t, "upload-album", &s.album, "", "Album (all files)".into(), s.busy, |a: &mut App| &mut a.overlays.upload.album),
+                    None,
+                ),
                 grid_field(
                     t,
                     "Album artist",
-                    input(t, "upload-album-artist", &s.album_artist, "", "Album artist", |a| &mut a.overlays.upload.album_artist, None),
+                    detail_input(t, "upload-album-artist", &s.album_artist, "", "Album artist".into(), s.busy, |a: &mut App| {
+                        &mut a.overlays.upload.album_artist
+                    }),
                     None,
                 ),
             ]))
@@ -550,9 +573,6 @@ fn field(t: &Theme, label: &str, control: El, hint: &str) -> El {
         .child(control)
         .child(text(hint.to_string()).font(crate::ui::with_lh(font(12.0, 400.0), 17.4)).color(t.c.muted_foreground).wrap())
 }
-
-/// How many left-out names the line spells out before its clamp cuts it.
-const LEFT_OUT_NAMED: usize = 40;
 
 pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     if !app.ui.upload_open {
@@ -655,9 +675,9 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     if !s.left_out.is_empty() && s.results.is_none() {
         // A folder can hold thousands: the count, and the first names until
         // two lines run out.
-        let names = s.left_out.iter().take(LEFT_OUT_NAMED).map(String::as_str).collect::<Vec<_>>().join(", ");
+        let names = s.left_out.names.join(", ");
         body = body.child(
-            text(format!("{} left out, not a format the server can add: {names}", pluralize(s.left_out.len() as u64, "file")))
+            text(format!("{} left out, not a format the server can add: {names}", pluralize(s.left_out.count as u64, "file")))
                 .font(font(12.0, 400.0))
                 .color(t.c.muted_foreground)
                 .max_lines(2)
@@ -709,13 +729,21 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
     let mut buttons = vec![Btn::new("upload-cancel", cancel_label).ghost().disabled(s.cancelling).build(t).on_press(cancel_or_close)];
     if s.results.is_none() {
         let n = s.files.len();
-        let label = if s.busy { format!("Uploading {} of {n}…", s.progress) } else { format!("Upload {}", if n == 0 { String::new() } else { n.to_string() }).trim().to_string() };
+        let label = if s.busy {
+            format!("Uploading {} of {n}…", s.progress)
+        } else if s.scanning > 0 {
+            // A folder still being read; Upload waits for it.
+            "Reading folders…".to_string()
+        } else {
+            format!("Upload {}", if n == 0 { String::new() } else { n.to_string() }).trim().to_string()
+        };
         buttons.push(Btn::new("upload-go", label).primary().disabled(s.busy || s.scanning > 0 || n == 0).build(t).on_press(submit));
     }
     let max_body = (window[1] * 0.8 - 2.0 - 57.0 - 53.0).max(80.0);
     let overflows = cx.layout_size("upload-body").is_some_and(|b| b[1] > max_body + 0.5);
     let dialog = Dialog::new("upload", scroll_area_fit(t, "upload-scroll", body, overflows, Some(max_body)))
         .title("Add music")
+        .close_disabled(s.busy)
         .footer(dialog_footer(t, None, buttons))
         .build(t, window, dismiss);
     Some(

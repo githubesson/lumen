@@ -180,11 +180,17 @@ pub struct Dialog {
     pub max_width: f32,
     pub body: El,
     pub footer: Option<El>,
+    /// `closeDisabled`: the header's close button shows, disabled.
+    pub close_disabled: bool,
 }
 
 impl Dialog {
     pub fn new(key: impl Into<String>, body: El) -> Dialog {
-        Dialog { key: key.into(), title: None, max_width: 512.0, body, footer: None }
+        Dialog { key: key.into(), title: None, max_width: 512.0, body, footer: None, close_disabled: false }
+    }
+    pub fn close_disabled(mut self, disabled: bool) -> Dialog {
+        self.close_disabled = disabled;
+        self
     }
     pub fn title(mut self, title: impl Into<String>) -> Dialog {
         self.title = Some(title.into());
@@ -214,10 +220,9 @@ impl Dialog {
             .transition(rune::Transition::scale(0.95));
         let mut panel = takes_clicks(panel);
         if let Some(title) = self.title {
-            let close_btn = iconbtn(t, &format!("{}-close", self.key), &i::X, 14.0, BtnState::default())
-                .label("Close")
-                .tip(&format!("{}-close", self.key), "Close")
-                .on_press(close);
+            let close_key = format!("{}-close", self.key);
+            let close_btn = iconbtn(t, &close_key, &i::X, 14.0, BtnState { disabled: self.close_disabled, ..BtnState::default() }).label("Close");
+            let close_btn = if self.close_disabled { close_btn } else { close_btn.tip(&close_key, "Close").on_press(close) };
             panel = panel.child(
                 crate::ui::css_border_bottom(row(), 1.0, t.c.border)
                     .px(16.0)
