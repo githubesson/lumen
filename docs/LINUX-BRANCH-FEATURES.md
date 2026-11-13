@@ -272,10 +272,11 @@ while uploading.
   without this update doesn't say which ones were promoted, so the app leaves
   a shared upload's tracks there and asks you to delete the rest.
 
-**Server update needed?** The app-side cancel and cleanup work on today's
-server. Undoing a request that had *fully arrived* when the cancel came needs
-the server update. Without it, those few files can stay. If the app is closed
-mid-upload, requests that had already finished stay.
+**Server update needed?** On today's server the app-side cancel and cleanup
+work for personal uploads; a shared upload's tracks are left (see "What
+stays"). Undoing a request that had *fully arrived* when the cancel came
+needs the server update. Without it, those few files can stay. If the app is
+closed mid-upload, requests that had already finished stay.
 
 **Files:** `frontend/src/components/UploadDialog.tsx`, `core/src/api.ts`
 (abort signal on `uploadMusic`),

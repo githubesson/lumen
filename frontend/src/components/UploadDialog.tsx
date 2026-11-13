@@ -46,6 +46,8 @@ interface Props {
  */
 /** How long after a cancel the library reloads again, once the server has undone it. */
 const CANCEL_SETTLE_MS = 2000;
+/** And once more for a shared upload, which first finishes the file in progress. */
+const CANCEL_SETTLE_SHARED_MS = 30_000;
 
 export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Props) {
   const { mounted } = useTransitionMount(open, 200);
@@ -64,6 +66,9 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
   const abortRef = useRef<AbortController | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelNote, setCancelNote] = useState<string | null>(null);
+  // A dropped folder left out of an upload, apart from `error`, so neither
+  // hides the other.
+  const [dropNote, setDropNote] = useState<string | null>(null);
   const cancel = () => {
     if (!busy) return onClose();
     setCancelling(true);
@@ -119,11 +124,13 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     setLeftOut((prev) => [...(fresh ? [] : prev), ...all.filter((f) => !isUploadableFile(f.name)).map(displayPath)]);
     setResults(null);
     setError(null);
+    setDropNote(null);
   };
 
   const clear = () => {
     setFiles([]);
     setLeftOut([]);
+    setDropNote(null);
   };
 
   const submit = async () => {
@@ -138,6 +145,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     setBusy(true);
     setError(null);
     setCancelNote(null);
+    setDropNote(null);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     // One request over the server's cap fails whole, so a big selection goes
@@ -226,6 +234,9 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
         // cancel, so a reload right away can still list what it removes.
         libraryChanged.emit();
         setTimeout(() => libraryChanged.emit(), CANCEL_SETTLE_MS);
+        // A shared upload finishes the file it was reading before its undo
+        // (see the server's Upload), which a long file can take past that.
+        if (scopeSent === "global") setTimeout(() => libraryChanged.emit(), CANCEL_SETTLE_SHARED_MS);
       } else if (uploadAddedAny(uploaded)) {
         libraryChanged.emit();
       }
@@ -257,7 +268,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
           // An upload started while the folder was being read: it didn't
           // include these, and its results mustn't give way to them.
           if (uploadsStartedRef.current !== uploads) {
-            if (list.length) setError("A dropped folder wasn't added: the upload had already started.");
+            if (list.length) setDropNote("A dropped folder wasn't added: the upload had already started.");
             return;
           }
           accept(list);
@@ -533,6 +544,11 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
           {cancelNote && (
             <p role="status" style={{ marginTop: 12, fontSize: 13, color: "var(--muted-foreground)" }}>
               {cancelNote}
+            </p>
+          )}
+          {dropNote && (
+            <p role="status" style={{ marginTop: 12, fontSize: 13, color: "var(--muted-foreground)" }}>
+              {dropNote}
             </p>
           )}
           {error && <ErrorBanner className="mt-3" message={error} />}

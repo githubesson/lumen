@@ -151,10 +151,11 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tracks this request added, undone if the client goes away mid-request.
-	// A shared upload whose ingest the cancel interrupted keeps its file: the
-	// watcher ingests it a moment later, and may promote a user's personal
-	// copy of the same audio onto it, which removing the file under it would
-	// leave pointing at nothing (ingest's dropIfVanished covers new rows only).
+	// A failed shared upload keeps its file, cancelled or not: the watcher
+	// ingests it a moment later and may promote a user's personal copy of the
+	// same audio onto it, which removing the file under it would leave
+	// pointing at nothing (ingest's dropIfVanished covers new rows only). A
+	// cancel doesn't cut a shared ingest short (below), so this is rare.
 	var added []uuid.UUID
 	for _, fh := range files {
 		if r.Context().Err() != nil {
