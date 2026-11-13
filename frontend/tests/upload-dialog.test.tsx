@@ -251,3 +251,19 @@ it("doesn't take more files while an upload is going", async () => {
   });
   expect(screen.getByRole("button", { name: "Uploading 0 of 1…" })).toBeTruthy();
 });
+
+it("starts a new selection once after results, then adds the next walk to it", async () => {
+  mock.uploadMusic.mockImplementationOnce(async (files: File[]) => files.map((f) => ({ file: f.name, inserted: true, track_id: "t" })));
+  await pick([file("first.flac")]);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 1" }));
+  });
+  expect(screen.getByText("first.flac")).toBeTruthy(); // the results are up
+  const input = screen.getByLabelText(/Drop files or folders here/);
+  // Two walks that both started while the results showed.
+  await act(async () => {
+    fireEvent.change(input, { target: { files: [file("a.flac")] } });
+    fireEvent.change(input, { target: { files: [file("b.flac")] } });
+  });
+  expect(screen.getByRole("button", { name: "Upload 2" })).toBeTruthy();
+});

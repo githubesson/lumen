@@ -1,11 +1,11 @@
-import { Fragment, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { TrackListItem } from "@music-library/core";
 import { displayText } from "../lib/format";
 import { artistNames, trackArtistHref } from "../lib/nowPlayingLinks";
 
 // The latest link activation, app-wide: a slow lookup that a later click
-// (or a page opened meanwhile) has overtaken must not navigate late.
+// has overtaken must not navigate late. Bumping it cancels the pending one.
 let latestActivation = 0;
 
 /**
@@ -31,16 +31,31 @@ export function PageLink({
   children: ReactNode;
 }) {
   const navigate = useNavigate();
+  const { key: locationKey } = useLocation();
+  // This link's lookup in flight, if it's the latest.
+  const pending = useRef<number | null>(null);
+  // Any move to another page (back to the same one included), or the link
+  // going away (a playback error replaces the player's links), cancels it.
+  useEffect(
+    () => () => {
+      if (pending.current !== null && pending.current === latestActivation) latestActivation++;
+      pending.current = null;
+    },
+    [locationKey],
+  );
   // A lookup that fails or finds nothing leaves the page as it is, as does
-  // one that a later link or another page has overtaken.
+  // one that a later link, another page or the link's going has overtaken.
   const open = () => {
     const activation = ++latestActivation;
-    const from = window.location.href;
+    pending.current = activation;
     void href()
       .then((to) => {
-        if (to && activation === latestActivation && window.location.href === from) navigate(to);
+        if (to && activation === latestActivation) navigate(to);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (pending.current === activation) pending.current = null;
+      });
   };
   // A cover is a block, and a span can't hold one.
   const Tag = named ? "div" : "span";

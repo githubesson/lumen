@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Upload as ArrowUpTrayIcon, Check as CheckIcon, FolderOpen as FolderIcon, Image as PhotoIcon } from "lucide-react";
 import { api, type UploadResult } from "../api";
 import { Button } from "./Button";
@@ -88,6 +88,13 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       return next;
     });
 
+  // Whether results are up, as of the last pick (state would be stale in a
+  // walk that finishes after another one).
+  const resultsShownRef = useRef(false);
+  useEffect(() => {
+    resultsShownRef.current = results !== null;
+  }, [results]);
+
   // Picks and drops add to the selection, so files and folders can be mixed.
   const accept = (list: FileList | File[] | null) => {
     // An upload reads the selection once, as it starts: files added during
@@ -95,10 +102,13 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     if (busy || !list || list.length === 0) return;
     const all = Array.from(list);
     // Against the selection as it is now: two folder walks can finish in
-    // either order, and each must add to what the other added.
-    const fresh = !!results;
+    // either order, and each must add to what the other added. Picking after
+    // an upload's results starts a new selection, once: the first walk to
+    // finish clears it, the next adds to that.
+    const fresh = resultsShownRef.current;
+    resultsShownRef.current = false;
     setFiles((prev) => mergeFiles(fresh ? [] : prev, all.filter((f) => isUploadableFile(f.name))));
-    setLeftOut((prev) => [...(results ? [] : prev), ...all.filter((f) => !isUploadableFile(f.name)).map(displayPath)]);
+    setLeftOut((prev) => [...(fresh ? [] : prev), ...all.filter((f) => !isUploadableFile(f.name)).map(displayPath)]);
     setResults(null);
     setError(null);
   };

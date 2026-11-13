@@ -419,3 +419,35 @@ it("drops a slow artist lookup that a later link click overtook", async () => {
   await act(async () => { answer({ id: "t1", title: "The Sign", artists: [{ id: "a-nujabes", name: "Nujabes", role: "primary" }] }); });
   expect(at).toBe("/library?view=albums&album=al-1");
 });
+
+it("drops a pending lookup when its link goes away or the page changes, even back to the same one", async () => {
+  const { MemoryRouter, Routes, Route, useLocation, useNavigate } = await import("react-router-dom");
+  const { api } = await import("../../core/src/api");
+  const answers: ((detail: unknown) => void)[] = [];
+  vi.spyOn(api, "getTrack").mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }) as never);
+  const detail = { id: "t1", title: "The Sign", artists: [{ id: "a-nujabes", name: "Nujabes", role: "primary" }] };
+  let at = "";
+  let go: (to: string) => void = () => {};
+  function Where() { at = useLocation().pathname + useLocation().search; go = useNavigate(); return null; }
+  const song = { id: "t1", title: "The Sign", duration_ms: 1, source: "local" as const, album_id: "al-1", album_title: "Modal Soul", artist: "Nujabes" };
+  const view = (error: string | null) => (
+    <MemoryRouter initialEntries={["/"]}>
+      <NowPlaying track={song} title="The Sign" artist="ignored" error={error} />
+      <Routes><Route path="*" element={<Where />} /></Routes>
+    </MemoryRouter>
+  );
+  const { rerender } = render(view(null));
+
+  // Away and back while the lookup is out: the same URL, but not the same visit.
+  await act(async () => { screen.getByRole("link", { name: "Nujabes" }).click(); });
+  await act(async () => { go("/library"); });
+  await act(async () => { go("/"); });
+  await act(async () => { answers[0](detail); });
+  expect(at).toBe("/");
+
+  // A playback failure takes the links away while the lookup is out.
+  await act(async () => { screen.getByRole("link", { name: "Nujabes" }).click(); });
+  rerender(view("Playback failed"));
+  await act(async () => { answers[1](detail); });
+  expect(at).toBe("/");
+});
