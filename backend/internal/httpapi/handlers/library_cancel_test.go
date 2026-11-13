@@ -3,11 +3,13 @@ package handlers
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/githubesson/lumen/internal/db"
+	"github.com/githubesson/lumen/internal/ingest"
 	"github.com/githubesson/lumen/internal/library"
 	"github.com/google/uuid"
 )
@@ -78,5 +80,27 @@ func TestUndoCancelledUploadRemovesWhatItAdded(t *testing.T) {
 	}
 	if _, err := os.Stat(elsewhere); err != nil {
 		t.Fatalf("a file outside the upload folder was removed: %v", err)
+	}
+}
+
+// Only new tracks are taken back: a promotion took over a user's existing
+// personal track, and a dedup hit or a failure added nothing.
+func TestAddedByUpload(t *testing.T) {
+	id := uuid.New()
+	cases := []struct {
+		name string
+		res  ingest.Outcome
+		want bool
+	}{
+		{"new track", ingest.Outcome{TrackID: id, Inserted: true}, true},
+		{"promoted personal track", ingest.Outcome{TrackID: id, Inserted: true, Promoted: true}, false},
+		{"dedup hit", ingest.Outcome{TrackID: id}, false},
+		{"failed", ingest.Outcome{TrackID: id, Inserted: true, Err: errors.New("boom")}, false},
+		{"no track", ingest.Outcome{Inserted: true}, false},
+	}
+	for _, c := range cases {
+		if got := addedByUpload(c.res); got != c.want {
+			t.Errorf("%s: addedByUpload = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

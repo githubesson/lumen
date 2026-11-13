@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -148,11 +147,8 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Tracks this request added, undone if the client goes away mid-request,
-	// and shared uploads whose ingest it interrupted (the watcher would
-	// otherwise ingest them a moment later).
+	// Tracks this request added, undone if the client goes away mid-request.
 	var added []uuid.UUID
-	var interrupted []string
 	for _, fh := range files {
 		if r.Context().Err() != nil {
 			break // the client cancelled: nothing after this file is wanted
@@ -222,7 +218,7 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 		if res.TrackID != uuid.Nil {
 			rr.TrackID = res.TrackID.String()
-			if res.Inserted && !res.Promoted && res.Err == nil {
+			if addedByUpload(res) {
 				added = append(added, res.TrackID)
 			}
 		}
@@ -234,8 +230,6 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			// clean up a failed personal upload; don't let junk accumulate.
 			if ownerID != nil {
 				removeFailedUpload(h.log(), res.Path, dst)
-			} else if r.Context().Err() != nil {
-				interrupted = append(interrupted, cmp.Or(res.Path, dst))
 			}
 		}
 		results = append(results, rr)
@@ -245,11 +239,6 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		// Nobody will see the results, so nothing this request added may stay
 		// behind taking up space (and quota) the user didn't mean to use.
 		h.undoCancelledUpload(context.WithoutCancel(r.Context()), u.ID, ownerID, destDir, added)
-		for _, p := range interrupted {
-			if inDest, _ := pathsafe.WithinRoot(destDir, p); inDest {
-				removeFailedUpload(h.log(), "", p)
-			}
-		}
 		return
 	}
 
@@ -363,6 +352,13 @@ func (h *Library) Errors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ingestErrorsResp{Errors: errs, Total: total})
+}
+
+// addedByUpload reports whether a cancelled upload should take this file's
+// track back: a new track only. A dedup hit, or a promotion (a shared upload
+// taking over a user's personal row of the same audio), was already there.
+func addedByUpload(res ingest.Outcome) bool {
+	return res.Inserted && !res.Promoted && res.Err == nil && res.TrackID != uuid.Nil
 }
 
 // undoCancelledUpload removes the tracks an upload request added before its
