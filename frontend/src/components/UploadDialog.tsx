@@ -122,15 +122,25 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       ? { perFile: files.map((f) => perFile.get(f) ?? { title: "", artists: "" }), album, albumArtist, cover }
       : null;
     setProgress(0);
+    // Across batches, so an album split between two gets its cover once.
+    const coveredAlbums = new Set<string>();
     try {
       for (const batch of batches) {
         if (ctrl.signal.aborted) break;
         // Only admins may upload to the shared library; the choice is hidden
         // from everyone else.
         const results = await sendUploadBatch(() => api.uploadMusic(batch, scopeSent, { signal: ctrl.signal }), ctrl.signal);
-        uploaded.push(
-          ...(edits ? await applyUploadEdits(results, batch.map((f) => files.indexOf(f)), edits, scopeSent) : results),
-        );
+        // In the list at once, so a cancel during the edits below still
+        // takes these tracks back; the edited results replace them after.
+        const at = uploaded.length;
+        uploaded.push(...results);
+        if (edits) {
+          const edited = await applyUploadEdits(results, batch.map((f) => files.indexOf(f)), edits, scopeSent, {
+            signal: ctrl.signal,
+            coveredAlbums,
+          });
+          uploaded.splice(at, results.length, ...edited);
+        }
         sent += batch.length;
         setProgress(sent);
       }
@@ -206,6 +216,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
         open={open}
         title="Add music"
         onClose={dismiss}
+        closeDisabled={busy}
         footer={
           <DialogFooter>
             <Button variant="ghost" onClick={cancel} disabled={cancelling}>

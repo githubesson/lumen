@@ -1,6 +1,6 @@
 import type { CoverUploadFile, TrackPatch, UploadResult } from "@music-library/core";
 import { api, errorMessage } from "../api";
-import type { UploadScope } from "@music-library/core/upload";
+import { waitOutRateLimit, type UploadScope } from "@music-library/core/upload";
 
 /** Details typed in before uploading; blank fields keep the file's tags. */
 export interface UploadEdits {
@@ -37,15 +37,18 @@ export function uploadPatch(edits: UploadEdits, index: number): TrackPatch | nul
  * server's answer for `indexes[i]` (the file's place in the selection). Only
  * new tracks change: one that matched a track already in the library is left
  * as it is. The cover goes on each album once: the uploader's own cover for a
- * personal upload, the album's cover for a shared one.
+ * personal upload, the album's cover for a shared one. Pass the same
+ * `coveredAlbums` for every batch of one upload, so an album that spans
+ * batches gets its cover once; a cover waits out the server's rate limit as
+ * the batches do. Aborting `signal` (Cancel upload) stops the requests.
  */
 export async function applyUploadEdits(
   results: UploadResult[],
   indexes: number[],
   edits: UploadEdits,
   scope: UploadScope,
+  { signal, coveredAlbums = new Set<string>() }: { signal?: AbortSignal; coveredAlbums?: Set<string> } = {},
 ): Promise<UploadResult[]> {
-  const coveredAlbums = new Set<string>();
   const out: UploadResult[] = [];
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
@@ -54,15 +57,26 @@ export async function applyUploadEdits(
       out.push(result);
       continue;
     }
+    const trackId = result.track_id;
     try {
-      const track = patch ? await api.updateTrack(result.track_id, patch) : await api.getTrack(result.track_id);
-      if (edits.cover && track.album_id && !coveredAlbums.has(track.album_id)) {
-        coveredAlbums.add(track.album_id);
-        if (scope === "global") await api.setAlbumCover(track.album_id, edits.cover);
-        else await api.setTrackCover(result.track_id, edits.cover);
+      const track = patch
+        ? await api.updateTrack(trackId, patch, { signal })
+        : await api.getTrack(trackId, { signal });
+      const cover = edits.cover;
+      if (cover && track.album_id && !coveredAlbums.has(track.album_id)) {
+        const albumId = track.album_id;
+        await waitOutRateLimit<unknown>(
+          () =>
+            scope === "global"
+              ? api.setAlbumCover(albumId, cover, { signal })
+              : api.setTrackCover(trackId, cover, { signal }),
+          signal,
+        );
+        coveredAlbums.add(albumId);
       }
       out.push(result);
     } catch (err) {
+      if (signal?.aborted) throw err;
       out.push({ ...result, error: `Added, but saving the details failed: ${errorMessage(err, "unknown error")}` });
     }
   }

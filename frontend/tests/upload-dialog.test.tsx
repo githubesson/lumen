@@ -148,7 +148,7 @@ it("applies details typed before uploading to what the upload adds", async () =>
   expect((mock as unknown as { updateTrack: ReturnType<typeof vi.fn> }).updateTrack).toHaveBeenCalledWith("t0", {
     title: "cute girls doing cute things",
     artists: ["Zhnoi"],
-  });
+  }, { signal: expect.any(AbortSignal) });
   expect(screen.getByText("Added")).toBeTruthy();
 });
 
@@ -196,10 +196,12 @@ it("keeps uploading through Escape and the close button, and a cancel leaves a p
     fireEvent.click(screen.getByRole("button", { name: "Upload 2" }));
   });
   const dialog = screen.getByRole("dialog");
-  screen.getByRole("button", { name: "Close" }).focus();
+  const close = screen.getByRole("button", { name: "Close" }) as HTMLButtonElement;
+  expect(close.disabled).toBe(true);
+  screen.getByRole("button", { name: "Cancel upload" }).focus();
   await act(async () => {
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(close);
   });
   expect(onClose).not.toHaveBeenCalled();
   expect(dialog.isConnected).toBe(true);

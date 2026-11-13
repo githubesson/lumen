@@ -26,6 +26,7 @@ export function DialogShell({
   role = "dialog",
   initialFocus,
   onClose,
+  closeDisabled,
   children,
   footer,
   maxWidth,
@@ -41,6 +42,8 @@ export function DialogShell({
   /** Takes focus on open, instead of the panel. */
   initialFocus?: RefObject<HTMLElement | null>;
   onClose: () => void;
+  /** Shows the header's close button disabled, while the dialog can't be left. */
+  closeDisabled?: boolean;
   children: ReactNode;
   footer?: ReactNode;
   /** Override the default max width (defaults to max-w-lg). */
@@ -178,6 +181,7 @@ export function DialogShell({
                   type="button"
                   aria-label="Close"
                   onClick={onClose}
+                  disabled={closeDisabled}
                   className="iconbtn"
                 >
                   <XMarkIcon className="size-3.5" aria-hidden="true" />

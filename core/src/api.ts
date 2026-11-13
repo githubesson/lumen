@@ -352,10 +352,11 @@ export const api = {
     request<TrackListItem[]>(`/api/artists/${pathID(id)}/tracks`, options),
   getTrack: (id: string, options: RequestOptions = {}) =>
     request<TrackDetail>(`/api/tracks/${trackPathID(id)}`, options),
-  updateTrack: (id: string, patch: TrackPatch) =>
+  updateTrack: (id: string, patch: TrackPatch, options: RequestOptions = {}) =>
     request<TrackDetail>(`/api/tracks/${trackPathID(id)}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
+      ...options,
     }),
   // Delete a track from the caller's personal library. Owner-scoped on the
   // server: only the user's own personal uploads can be removed (others 404).
@@ -386,17 +387,17 @@ export const api = {
   // Replace an album's cover art. `file` is a browser File (web) or the
   // RN-style { uri, name, type } part React Native's FormData accepts.
   // Admin-only on the server; returns the updated album.
-  setAlbumCover: (id: string, file: CoverUploadFile) => {
+  setAlbumCover: (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
     const fd = new FormData();
     fd.append("file", file as unknown as Blob);
-    return request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd });
+    return request<Album>(`/api/albums/${pathID(id)}/cover`, { method: "PUT", body: fd, ...options });
   },
   // The uploader's own cover for their personal track (on its album, seen
   // only by them). The track needs an album; returns the updated track.
-  setTrackCover: (id: string, file: CoverUploadFile) => {
+  setTrackCover: (id: string, file: CoverUploadFile, options: RequestOptions = {}) => {
     const fd = new FormData();
     fd.append("file", file as unknown as Blob);
-    return request<TrackDetail>(`/api/tracks/${trackPathID(id)}/cover`, { method: "PUT", body: fd });
+    return request<TrackDetail>(`/api/tracks/${trackPathID(id)}/cover`, { method: "PUT", body: fd, ...options });
   },
   // Clear an album's cover art, reverting it to the placeholder. Admin only.
   removeAlbumCover: (id: string) =>

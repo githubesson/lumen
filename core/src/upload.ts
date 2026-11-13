@@ -113,20 +113,17 @@ export function planUploadBatches<T>(
   return { batches, tooLarge };
 }
 
-/** How many times one batch waits out the server's upload rate limit. */
+/** How many times one request waits out the server's rate limit. */
 const UPLOAD_RATE_LIMIT_WAITS = 5;
 
 /**
- * Sends one batch of an upload. The server allows so many upload requests a
- * minute, which a fast connection can reach with many small batches: a 429
- * waits out its Retry-After (1 to 60 s) and tries again, up to a few times,
- * rather than failing the rest of the selection. Aborting `signal` ends the
- * wait with an AbortError.
+ * Sends one request of an upload: a batch, or a cover. The server allows so
+ * many upload requests a minute, which a fast connection can reach with many
+ * small batches: a 429 waits out its Retry-After (1 to 60 s) and tries again,
+ * up to a few times, rather than failing the rest of the selection. Aborting
+ * `signal` ends the wait with an AbortError.
  */
-export async function sendUploadBatch(
-  send: () => Promise<UploadResult[]>,
-  signal?: AbortSignal,
-): Promise<UploadResult[]> {
+export async function waitOutRateLimit<T>(send: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   for (let waits = 0; ; waits++) {
     try {
       return await send();
@@ -138,7 +135,10 @@ export async function sendUploadBatch(
       await new Promise<void>((resolve, reject) => {
         const aborted = () => {
           clearTimeout(timer);
-          reject(new DOMException("cancelled", "AbortError"));
+          // A plain Error, as the transport's: React Native has no DOMException.
+          const error = new Error("The upload was cancelled.");
+          error.name = "AbortError";
+          reject(error);
         };
         const timer = setTimeout(() => {
           signal?.removeEventListener("abort", aborted);
@@ -149,6 +149,10 @@ export async function sendUploadBatch(
     }
   }
 }
+
+/** One batch of an upload, through {@link waitOutRateLimit}. */
+export const sendUploadBatch = (send: () => Promise<UploadResult[]>, signal?: AbortSignal) =>
+  waitOutRateLimit(send, signal);
 
 /** An upload request's error, readable: a 413 is usually a proxy's body cap. */
 export function uploadErrorMessage(err: unknown): string {
