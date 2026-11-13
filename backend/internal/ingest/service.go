@@ -94,7 +94,9 @@ type Outcome struct {
 // it deletes its track and file, and an insert committed after that would
 // leave a track with nothing to play. A removal before this check is caught
 // here; one after it fires a Remove event that finds the committed row. Only
-// for a new row: a promoted one was a user's track before this ingest.
+// for a new row: a promoted one was a user's track before this ingest, and
+// undoing that would take restoring its owner and file, so callers must not
+// remove a file a promotion may be reading (see the upload handler).
 func (s *Service) dropIfVanished(ctx context.Context, path string) bool {
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) || s.Library == nil {
 		return false

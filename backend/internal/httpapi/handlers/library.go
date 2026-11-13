@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -148,12 +147,12 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Tracks this request added, undone if the client goes away mid-request,
-	// and shared uploads whose ingest the cancel interrupted (the watcher
-	// would ingest them a moment later; one it's already reading drops its
-	// track when it finds the file gone, see ingest's dropIfVanished).
+	// Tracks this request added, undone if the client goes away mid-request.
+	// A shared upload whose ingest the cancel interrupted keeps its file: the
+	// watcher ingests it a moment later, and may promote a user's personal
+	// copy of the same audio onto it, which removing the file under it would
+	// leave pointing at nothing (ingest's dropIfVanished covers new rows only).
 	var added []uuid.UUID
-	var interrupted []string
 	for _, fh := range files {
 		if r.Context().Err() != nil {
 			break // the client cancelled: nothing after this file is wanted
@@ -235,8 +234,6 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 			// clean up a failed personal upload; don't let junk accumulate.
 			if ownerID != nil {
 				removeFailedUpload(h.log(), res.Path, dst)
-			} else if r.Context().Err() != nil {
-				interrupted = append(interrupted, cmp.Or(res.Path, dst))
 			}
 		}
 		results = append(results, rr)
@@ -246,11 +243,6 @@ func (h *Library) Upload(w http.ResponseWriter, r *http.Request) {
 		// Nobody will see the results, so nothing this request added may stay
 		// behind taking up space (and quota) the user didn't mean to use.
 		h.undoCancelledUpload(context.WithoutCancel(r.Context()), u.ID, ownerID, destDir, added)
-		for _, p := range interrupted {
-			if inDest, _ := pathsafe.WithinRoot(destDir, p); inDest {
-				removeFailedUpload(h.log(), "", p)
-			}
-		}
 		return
 	}
 
