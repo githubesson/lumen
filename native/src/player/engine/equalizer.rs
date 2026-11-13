@@ -1,5 +1,6 @@
 //! Ten octave-spaced peaking filters, using the W3C Audio EQ Cookbook.
-//! Controls cross the existing mixer command queue. Render allocates nothing;
+//! Controls cross the existing mixer command queue as a [`Tuning`], whose
+//! pre-gain is worked out off the audio thread. Render allocates nothing;
 //! coefficients and gain approach their targets over 20 ms, once per frame.
 use serde::{Deserialize, Serialize};
 
@@ -56,10 +57,43 @@ impl Settings {
             .map_or("Custom", |(name, _)| *name)
     }
 
-    /// Conservative headroom for the entire cascade, not just its loudest band.
-    /// Original sample peaks/crossfades can still exceed full scale; this is not a limiter.
+    /// The cut that keeps the cascade's loudest frequency at the preamp's level:
+    /// the peak of its magnitude response, over a log-spaced grid from 20 Hz to
+    /// 20 kHz plus each band's centre, at 48 kHz. Cuts alone need none. Sample
+    /// peaks and crossfades can still exceed full scale; this is not a limiter.
     pub fn headroom_db(&self) -> f32 {
-        self.sanitized().bands.iter().map(|v| v.max(0.0)).sum()
+        const RATE: u32 = 48_000;
+        const POINTS: usize = 512;
+        let s = self.sanitized();
+        if s.bands.iter().all(|db| *db <= 0.0) {
+            return 0.0;
+        }
+        let cascade: [Coeff; 10] = std::array::from_fn(|i| peak(RATE, FREQUENCIES[i], s.bands[i]));
+        (0..POINTS)
+            .map(|i| 20.0 * 1000.0f64.powf(i as f64 / (POINTS - 1) as f64))
+            .chain(FREQUENCIES)
+            .map(|hz| magnitude_db(&cascade, RATE, hz))
+            .fold(0.0, f64::max) as f32
+    }
+}
+
+/// Settings and the pre-gain they need, worked out on the control side
+/// (`Engine::set_equalizer`) so the audio thread only applies them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tuning {
+    pub settings: Settings,
+    pub gain_db: f32,
+}
+
+impl Tuning {
+    pub fn new(settings: Settings) -> Self {
+        let settings = settings.sanitized();
+        let gain_db = if settings.enabled {
+            settings.preamp_db - settings.headroom_db()
+        } else {
+            0.0
+        };
+        Tuning { settings, gain_db }
     }
 }
 
@@ -85,6 +119,20 @@ fn peak(rate: u32, hz: f64, db: f32) -> Coeff {
     ])
 }
 
+/// The cascade's gain at `hz`, in dB: each biquad's |H(e^jw)|.
+fn magnitude_db(cascade: &[Coeff; 10], rate: u32, hz: f64) -> f64 {
+    let w = std::f64::consts::TAU * hz / rate as f64;
+    let (c1, c2) = (w.cos(), (2.0 * w).cos());
+    cascade
+        .iter()
+        .map(|Coeff([b0, b1, b2, a1, a2])| {
+            let num = b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * c1 + 2.0 * b0 * b2 * c2;
+            let den = 1.0 + a1 * a1 + a2 * a2 + 2.0 * (a1 + a1 * a2) * c1 + 2.0 * a2 * c2;
+            10.0 * (num / den).log10()
+        })
+        .sum()
+}
+
 #[derive(Clone, Copy, Default)]
 struct History {
     x1: f64,
@@ -94,12 +142,14 @@ struct History {
 }
 impl History {
     fn sample(&mut self, x: f64, c: Coeff) -> f64 {
+        // A NaN or infinity would stay in the history and silence the band for good.
+        let x = if x.is_finite() { x } else { 0.0 };
         let [b0, b1, b2, a1, a2] = c.0;
         let y = b0 * x + b1 * self.x1 + b2 * self.x2 - a1 * self.y1 - a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = x;
         self.y2 = self.y1;
-        self.y1 = if y.abs() < 1e-30 { 0.0 } else { y };
+        self.y1 = if !y.is_finite() || y.abs() < 1e-30 { 0.0 } else { y };
         self.y1
     }
 }
@@ -107,7 +157,7 @@ impl History {
 pub struct Equalizer {
     rate: u32,
     channels: usize,
-    settings: Settings,
+    tuning: Tuning,
     coeff: [Coeff; 10],
     target: [Coeff; 10],
     // Allocated on construction/output reconfiguration, never in process().
@@ -123,7 +173,7 @@ impl Equalizer {
         Self {
             rate,
             channels: channels.max(1),
-            settings: Settings::default(),
+            tuning: Tuning::default(),
             coeff: [IDENTITY; 10],
             target: [IDENTITY; 10],
             history: vec![[History::default(); 10]; channels.max(1)],
@@ -134,33 +184,25 @@ impl Equalizer {
         }
     }
 
-    pub fn configure(&mut self, settings: Settings) {
-        self.settings = settings.sanitized();
+    pub fn configure(&mut self, tuning: Tuning) {
+        self.tuning = tuning;
+        let settings = tuning.settings;
         self.target = std::array::from_fn(|i| {
             peak(
                 self.rate,
                 FREQUENCIES[i],
-                if self.settings.enabled {
-                    self.settings.bands[i]
-                } else {
-                    0.0
-                },
+                if settings.enabled { settings.bands[i] } else { 0.0 },
             )
         });
-        let db = if self.settings.enabled {
-            self.settings.preamp_db - self.settings.headroom_db()
-        } else {
-            0.0
-        };
-        self.target_gain = 10.0f64.powf(db as f64 / 20.0);
+        self.target_gain = 10.0f64.powf(tuning.gain_db as f64 / 20.0);
         self.remaining = (self.rate / 50).max(1);
         self.bypass = false;
     }
 
     pub fn reformat(&mut self, rate: u32, channels: usize) {
-        let settings = self.settings;
+        let tuning = self.tuning;
         *self = Self::new(rate, channels);
-        self.configure(settings);
+        self.configure(tuning);
     }
 
     pub fn reset_history(&mut self) {
@@ -223,10 +265,10 @@ mod tests {
         let mut eq = Equalizer::new(48000, 2);
         eq.process(&mut data);
         assert_eq!(data, original);
-        eq.configure(Settings {
+        eq.configure(Tuning::new(Settings {
             enabled: true,
             ..Settings::default()
-        });
+        }));
         eq.process(&mut data);
         assert_eq!(data, original);
     }
@@ -240,7 +282,7 @@ mod tests {
                     ..Settings::default()
                 };
                 s.bands[i] = -6.0;
-                eq.configure(s);
+                eq.configure(Tuning::new(s));
                 let mut data = tone(rate, *hz, rate as usize, 2);
                 let before = rms(&data[rate as usize..]);
                 eq.process(&mut data);
@@ -257,7 +299,7 @@ mod tests {
             ..Settings::default()
         };
         s.bands[5] = 12.0;
-        eq.configure(s);
+        eq.configure(Tuning::new(s));
         let mut data = tone(48000, 1000.0, 48000, 2);
         for frame in data.chunks_mut(2) {
             frame[1] = 0.0;
@@ -270,21 +312,82 @@ mod tests {
     #[test]
     fn changes_ramp_and_bypass_returns_to_exact_original() {
         let mut eq = Equalizer::new(48000, 1);
-        eq.configure(Settings {
+        eq.configure(Tuning::new(Settings {
             enabled: true,
             preamp_db: -12.0,
             ..Settings::default()
-        });
+        }));
         let mut dc = vec![0.25; 2000];
         eq.process(&mut dc);
         assert!((dc[0] - 0.25).abs() < 0.001);
         assert!(dc.windows(2).all(|w| (w[1] - w[0]).abs() < 0.001));
-        eq.configure(Settings::default());
+        eq.configure(Tuning::default());
         eq.process(&mut dc);
         let original = tone(48000, 100.0, 1000, 1);
         let mut data = original.clone();
         eq.process(&mut data);
         assert_eq!(data, original);
+    }
+    #[test]
+    fn headroom_follows_the_cascades_real_peak() {
+        let flat = Settings {
+            enabled: true,
+            ..Settings::default()
+        };
+        assert_eq!(flat.headroom_db(), 0.0);
+        assert_eq!(Tuning::new(flat).gain_db, 0.0);
+        let cut = Settings {
+            bands: [-12.0; 10],
+            ..flat
+        };
+        assert_eq!(cut.headroom_db(), 0.0, "cuts need no headroom");
+        let mut one = flat;
+        one.bands[5] = 12.0;
+        assert!((one.headroom_db() - 12.0).abs() < 0.01, "{}", one.headroom_db());
+        // Every band at +12: neighbouring bands overlap to about +18 dB, not 120.
+        let all = Settings {
+            bands: [12.0; 10],
+            ..flat
+        };
+        let db = all.headroom_db();
+        assert!((17.0..20.0).contains(&db), "{db}");
+        for (name, bands) in PRESETS {
+            let db = Settings { bands, ..flat }.headroom_db();
+            let loudest = bands.iter().fold(0.0f32, |m, b| m.max(*b));
+            assert!(db >= loudest - 0.01 && db < loudest + 3.0, "{name}: {db}");
+        }
+    }
+    #[test]
+    fn every_band_boosted_stays_audible() {
+        let mut eq = Equalizer::new(48000, 2);
+        eq.configure(Tuning::new(Settings {
+            enabled: true,
+            bands: [12.0; 10],
+            preamp_db: 0.0,
+        }));
+        for hz in [62.0, 1000.0, 8000.0] {
+            let mut data = tone(48000, hz, 48000, 2);
+            let before = rms(&data[48000..]);
+            eq.process(&mut data);
+            let db = 20.0 * (rms(&data[48000..]) / before).log10();
+            assert!((-3.0..0.1).contains(&db), "{hz}: {db}");
+        }
+    }
+    #[test]
+    fn a_non_finite_sample_does_not_stick() {
+        let mut eq = Equalizer::new(48000, 1);
+        let mut s = Settings {
+            enabled: true,
+            ..Settings::default()
+        };
+        s.bands[2] = 6.0;
+        eq.configure(Tuning::new(s));
+        let mut data = tone(48000, 125.0, 4800, 1);
+        data[100] = f32::NAN;
+        data[200] = f32::INFINITY;
+        eq.process(&mut data);
+        assert!(data.iter().all(|s| s.is_finite()));
+        assert!(rms(&data[2400..]) > 0.05);
     }
     #[test]
     fn malformed_settings_and_low_rate_remain_finite() {
@@ -295,7 +398,7 @@ mod tests {
             preamp_db: f32::NAN,
         };
         s.bands[0] = f32::INFINITY;
-        eq.configure(s);
+        eq.configure(Tuning::new(s));
         let mut data = tone(8000, 100.0, 8000, 6);
         eq.process(&mut data);
         assert!(data.iter().all(|s| s.is_finite()));

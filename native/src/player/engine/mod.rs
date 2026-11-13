@@ -204,7 +204,8 @@ impl Engine {
         let settings = settings.sanitized();
         if self.equalizer != settings {
             self.equalizer = settings;
-            let _ = self.mixer_tx.send(MixerCmd::Equalizer(settings));
+            // The pre-gain's response sweep runs here, off the audio thread.
+            let _ = self.mixer_tx.send(MixerCmd::Equalizer(equalizer::Tuning::new(settings)));
         }
     }
 

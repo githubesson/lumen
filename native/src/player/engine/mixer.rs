@@ -183,7 +183,7 @@ impl Outbox {
 }
 
 pub enum MixerCmd {
-    Equalizer(super::equalizer::Settings),
+    Equalizer(super::equalizer::Tuning),
     /// The current voice (a `load`); None plays nothing.
     SetCurrent(Option<Box<MixVoice>>),
     SetPrepared(Option<Box<MixVoice>>),
@@ -248,7 +248,7 @@ impl Mixer {
 
     fn apply(&mut self, cmd: MixerCmd) {
         match cmd {
-            MixerCmd::Equalizer(settings) => self.equalizer.configure(settings),
+            MixerCmd::Equalizer(tuning) => self.equalizer.configure(tuning),
             MixerCmd::SetCurrent(voice) => {
                 self.equalizer.reset_history();
                 self.finish_fade();
