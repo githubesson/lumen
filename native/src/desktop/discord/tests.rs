@@ -349,3 +349,21 @@ fn playing_or_clearing_cancels_the_paused_expiry() {
     e.clear(3_000.0);
     assert_eq!(e.next_wake(), None);
 }
+
+#[test]
+fn an_expired_paused_card_stays_down_when_a_retry_was_queued_before_it_expired() {
+    let fake = Fake::default();
+    let mut e = engine(&fake, Some(default_card()));
+    e.push(Activity { is_playing: false, ..track("t1", "Song") }, 0.0).unwrap();
+    // Discord goes away in the card's last 30 s: its restore is queued for
+    // after the reconnect backoff, past the expiry.
+    fake.log().drop_next_poll = true;
+    e.tick(PAUSED_CARD_TTL_MS - 20_000.0);
+    assert!(!e.connected());
+    e.tick(PAUSED_CARD_TTL_MS);
+    assert_eq!(e.next_wake(), None);
+    e.tick(PAUSED_CARD_TTL_MS + 30_000.0);
+    e.tick(PAUSED_CARD_TTL_MS + 600_000.0);
+    let log = fake.log();
+    assert_eq!((log.logins, log.requests.len(), log.clears), (1, 1, 0));
+}
