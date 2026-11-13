@@ -45,8 +45,11 @@ function expirePausedCard(generation: number): void {
   pausedTimer = setTimeout(() => {
     pausedTimer = null;
     if (generation !== pushGeneration) return;
-    // Forget it too, so a reconnect or card change doesn't put it back.
+    // Forget it too, so a reconnect (one already queued included) or a card
+    // change doesn't put it back.
     requested = null;
+    lastActivity = null;
+    cancelRetry();
     void client?.clearActivity().catch(() => {});
   }, PAUSED_CARD_TTL_MS);
   pausedTimer.unref?.();

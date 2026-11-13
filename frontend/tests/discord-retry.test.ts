@@ -259,3 +259,17 @@ it("takes a paused card down after a while, and a new push cancels that", async 
   await advance(30 * 60_000);
   expect(clearActivity).toHaveBeenCalledTimes(1);
 });
+
+it("doesn't bring an expired paused card back through a reconnect queued just before", async () => {
+  const login = vi.fn().mockResolvedValue(undefined);
+  const { exports, request, advance, handlers } = load(login);
+  exports.configureDiscordPresence({ clientId: "fixture" });
+  await exports.pushDiscordActivity({ trackId: "a", title: "Song", isPlaying: false });
+  expect(request).toHaveBeenCalledOnce();
+  // Discord drops at 9:50; its reconnect is queued for 10:20, after the expiry.
+  await advance(9 * 60_000 + 50_000);
+  handlers.get("disconnected")!();
+  await advance(10 * 60_000);
+  await advance(11 * 60_000);
+  expect(request).toHaveBeenCalledOnce();
+});
