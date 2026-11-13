@@ -83,7 +83,8 @@ pub fn iconbtn(t: &Theme, key: &str, glyph: &'static Icon, glyph_size: f32, stat
     if state.disabled {
         b = b.opacity(0.4).disabled(true);
     } else {
-        b = b.hover(if state.active { t.c.foreground.alpha(0.08) } else { t.c.ghost_hover }).focusable(true);
+        // `.iconbtn.active` outranks `.iconbtn:hover`: lit, it stays muted.
+        b = if state.active { b.hover_group() } else { b.hover(t.c.ghost_hover) }.focusable(true);
     }
     b
 }
@@ -334,13 +335,4 @@ impl Btn {
 pub fn input_with(t: &Theme, key: &str, edit: &rune::TextEdit, placeholder: &str, field_fn: impl FnOnce(El) -> El) -> El {
     let field = crate::ui::forms::text_field(t, key, edit, font(14.0, 400.0), placeholder);
     crate::ui::forms::input_box(t, key, edit.focused, field_fn(field))
-}
-
-/// A cover's hover tint must sit above its image, not behind opaque pixels.
-/// Keep the tint inert so the cover retains its navigation and focus target.
-pub fn cover_link(t: &Theme, view: El) -> El {
-    view.hover_group().focusable(true).cursor(Cursor::Pointer).role("link")
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .radius(t.radius_lg()).fill(t.c.foreground.alpha(0.12))
-            .group_opacity(0.0, 1.0).inert())
 }

@@ -166,7 +166,7 @@ fn nav(app: &App, t: &Theme, list: &[(SectionId, &'static str, &'static Icon)], 
         .role("button")
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .hover(t.c.foreground.alpha(0.08))
+        .hover(crate::ui::hover_overlay(t.c.muted, t.c.ghost_hover))
         .child(ico(&i::X, 16.0, t.c.foreground))
         .label("Close settings")
         .help("Close settings")
@@ -200,7 +200,8 @@ fn nav(app: &App, t: &Theme, list: &[(SectionId, &'static str, &'static Icon)], 
                 s.active = id;
             });
         if selected {
-            it = it.fill(t.c.sidebar_accent).hover(t.c.foreground.alpha(0.08));
+            // `.settings-nav-item:hover, .active`: the same fill either way.
+            it = it.fill(t.c.sidebar_accent);
         }
         items = items.child(it);
     }

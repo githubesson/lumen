@@ -123,7 +123,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>, h: Props) -> El {
             .label(p.name.clone())
             .cursor(Cursor::Pointer)
             .focusable(true)
-            .hover(t.c.ghost_hover)
             .on_press(detail::open_settings_on_name)
             .child(title_text)
             .tip("playlist-header-title", "Edit details")

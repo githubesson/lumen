@@ -634,7 +634,8 @@ fn item_view(app: &App, t: &Theme, it: &Item, selected: bool) -> El {
     }
     let value = it.value.clone();
     let act = it.act.clone();
-    r.cursor(Cursor::Pointer).hover(t.c.foreground.alpha(0.06))
+    // `[cmdk-item]`: `cursor: default`, lit only by the selection.
+    r.cursor(Cursor::Default)
         .on_hover_change(move |app: &mut App, inside, _| {
             if inside && app.overlays.palette.selected.as_deref() != Some(&value) {
                 app.overlays.palette.selected = Some(value.clone());

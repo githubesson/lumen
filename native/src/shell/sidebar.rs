@@ -72,7 +72,8 @@ fn nav_item(t: &Theme, key: &str, glyph: &'static Icon, label: &str, active: boo
         // `.active > .lucide-heart { fill: currentColor }`.
         .child(ico(if active && glyph.name == "heart" { &i::HEART_FILLED } else { glyph }, 16.0, t.c.sidebar_foreground));
     if active {
-        item = item.fill(t.c.sidebar_accent).hover(t.c.sidebar_foreground.alpha(0.06));
+        // `.nav-item:hover` and `.active` share the fill: no change on hover.
+        item = item.fill(t.c.sidebar_accent);
     }
     if compact(t) {
         item = item.justify_center().tip_side(key, label, Side::Right);
@@ -118,9 +119,7 @@ pub fn view(app: &App, t: &Theme, drawer: bool) -> El {
     let brand = {
         let mut b = row()
             .key("brand")
-            .hover(t.c.ghost_hover)
             .focusable(true)
-            .radius(t.radius_lg())
             .h(48.0)
             .px(8.0)
             .items_center()

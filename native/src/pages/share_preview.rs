@@ -636,7 +636,6 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
         .items_center()
         .role("link")
         .label("Lumen home")
-        .hover(t.c.ghost_hover)
         .cursor(Cursor::Pointer)
         .focusable(true)
         .child(brand_mark(t, 24.0).radius(t.radius_md()))

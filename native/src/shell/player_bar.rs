@@ -44,7 +44,9 @@ pub fn t_btn_with(t: &Theme, key: &str, glyph: El, active: bool, disabled: bool)
     if disabled {
         b.opacity(0.4).disabled(true)
     } else {
-        b.cursor(Cursor::Pointer).focusable(true).hover(if active { t.c.foreground.alpha(0.08) } else { t.c.ghost_hover })
+        // `.t-btn.active` outranks `.t-btn:hover`: lit, it stays muted.
+        let b = b.cursor(Cursor::Pointer).focusable(true);
+        if active { b.hover_group() } else { b.hover(t.c.ghost_hover) }
     }
 }
 

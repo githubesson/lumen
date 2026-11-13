@@ -237,7 +237,6 @@ pub fn checkbox(t: &Theme, key: &str, checked: bool, indeterminate: bool, label:
         .key(key)
         .size(16.0, 16.0)
         .radius(2.0)
-        .hover(t.c.background.alpha(0.25))
         .role("checkbox")
         .label(label)
         .cursor(Cursor::Pointer)

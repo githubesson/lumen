@@ -81,11 +81,16 @@ fn breadcrumbs(app: &App, t: &Theme) -> El {
             ui::line(c.label, style, t.c.foreground)
         } else if let Some(to) = c.to {
             let replace = c.replace;
-            ui::line(c.label, style, t.c.muted_foreground)
-                .hover(t.c.ghost_hover)
+            // `.crumbs a:hover`: only the text lights up. `group_color`
+            // follows an ancestor's hover, so the link wraps the line.
+            row()
+                .shrink()
+                .hover_group()
                 .focusable(true)
                 .role("link")
+                .label(c.label.clone())
                 .cursor(Cursor::Pointer)
+                .child(ui::line(c.label, style, t.c.muted_foreground).group_color(t.c.foreground))
                 .on_press(move |app: &mut App| {
                     if replace {
                         app.navigate_replace(Location::parse(&to));
@@ -118,7 +123,6 @@ fn search(t: &Theme, window_w: f32) -> El {
         .items_center()
         .radius(t.radius_lg())
         .fill(t.c.input_bg)
-        .hover(ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
         .role("button")
         .label("Search library, albums, tracks… Ctrl+K")
         .cursor(Cursor::Pointer)
@@ -138,7 +142,6 @@ fn search_icon(t: &Theme) -> El {
         .center()
         .radius(t.radius_lg())
         .fill(t.c.input_bg)
-        .hover(ui::hover_overlay(t.c.input_bg, t.c.input_bg_hover))
         .role("button")
         .label("Search library, albums, tracks… Ctrl+K")
         .cursor(Cursor::Pointer)

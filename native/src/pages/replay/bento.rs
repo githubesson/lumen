@@ -567,7 +567,8 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         .child(crate::ui::cover_art(t, &app.images, Some(&tr.cover_at(Some(512))), &tr.title, art, art, t.radius_lg()));
     if let Some(a) = &album {
         let href = a.album_href();
-        cover = crate::ui::cover_link(t, cover).on_press(move |app: &mut App| app.navigate_to(&href));
+        // `.bento-feat-cover` is a plain link (`tabIndex={-1}`), no hover wash.
+        cover = cover.cursor(Cursor::Pointer).on_press(move |app: &mut App| app.navigate_to(&href));
     }
 
     // Artists, each linked when they have a page, then the album.
@@ -639,11 +640,11 @@ fn featured(app: &App, t: &Theme, track: &ReplayTrack, width: f32, fit: Fit) -> 
         .checked(fav)
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .hover(t.c.ghost_hover)
         .press_scale(0.95)
         .child(heart)
         .on_press(move |app: &mut App| track_row::toggle_favorite(app, &id));
-    let heart_btn = if fav { heart_btn.fill(t.c.muted).hover(t.c.foreground.alpha(0.08)) } else { heart_btn };
+    // `.iconbtn.active` (a favourite) stays muted under the pointer.
+    let heart_btn = if fav { heart_btn.fill(t.c.muted) } else { heart_btn.hover(t.c.ghost_hover) };
     let (t1, t2) = (tr.clone(), tr.clone());
     let more = iconbtn(t, "replay-feat-more", &i::ELLIPSIS, 16.0, BtnState::default())
         .label("More actions")

@@ -321,10 +321,11 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let art = cover_art(t, &app.images, Some(&track.cover_at(None)), &label, side, side, t.radius_lg());
     // The cover opens the album too (`hero-art-link`), named for it.
     let tr = track.clone();
-    // `cover_link` adds the hover wash, and the role, cursor and focus.
-    let art = crate::ui::cover_link(t, art)
-        .key("hero-album-cover")
+    let art = art
+        .cursor(rune::Cursor::Pointer)
+        .role("link")
         .label(format!("Go to {title_text}"))
+        .focusable(true)
         .on_press(move |app: &mut App| entity_links::open_album(app, &tr));
     let art = if l.stacked && narrow { el().w_full().center().child(art) } else { art };
     let head = head_view(Some(art), body_view(t, body, &l, narrow), &l);

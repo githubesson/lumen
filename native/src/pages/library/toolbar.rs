@@ -158,7 +158,8 @@ fn display_toggle(t: &Theme, current: Display) -> El {
             .label(label)
             .checked(active)
             .focusable(true)
-            .hover(t.c.ghost_hover)
+            // `.segmented button:hover`: the glyph's colour, no fill.
+            .hover_group()
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| super::set_display(app, value));
         if active {

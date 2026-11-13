@@ -366,7 +366,8 @@ pub fn segmented_counted<T: Copy + PartialEq + 'static>(
             .role("tab")
             .checked(active)
             .focusable(true)
-            .hover(t.c.ghost_hover)
+            // `.segmented button:hover`: the label's colour, no fill.
+            .hover_group()
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| on_pick(app, v));
         if active {
@@ -399,7 +400,7 @@ pub fn segment_indicator(t: &Theme, key: &str) -> El {
 /// dark theme the input's background and its `--input` border (a CSS border,
 /// painted over the pill's own fill).
 pub fn segment_lit(t: &Theme, e: El, radius: f32) -> El {
-    let e = e.radius(radius).hover(t.c.foreground.alpha(0.08));
+    let e = e.radius(radius);
     if t.dark() {
         crate::ui::css_border(e.fill(t.c.input_bg), 1.0, t.c.input, radius)
     } else {
@@ -432,7 +433,7 @@ pub fn switch(t: &Theme, key: &str, checked: bool, disabled: bool, on_toggle: im
     if disabled {
         s = s.opacity(0.6).disabled(true);
     } else {
-        s = s.hover(t.c.background.alpha(0.25)).cursor(Cursor::Pointer).focusable(true).on_press(on_toggle);
+        s = s.cursor(Cursor::Pointer).focusable(true).on_press(on_toggle);
     }
     s
 }

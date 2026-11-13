@@ -69,7 +69,6 @@ pub fn card_play(t: &Theme, key: &str, label: &str, on_play: Action) -> El {
         .label(label)
         .cursor(Cursor::Pointer)
         .shadow_md(t)
-        .hover(t.c.background.alpha(0.2))
         .focusable(true)
         .group_opacity(0.0, 1.0)
         .press_scale(0.95)

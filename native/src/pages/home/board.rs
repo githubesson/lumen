@@ -359,7 +359,6 @@ pub fn playlist_row(app: &App, t: &Theme, key: String, p: &Playlist, on_play: Ac
         .key(format!("{key}-play"))
         .role("button")
         .label(play_label)
-        .hover(t.c.background.alpha(0.2))
         .focusable(true)
         .cursor(Cursor::Pointer)
         .press_scale(0.95)
