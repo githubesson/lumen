@@ -18,6 +18,7 @@ import {
   defaultUploadScope,
   isUploadableFile,
   planUploadBatches,
+  sendUploadBatch,
   tooLargeUploadResult,
   UPLOAD_EXTENSIONS,
   uploadAddedAny,
@@ -64,6 +65,12 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     if (!busy) return onClose();
     setCancelling(true);
     abortRef.current?.abort();
+  };
+  // Escape, the scrim and the close button only close: during an upload they
+  // do nothing, since stopping one also removes what it already added. That
+  // takes the footer's Cancel upload.
+  const dismiss = () => {
+    if (!busy) onClose();
   };
   const inputRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -120,7 +127,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
         if (ctrl.signal.aborted) break;
         // Only admins may upload to the shared library; the choice is hidden
         // from everyone else.
-        const results = await api.uploadMusic(batch, scopeSent, { signal: ctrl.signal });
+        const results = await sendUploadBatch(() => api.uploadMusic(batch, scopeSent, { signal: ctrl.signal }), ctrl.signal);
         uploaded.push(
           ...(edits ? await applyUploadEdits(results, batch.map((f) => files.indexOf(f)), edits, scopeSent) : results),
         );
@@ -133,9 +140,12 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
     } catch (err) {
       if (ctrl.signal.aborted) {
         // Take back what finished before the cancel; nothing half-done stays.
+        // A promoted track was someone's personal upload before this one
+        // shared it: not new, so it stays.
+        const addedHere = uploaded.filter((r) => r.inserted && !r.promoted && r.track_id);
         let removed = 0;
-        for (const r of uploaded) {
-          if (!r.inserted || !r.track_id) continue;
+        for (const r of addedHere) {
+          if (!r.track_id) continue;
           try {
             await (scopeSent === "global" ? api.deleteGlobalTrack(r.track_id) : api.deleteTrack(r.track_id));
             removed++;
@@ -143,7 +153,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
             // Reported in the count below.
           }
         }
-        const added = uploaded.filter((r) => r.inserted && r.track_id).length;
+        const added = addedHere.length;
         setCancelNote(
           added === 0
             ? "Upload cancelled. Nothing was added."
@@ -195,7 +205,7 @@ export default function UploadDialog({ open, isAdmin, onClose, onComplete }: Pro
       <DialogShell
         open={open}
         title="Add music"
-        onClose={cancel}
+        onClose={dismiss}
         footer={
           <DialogFooter>
             <Button variant="ghost" onClick={cancel} disabled={cancelling}>

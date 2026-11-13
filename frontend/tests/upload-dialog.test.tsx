@@ -176,3 +176,40 @@ it("cancels mid-upload: stops sending and removes what earlier requests added", 
   expect(screen.getByText(/Upload cancelled\. Removed the 1 track it had already added\./)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Upload 3" })).toBeTruthy(); // selection kept for a retry
 });
+
+it("keeps uploading through Escape and the close button, and a cancel leaves a promoted track", async () => {
+  const m = mock as unknown as Record<string, ReturnType<typeof vi.fn>>;
+  m.deleteTrack = vi.fn(async () => {});
+  m.deleteGlobalTrack = vi.fn(async () => {});
+  const onClose = vi.fn();
+  mock.uploadMusic
+    // The shared upload took over someone's personal copy: inserted, but not new.
+    .mockImplementationOnce(async (files: File[]) => files.map((f) => ({ file: f.name, inserted: true, promoted: true, track_id: "t-theirs" })))
+    .mockImplementationOnce((_files: File[], _scope: string, { signal }: { signal: AbortSignal }) =>
+      new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+    );
+  render(<UploadDialog open isAdmin onClose={onClose} />);
+  fireEvent.change(await screen.findByLabelText(/Drop files or folders here/), {
+    target: { files: [file("one.flac", 60 * MB), file("two.flac", 60 * MB)] },
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Upload 2" }));
+  });
+  const dialog = screen.getByRole("dialog");
+  screen.getByRole("button", { name: "Close" }).focus();
+  await act(async () => {
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  });
+  expect(onClose).not.toHaveBeenCalled();
+  expect(dialog.isConnected).toBe(true);
+  // Still going: the second request was never aborted.
+  expect(screen.getByRole("button", { name: "Cancel upload" })).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Cancel upload" }));
+  });
+  expect(m.deleteTrack).not.toHaveBeenCalled();
+  expect(m.deleteGlobalTrack).not.toHaveBeenCalled();
+  expect(screen.getByText("Upload cancelled. Nothing was added.")).toBeTruthy();
+});

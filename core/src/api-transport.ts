@@ -1,7 +1,14 @@
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** `retryAfterSeconds`: a 429's or 503's Retry-After, when it gave one in seconds. */
+  constructor(public status: number, message: string, public retryAfterSeconds?: number) {
     super(message);
   }
+}
+
+function retryAfterSeconds(response: Response): number | undefined {
+  const value = response.headers?.get("retry-after")?.trim();
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  return Number(value);
 }
 
 export type RequestOptions = Pick<RequestInit, "signal">;
@@ -191,7 +198,7 @@ async function throwIfFailed(
   ) {
     onUnauthorized?.();
   }
-  throw new ApiError(response.status, text || response.statusText);
+  throw new ApiError(response.status, text || response.statusText, retryAfterSeconds(response));
 }
 
 /**

@@ -1163,6 +1163,12 @@ export interface Artist {
 export interface UploadResult {
   file: string;
   inserted: boolean;
+  /**
+   * A shared upload that took over someone's personal copy of the same
+   * audio: inserted into the shared library, but not a new track, so undoing
+   * the upload must leave it.
+   */
+  promoted?: boolean;
   dedup?: boolean;
   skipped?: boolean;
   error?: string;

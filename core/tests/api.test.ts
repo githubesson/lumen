@@ -455,6 +455,17 @@ describe("form upload fetch", () => {
     expect(errorMessage(err, "Couldn't use that image.")).toBe("Couldn't use that image.");
     expect(errorMessage(new ApiError(413, "too large"), "fallback")).toBe("too large");
   });
+
+  it("carries a rate limit's Retry-After seconds on the error", async () => {
+    setFormFetch(vi.fn(async () => new Response("rate limit exceeded", { status: 429, headers: { "Retry-After": "12" } })));
+    const err = await api.uploadMusic([], "personal").catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 429, retryAfterSeconds: 12 });
+
+    // An HTTP date isn't seconds; the caller falls back to its own wait.
+    setFormFetch(vi.fn(async () => new Response("busy", { status: 503, headers: { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" } })));
+    const dated = await api.uploadMusic([], "personal").catch((e: unknown) => e);
+    expect(dated).toMatchObject({ status: 503, retryAfterSeconds: undefined });
+  });
 });
 
 describe("search continuation and library sort", () => {
