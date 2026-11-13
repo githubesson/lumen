@@ -4,6 +4,10 @@ import type { TrackListItem } from "@music-library/core";
 import { displayText } from "../lib/format";
 import { artistNames, trackArtistHref } from "../lib/nowPlayingLinks";
 
+// The latest link activation, app-wide: a slow lookup that a later click
+// (or a page opened meanwhile) has overtaken must not navigate late.
+let latestActivation = 0;
+
 /**
  * Text (or a cover) that opens a page, looked up when clicked. Needs a router.
  *
@@ -27,8 +31,17 @@ export function PageLink({
   children: ReactNode;
 }) {
   const navigate = useNavigate();
-  // A lookup that fails or finds nothing leaves the page as it is.
-  const open = () => void href().then((to) => to && navigate(to)).catch(() => {});
+  // A lookup that fails or finds nothing leaves the page as it is, as does
+  // one that a later link or another page has overtaken.
+  const open = () => {
+    const activation = ++latestActivation;
+    const from = window.location.href;
+    void href()
+      .then((to) => {
+        if (to && activation === latestActivation && window.location.href === from) navigate(to);
+      })
+      .catch(() => {});
+  };
   // A cover is a block, and a span can't hold one.
   const Tag = named ? "div" : "span";
   return (

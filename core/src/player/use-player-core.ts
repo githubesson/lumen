@@ -143,15 +143,19 @@ async function probeStream(
 }
 
 /**
- * An HTML error page instead of Lumen's plain-text answer means the server
- * never answered: a proxy in front of it did. Say so, with the page's title
- * and whose page it is when it says, so a report points the right way.
+ * Lumen's server answers a failure in plain text, so an HTML error page
+ * likely came from something in front of it. Say what it was, with the
+ * page's title, and name the proxy only when the page names itself, so a
+ * report points the right way without blaming a proxy that isn't there.
  */
 function proxyPageNote(text: string): string {
   if (!text.trimStart().startsWith("<")) return "";
   const title = /<title[^>]*>([^<]{1,120})<\/title>/i.exec(text)?.[1]?.trim();
+  const named = title ? ` ("${title}")` : "";
   const from = /cloudflare/i.test(text) ? "Cloudflare" : /nginx/i.test(text) ? "nginx" : null;
-  return ` · a proxy's error page${title ? ` ("${title}")` : ""}${from ? ` from ${from}` : ""}, not Lumen's server`;
+  return from
+    ? ` · a proxy's error page${named} from ${from}, not Lumen's server`
+    : ` · an HTML error page${named}, likely from a proxy in front of Lumen's server`;
 }
 
 /**

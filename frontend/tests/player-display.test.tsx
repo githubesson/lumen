@@ -397,3 +397,25 @@ it("opens the album from the title and album, and each artist's page from their 
   await act(async () => { fireEvent.keyDown(nujabes, { key: "Enter" }); });
   expect(at).toBe("/library?view=artists&artist=a-nujabes");
 });
+
+it("drops a slow artist lookup that a later link click overtook", async () => {
+  const { MemoryRouter, Routes, Route, useLocation } = await import("react-router-dom");
+  const { api } = await import("../../core/src/api");
+  let answer: (detail: unknown) => void = () => {};
+  vi.spyOn(api, "getTrack").mockReturnValue(new Promise((resolve) => { answer = resolve; }) as never);
+  let at = "";
+  function Where() { at = useLocation().pathname + useLocation().search; return null; }
+  const song = { id: "t1", title: "The Sign", duration_ms: 1, source: "local" as const, album_id: "al-1", album_title: "Modal Soul", artist: "Nujabes" };
+  render(
+    <MemoryRouter initialEntries={["/"]}>
+      <NowPlaying track={song} title="The Sign" artist="ignored" />
+      <Routes><Route path="*" element={<Where />} /></Routes>
+    </MemoryRouter>,
+  );
+  await act(async () => { screen.getByRole("link", { name: "Nujabes" }).click(); });
+  await act(async () => { screen.getByRole("link", { name: "Modal Soul" }).click(); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+  // The artist's detail arrives late: the album, opened since, stays.
+  await act(async () => { answer({ id: "t1", title: "The Sign", artists: [{ id: "a-nujabes", name: "Nujabes", role: "primary" }] }); });
+  expect(at).toBe("/library?view=albums&album=al-1");
+});
