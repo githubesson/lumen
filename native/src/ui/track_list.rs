@@ -185,6 +185,38 @@ impl TrackList {
         c.child(table)
     }
 
+    /// Fixed-height album rows inside the original sleeve layout. Unlike `page`,
+    /// this can sit beside the sticky cover without changing the page scroller.
+    /// Keep the full body's height and mount the viewport plus one screen each
+    /// side. The range moves in steps of half a screen, so a scroll re-runs the
+    /// view only when its top row crosses one, not every frame.
+    pub fn windowed(self, app: &App, t: &Theme, cx: &rune::Cx<App>) -> El {
+        let items = (self.source)(app);
+        if items.is_empty() {
+            return self.empty.clone().unwrap_or_else(el);
+        }
+        if self.selectable {
+            app.widgets.lists.mount(&self.key, self.source);
+        }
+        let body_key = format!("{}-windowed-body", self.key);
+        let row_h = t.row_h();
+        let (viewport_y, viewport_h) = cx.window_layout_with("content", |r| (r[1], r[3])).unwrap_or((0.0, 820.0));
+        let visible = ((viewport_h / row_h).ceil() as usize).max(1);
+        let step = (visible / 2).max(1);
+        let first = cx.window_layout_with(&body_key, move |r| ((viewport_y - r[1]).max(0.0) / row_h) as usize / step).unwrap_or(0) * step;
+        let range = windowed_range(items.len(), visible, first);
+        let mut body = col().key(body_key).w_full().h(items.len() as f32 * t.row_h());
+        for n in range {
+            body = body.child(el().absolute(0.0, n as f32 * t.row_h()).w_full().h(t.row_h())
+                .child(self.row(app, t, n, &items[n])));
+        }
+        let mut c = col().key(format!("{}-list", self.key)).w_full().gap(self.gap);
+        if let Some(place) = self.bar {
+            c = c.child(self.selection_bar(app, t, place));
+        }
+        c.child(self.dim(col().w_full().child(self.header_row(app, t)).child(body)))
+    }
+
     /// The whole page as virtual rows of the content scroller: `head` (the
     /// page's header, padded like `.view`), then the selection bar and the
     /// table's header, one row per track, and `tail`. Return it as the
@@ -419,4 +451,28 @@ pub fn open_menu(app: &mut App, list: &str, source: Source, queue: Source, tr: &
         selection,
     };
     track_menu::open(app, tr.clone(), at, ctx);
+}
+
+/// The rows to mount from `first` (at or above the top one shown, `visible`
+/// rows a screen): a screen of overscan each side prevents gaps during
+/// ordinary wheel/drag motion; clamping also handles a filtered list whose old
+/// scroll position was near its end.
+fn windowed_range(count: usize, visible: usize, first: usize) -> std::ops::Range<usize> {
+    let first = first.min(count.saturating_sub(1));
+    first.saturating_sub(visible)..(first + visible * 2 + 1).min(count)
+}
+
+#[cfg(test)]
+mod windowed_tests {
+    use super::windowed_range;
+    #[test]
+    fn large_album_window_is_bounded_and_reaches_both_ends() {
+        // 674 px of 44 px rows: 16 a screen.
+        assert_eq!(windowed_range(4635, 16, 0), 0..33);
+        let end = windowed_range(4635, 16, 4619);
+        assert!(end.contains(&4634));
+        assert!(end.len() <= 49);
+        assert_eq!(windowed_range(4, 16, 4619), 0..4);
+        assert!(windowed_range(0, 16, 0).is_empty());
+    }
 }

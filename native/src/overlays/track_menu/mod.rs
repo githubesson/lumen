@@ -30,6 +30,7 @@ use crate::ui::track_row::{self, Actions};
 use crate::ui::track_select::Source;
 
 pub use view::view;
+pub(crate) use view::list_item;
 
 /// Covers in the header are 40 px or less; rows already loaded this size.
 const THUMB: u32 = 64;

@@ -109,16 +109,24 @@ impl Player {
 
     /// The OS media controls show the local track unless another device is
     /// controlled (`useMediaSession`). Built again only when the track or
-    /// the play state moved.
+    /// the play state moved, or the position left what the OS extrapolates
+    /// (`media_session::Clock`).
     fn show_in_media_session(&mut self) {
         let exposed = media_session::should_expose(self.controlling());
-        let key = (self.local.current_rev(), exposed, self.local.is_playing());
-        if self.media_shown == Some(key) {
+        let playing = self.local.is_playing();
+        let position = if exposed { self.local.current_time().max(0.0) } else { 0.0 };
+        let now = Instant::now();
+        let (running, drifted) = self.media_clock.poll(playing, position, now);
+        let duration_us = if exposed { (self.local.duration().max(0.0) * 1_000_000.0) as i64 } else { 0 };
+        let key = (self.local.current_rev(), exposed, playing, running, duration_us);
+        if self.media_shown == Some(key) && !drifted {
             return;
         }
         self.media_shown = Some(key);
+        self.media_clock.sent(position, running, now);
         let track = self.local.current().filter(|_| exposed).map(media_session::now_playing);
-        self.media.show(Shown { track, playing: self.local.is_playing() }, self.client.as_ref());
+        let shown = Shown { track, playing, running, position_us: (position * 1_000_000.0) as i64, duration_us };
+        self.media.show(shown, self.client.as_ref());
     }
 
     /// When the clock, a debounce, a heartbeat or a timeout is next due.

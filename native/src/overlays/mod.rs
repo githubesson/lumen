@@ -12,6 +12,7 @@
 //!
 //! The update toast follows the desktop updater by itself.
 pub mod confirm;
+pub mod collection_play;
 pub mod edit;
 pub mod palette;
 pub mod scenes;
@@ -40,6 +41,7 @@ pub struct Overlays {
     pub palette: palette::State,
     pub upload: upload::State,
     pub confirm: confirm::State,
+    pub collection_play: collection_play::State,
     pub track_menu: track_menu::State,
     pub track_info: track_info::State,
     pub share: share::State,
@@ -81,6 +83,7 @@ fn dialogs(app: &App, t: &Theme, cx: &mut Cx<App>) -> Vec<El> {
         track_info::picker_view(app, t, cx),
         palette::view(app, t, cx),
         track_menu::view(app, t, cx),
+        collection_play::view(app, t, cx),
         confirm::view(app, t, cx),
         crate::pages::playlists::overlay(app, t, cx),
         crate::pages::home::layer(app, t, cx),

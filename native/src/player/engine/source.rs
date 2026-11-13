@@ -51,6 +51,12 @@ impl Http {
         Http { agent, cookie }
     }
 
+    /// Reuse the connection pool while taking a fresh authentication snapshot
+    /// for this voice. Existing decoders keep their own cookie.
+    pub fn with_cookie(&self, cookie: Option<String>) -> Http {
+        Http { agent: self.agent.clone(), cookie }
+    }
+
     /// GET `url`, from byte `from` when given. Non-2xx answers are errors
     /// carrying the server's text.
     pub fn get(&self, url: &str, from: Option<u64>) -> Result<Response, HttpError> {

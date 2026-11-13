@@ -149,6 +149,7 @@ pub fn artist_card(
 pub fn release_card(app: &App, t: &Theme, key: &str, r: &ArtistRelease, width: f32) -> El {
     let cover = media::album_art(&r.id, r.has_cover, r.cover_url.as_deref(), r.source, Some(384), None);
     let target: EntityTarget = logic::release_target(r);
+    let release = r.clone();
     card(
         app,
         t,
@@ -165,6 +166,9 @@ pub fn release_card(app: &App, t: &Theme, key: &str, r: &ArtistRelease, width: f
         None,
     )
     .label(r.title.clone())
+    .on_secondary_press(move |app: &mut App, at: rune::PointerPress, _tx: &mut rune::Tx| {
+        crate::overlays::collection_play::open_menu(app, release.clone(), [at.x, at.y]);
+    })
     .on_press(move |app: &mut App| super::open_album(app, target.clone()))
 }
 

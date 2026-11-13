@@ -44,7 +44,9 @@ pub fn t_btn_with(t: &Theme, key: &str, glyph: El, active: bool, disabled: bool)
     if disabled {
         b.opacity(0.4).disabled(true)
     } else {
-        b.cursor(Cursor::Pointer).focusable(true).hover(t.c.ghost_hover)
+        // `.t-btn.active` outranks `.t-btn:hover`: lit, it stays muted.
+        let b = b.cursor(Cursor::Pointer).focusable(true);
+        if active { b.hover_group() } else { b.hover(t.c.ghost_hover) }
     }
 }
 
@@ -73,13 +75,19 @@ fn bar_with(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &s
             match d.phase {
                 rune::Phase::Down | rune::Phase::Move => {
                     app.ui.seek_drag = Some((k.clone(), at));
+                    if clock {
+                        app.ui.player.progress.snap(at);
+                    }
                     if live {
                         on_seek(app, at);
                     }
                 }
                 rune::Phase::Up => {
                     app.ui.seek_drag = None;
-                    on_seek(app, at);
+                    let at = if d.cancelled() { current(app) } else {
+                        on_seek(app, at);
+                        at
+                    };
                     if clock {
                         // The fill stays where it was let go, rather than
                         // gliding back from where the clock last was.
@@ -88,9 +96,11 @@ fn bar_with(app: &App, t: &Theme, key: &str, current: fn(&App) -> f32, label: &s
                 }
             }
         });
-    let (fill, thumb_track) = if clock && dragging.is_none() {
-        // Playback moves these through live values, not the view.
-        (pui::progress::fill(app, t), pui::progress::thumb(app, t, h, false))
+    let (fill, thumb_track) = if clock {
+        // Keep the same live geometry during playback and dragging. Replacing
+        // it with percentage-width nodes reuses animated/live node state and
+        // can paint the old offset on top of the new layout for a frame.
+        (pui::progress::fill(app, t), pui::progress::thumb(app, t, h, dragging.is_some()))
     } else {
         let thumb_opacity = if dragging.is_some() { 1.0 } else { 0.0 };
         // Centred on the value: the end of a box `v` of the track wide, pulled 6 px past it.
@@ -263,7 +273,7 @@ pub fn transport_row(app: &App, t: &Theme, s: TransportSize) -> El {
     let mut controls = row().key("transport-row").gap(s.gap).items_center();
     if !s.compact {
         controls = controls.child(
-            sized(t_btn(t, "shuffle", &i::SHUFFLE, p.shuffle, d.command_pending)).label("Shuffle").on_press(|app: &mut App| app.player.toggle_shuffle()),
+            sized(t_btn(t, "shuffle", &i::SHUFFLE, p.shuffle, d.command_pending)).label("Shuffle").checked(p.shuffle).on_press(|app: &mut App| app.player.toggle_shuffle()),
         );
     }
     controls = controls

@@ -140,6 +140,7 @@ fn snippet_audio(app: &mut App) -> Option<&mut Box<dyn AudioAdapter>> {
         let engine = crate::player::engine::Engine::start(app.waker.clone(), app.config.audio_sink_id.clone());
         let client = std::sync::Arc::new(std::sync::Mutex::new(app.client.clone()));
         let mut audio: Box<dyn AudioAdapter> = Box::new(crate::player::engine::EngineAdapter::new(engine, client));
+        audio.set_equalizer(app.tweaks.equalizer);
         audio.load(&url);
         app.pages.share_preview.audio = Some(audio);
     }
@@ -166,6 +167,7 @@ fn copy(app: &mut App, tx: &mut Tx) {
 
 /// Timers: the playback clock and the "Copied" flash. True when the view changed.
 pub fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
+    if let Some(audio) = app.pages.share_preview.audio.as_mut() { audio.set_equalizer(app.tweaks.equalizer); }
     let shown = app.location().path.starts_with("/shared/track/");
     let s = &mut app.pages.share_preview;
     if !shown {
@@ -373,7 +375,7 @@ fn seek_bar(t: &Theme, value: f64, dragging: bool) -> El {
         .focusable(true)
         .focus_ring(2.0, 3.0, t.c.focus_ring)
         .cursor(Cursor::Pointer)
-        .hover(Color::TRANSPARENT)
+        .hover_group()
         .on_step(move |a: &mut App, delta, _| {
             let s = &a.pages.share_preview;
             let now = s.current / duration(s);

@@ -139,7 +139,12 @@ impl<S: 'static> Host<S> {
                 self.shell(event_loop);
                 true
             }
-            Some(w) => { w.window.request_redraw(); true }
+            Some(w) => {
+                w.window.request_redraw();
+                // Lumen patch: watch for it on Wayland.
+                if self.wayland { self.redraw_watch.asked(Instant::now()); }
+                true
+            }
         };
         // Neither a poll nor a frame comes to schedule the updates' `wake_after`s.
         if !polled && !framed { self.rt.schedule_pending_wakes(); }
@@ -150,7 +155,9 @@ impl<S: 'static> Host<S> {
     /// shown. A hidden launcher renders poll's changes hidden, paced, keeping its cached frame
     /// fresh. A minimize waits for a show in the same turn (`shows`). Returns whether it polled.
     pub(super) fn poll_hidden(&mut self, event_loop: &ActiveEventLoop, shows: bool) -> bool {
-        if event_loop.exiting() || self.win.as_ref().is_some_and(|w| w.visible) { return false; }
+        // Lumen patch: a shown window polls in its frame, unless that frame is overdue
+        // (`redraw_watch`).
+        if event_loop.exiting() || (self.win.as_ref().is_some_and(|w| w.visible) && !self.redraw_watch.stalled(Instant::now())) { return false; }
         let changed = self.rt.poll_hidden();
         self.clipboard.flush(&mut self.rt);
         let minimize = shows && std::mem::take(&mut self.rt.minimize_request);

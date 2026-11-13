@@ -2,12 +2,13 @@
 //! playback in the OS media controls. On Windows that's the System Media
 //! Transport Controls (the media keys and the volume flyout's player), via
 //! a `MediaPlayer` with its command manager off, so no window handle is
-//! needed. Elsewhere it does nothing yet.
+//! needed. Linux publishes MPRIS on the session bus.
 //!
 //! While another device is controlled the session is withdrawn: these
 //! controls drive this device's audio. Pause keeps it, as music players do.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, Instant};
 
 use crate::api::{Client, TrackListItem};
 use crate::format::display_text;
@@ -16,6 +17,7 @@ use crate::net::LateWaker;
 /// `NowPlayingMetadata`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NowPlaying {
+    pub id: String,
     pub title: String,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -29,6 +31,7 @@ const NOW_PLAYING_ARTWORK_PX: u32 = 1024;
 pub fn now_playing(track: &TrackListItem) -> NowPlaying {
     let nonempty = |s: Option<&str>| Some(display_text(s, "")).filter(|s| !s.is_empty());
     NowPlaying {
+        id: track.id.clone(),
         title: display_text(Some(&track.title), ""),
         artist: nonempty(track.artist.as_deref()),
         album: nonempty(track.album_title.as_deref()),
@@ -57,6 +60,48 @@ pub enum Button {
 pub struct Shown {
     pub track: Option<NowPlaying>,
     pub playing: bool,
+    /// The position advances from `position_us` (playing, not waiting for audio).
+    pub running: bool,
+    /// Actual local timeline, in MPRIS microseconds.
+    pub position_us: i64,
+    pub duration_us: i64,
+}
+
+/// What the OS needs to follow the position. It extrapolates from the last one sent while it
+/// runs, so the player sends one again only with a change of track or play state, when the
+/// position stops or starts running, or when it drifts more than half a second from that (a
+/// seek). The position moves in 0.25 s steps, polled every 0.25 s; held for longer than
+/// `STALL` while playing, it is waiting for audio (buffering).
+#[derive(Debug, Default)]
+pub struct Clock {
+    /// When the position or the play state last changed, and to what.
+    moved: Option<(Instant, f64, bool)>,
+    /// When a position was last sent, what, and whether it ran.
+    sent: Option<(Instant, f64, bool)>,
+}
+
+const STALL: Duration = Duration::from_millis(750);
+const DRIFT: f64 = 0.5;
+
+impl Clock {
+    /// Whether the position runs at `now`, and whether it is off from what the OS
+    /// extrapolates (checked only as it moves, so a stall becomes `running: false`, not a seek).
+    pub fn poll(&mut self, playing: bool, position: f64, now: Instant) -> (bool, bool) {
+        let moved = self.moved.is_none_or(|(_, p, was)| p != position || was != playing);
+        if moved {
+            self.moved = Some((now, position, playing));
+        }
+        let runs = playing && self.moved.is_some_and(|(at, ..)| now.duration_since(at) < STALL);
+        let drifted = moved && self.sent.is_some_and(|(at, p, ran)| {
+            let expected = p + if ran { now.duration_since(at).as_secs_f64() } else { 0.0 };
+            (position - expected).abs() > DRIFT
+        });
+        (runs, drifted)
+    }
+
+    pub fn sent(&mut self, position: f64, runs: bool, now: Instant) {
+        self.sent = Some((now, position, runs));
+    }
 }
 
 enum Update {
@@ -204,7 +249,11 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+#[path = "media_session_linux.rs"]
+mod platform;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use std::sync::mpsc::Sender;
 
@@ -219,6 +268,33 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_position_goes_out_only_when_the_os_cant_follow_it() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut c = Clock::default();
+        assert_eq!(c.poll(true, 10.0, at(0)), (true, false));
+        c.sent(10.0, true, at(0));
+        // Playing on: each step is where the OS has it.
+        for i in 1..=8 {
+            assert_eq!(c.poll(true, 10.0 + i as f64 * 0.25, at(i * 250)), (true, false), "{i}");
+        }
+        // A seek.
+        assert_eq!(c.poll(true, 30.0, at(2250)), (true, true));
+        c.sent(30.0, true, at(2250));
+        // Buffering: held past STALL, it stops running (a change of key, not a seek).
+        assert_eq!(c.poll(true, 30.0, at(2500)), (true, false));
+        assert_eq!(c.poll(true, 30.0, at(3250)), (false, false));
+        c.sent(30.0, false, at(3250));
+        assert_eq!(c.poll(true, 30.25, at(4000)), (true, false));
+        c.sent(30.25, true, at(4000));
+        // Paused, then a seek while paused.
+        assert_eq!(c.poll(false, 30.25, at(4100)), (false, false));
+        c.sent(30.25, false, at(4100));
+        assert_eq!(c.poll(false, 30.25, at(9000)), (false, false));
+        assert_eq!(c.poll(false, 50.0, at(9250)), (false, true));
+    }
 
     #[test]
     fn metadata_matches_the_web() {

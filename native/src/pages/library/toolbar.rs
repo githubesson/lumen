@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rune::{Color, Cursor, Cx, El, el, row, text};
+use rune::{Cursor, Cx, El, el, row, text};
 
 use crate::app::App;
 use crate::theme::Theme;
@@ -157,6 +157,9 @@ fn display_toggle(t: &Theme, current: Display) -> El {
             .role("tab")
             .label(label)
             .checked(active)
+            .focusable(true)
+            // `.segmented button:hover`: the glyph's colour, no fill.
+            .hover_group()
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| super::set_display(app, value));
         if active {
@@ -165,7 +168,7 @@ fn display_toggle(t: &Theme, current: Display) -> El {
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         b = b.child(ico(glyph, 14.0, ink).group_color(t.c.foreground));
         if !active {
-            b = b.hover(Color::TRANSPARENT).press_scale(0.97);
+            b = b.press_scale(0.97);
         }
         g = g.child(b);
     }

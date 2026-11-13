@@ -14,7 +14,7 @@ mod tests;
 
 use std::cell::Cell;
 
-use rune::{Color, Cursor, Cx, El, col, el, row, text};
+use rune::{Cursor, Cx, El, col, el, row, text};
 
 use crate::api::stats::{ReplayData, generate_replay_playlist, get_replay_image};
 use crate::api::{TrackListItem, error_message};
@@ -403,7 +403,7 @@ fn head(t: &Theme, s: &State, now: i64, no_tracks: bool, narrow: bool) -> El {
         .disabled(no_tracks || s.downloading)
         .build(t)
         .on_press(share_image);
-    let mut actions = row().flex_wrap().items_center().gap(8.0).child(fit(play)).child(fit(generate)).child(fit(share));
+    let mut actions = row().flex_wrap().items_center().gap(8.0).child(fit(play)).child(fit(crate::ui::blocks::shuffle_list_button(t, "replay-shuffle", |a| &a.pages.replay.queue, no_tracks))).child(fit(generate)).child(fit(share));
     if narrow {
         actions = actions.w_full();
     }
@@ -438,7 +438,7 @@ fn pills(app: &App, t: &Theme) -> El {
         if active {
             pill = crate::ui::kit::segment_lit(t, pill, r);
         } else {
-            pill = pill.hover(Color::TRANSPARENT).hover_motion(crate::ui::motion::ease(120.0), crate::ui::motion::ease(120.0));
+            pill = pill.hover_group().hover_motion(crate::ui::motion::ease(120.0), crate::ui::motion::ease(120.0));
         }
         let ink = if active { t.c.foreground } else { t.c.muted_foreground };
         pill = pill.child(exact(text(period_label(period)).font(style).color(ink).group_color(t.c.foreground), 20.3));

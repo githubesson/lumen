@@ -423,3 +423,29 @@ fn a_failed_next_track_isnt_handed_off() {
     assert!(!r.a.activate_prepared(&bad), "the core loads it again instead, and hears why it fails");
     assert!(!r.has(AdapterEvent::Error), "a prepared track's failure isn't the current track's");
 }
+
+#[test]
+fn equalizer_shapes_decoded_audio_and_survives_seek_and_next() {
+    let mut r = rig();
+    let signal = || wav(48_000, 48_000 * 3, |i| {
+        let v = 0.1 * (std::f32::consts::TAU * 1000.0 * i as f32 / 48_000.0).sin();
+        (v, 0.0)
+    });
+    r.server.route("/eq-a", signal(), "audio/wav", true);
+    r.server.route("/eq-b", signal(), "audio/wav", true);
+    let mut settings = equalizer::Settings { enabled: true, ..Default::default() };
+    settings.bands[5] = -12.0;
+    r.a.set_equalizer(settings);
+    r.start(&r.server.url("/eq-a"));
+    r.render(0.4);
+    assert!((r.amplitude(4800..19200) - 0.02512).abs() < 0.001);
+    r.a.pause(); r.played.clear(); r.render(0.1);
+    assert!(r.played.iter().all(|v| *v == 0.0));
+    r.a.play(); r.seek(1.0); r.render(0.3);
+    assert!((r.amplitude(4800..14400) - 0.02512).abs() < 0.001);
+    r.a.set_equalizer(equalizer::Settings::default()); r.played.clear(); r.render(0.3);
+    assert!((r.amplitude(4800..14400) - 0.1).abs() < 0.001);
+    r.a.set_equalizer(settings);
+    r.start(&r.server.url("/eq-b")); r.played.clear(); r.render(0.3);
+    assert!((r.amplitude(4800..14400) - 0.02512).abs() < 0.001);
+}

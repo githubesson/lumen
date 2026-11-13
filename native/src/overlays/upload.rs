@@ -671,8 +671,11 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> Option<El> {
         .items_center()
         .role("button")
         .label("Drop files or folders here, or click to choose files")
-        .cursor(Cursor::Pointer)
-        .focusable(true)
+        // While uploading the zone takes no picks (web disables its input):
+        // no focus and no hand cursor either.
+        .disabled(s.busy)
+        .cursor(if s.busy { Cursor::Default } else { Cursor::Pointer })
+        .focusable(!s.busy)
         .on_press_tx(pick)
         .child(
             col()

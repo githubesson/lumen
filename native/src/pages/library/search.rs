@@ -125,6 +125,8 @@ pub fn view(app: &App, t: &Theme, head: El, query: &str, ty: SearchType, width: 
     }
     let stale = p.stale() && !searching;
     if has_tracks {
+        v = v.child(rune::row().child(crate::ui::blocks::shuffle_list_button(t, "search-shuffle", tracks_source, stale)
+            .help("Shuffle the loaded song results")));
         // `<section aria-label="Songs">`: its heading ends the list's head.
         v = v.child(crate::ui::exact(heading(t, "Songs"), 20.3).label("Songs"));
         let tail = col().key("lib-search-tail").w_full().children(paging::sentinel(t, "lib-search", p, slot));

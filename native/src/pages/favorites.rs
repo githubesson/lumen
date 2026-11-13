@@ -11,7 +11,7 @@ use crate::api::favorites::{favorite, list_favorites, unfavorite};
 use crate::app::App;
 use crate::route::Location;
 use crate::theme::Theme;
-use crate::ui::blocks::{ListHeader, list_page_header, meta_line, play_list_button};
+use crate::ui::blocks::{ListHeader, list_page_header, meta_line};
 use crate::ui::kit::{empty_state, error_banner};
 use crate::ui::track_list::TrackList;
 use crate::ui::icons as i;
@@ -145,10 +145,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
             hero: if known { s.tracks.first() } else { None },
             fallback_icon: Some(&i::HEART),
             meta: Some(meta_line(t, &[&count, "most recently favorited first"])),
-            actions: Some(play_list_button(t, "favorites-play", "Play all", tracks, !playable).on_press(|app: &mut App| {
-                let list = app.pages.favorites.tracks.clone();
-                crate::ui::track_row::start_list(app, &list, false);
-            })),
+            actions: Some(crate::ui::blocks::list_play_actions(t, "favorites", tracks, !playable)),
             ..Default::default()
         },
     );

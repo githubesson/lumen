@@ -144,25 +144,28 @@ pub fn publish(app: &mut App, _now: f64, _tx: &mut Tx) -> bool {
 pub fn resized(app: &mut App, w: f32, h: f32) {
     if app.ui.player.progress.size != [w, h] {
         app.ui.player.progress.size = [w, h];
-        let (_, _, v) = clock(app);
+        let (_, _, clock_value) = clock(app);
+        let v = app.ui.seek_drag.as_ref().filter(|(k, _)| k == "seek").map_or(clock_value, |(_, v)| *v);
         app.ui.player.progress.snap(v);
     }
 }
 
 /// The played part of the seek bar, bound to the live clock.
 pub fn fill(app: &App, t: &Theme) -> El {
-    el().absolute(0.0, 0.0).size(0.0, 0.0).radius(999.0).fill(t.c.primary).inert().live_rect(&app.ui.player.progress.fill)
+    el().key("seek-fill").absolute(0.0, 0.0).size(0.0, 0.0).radius(999.0).fill(t.c.primary).inert().live_rect(&app.ui.player.progress.fill)
 }
 
 /// The seek bar's thumb (12 px, centred on the value), bound to the live
-/// clock. `h` is the track's height.
+/// clock; grown 1.25× while dragged (`.bar.dragging .bar-thumb`). `h` is
+/// the track's height.
 pub fn thumb(app: &App, t: &Theme, h: f32, dragging: bool) -> El {
-    el().absolute(-6.0, (h - 12.0) / 2.0)
+    el().key("seek-thumb").absolute(-6.0, (h - 12.0) / 2.0)
         .size(12.0, 12.0)
         .radius(999.0)
         .fill(t.c.background)
         .border(1.0, t.c.primary)
         .inert()
+        .scale(if dragging { 1.25 } else { 1.0 })
         .group_opacity(if dragging { 1.0 } else { 0.0 }, 1.0)
         .live_offset(&app.ui.player.progress.thumb)
 }

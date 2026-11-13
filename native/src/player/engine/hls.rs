@@ -204,6 +204,7 @@ pub struct HlsStream {
     pub playlist: Arc<MediaPlaylist>,
     http: Http,
     keys: Arc<std::sync::Mutex<HashMap<String, [u8; 16]>>>,
+    init: Arc<std::sync::Mutex<Option<Vec<u8>>>>,
 }
 
 impl HlsStream {
@@ -227,7 +228,7 @@ impl HlsStream {
                 return Err(format!("HLS key method {} isn't supported", key.method));
             }
         }
-        Ok(HlsStream { url, playlist: Arc::new(playlist), http, keys: Default::default() })
+        Ok(HlsStream { url, playlist: Arc::new(playlist), http, keys: Default::default(), init: Default::default() })
     }
 
     fn key(&self, index: usize) -> Result<[u8; 16], HttpError> {
@@ -244,6 +245,9 @@ impl HlsStream {
 
     /// One segment (or the init section, `None`), fetched and decrypted.
     fn fetch(&self, index: Option<usize>) -> Result<Vec<u8>, String> {
+        if index.is_none() && let Some(bytes) = self.init.lock().unwrap().as_ref() {
+            return Ok(bytes.clone());
+        }
         let (uri, key, sequence) = match index {
             None => {
                 let (uri, key) = self.playlist.init.clone().ok_or("no init section")?;
@@ -268,14 +272,18 @@ impl HlsStream {
                 }
             }
         };
-        match key {
+        let bytes = match key {
             None => Ok(body),
             Some(k) => {
                 let iv = self.playlist.keys[k].iv;
                 let key = self.key(k).map_err(|e| format!("HLS key: {e}"))?;
                 decrypt(&body, &key, iv, sequence).map_err(|e| format!("{what}: {e}"))
             }
+        }?;
+        if index.is_none() {
+            *self.init.lock().unwrap() = Some(bytes.clone());
         }
+        Ok(bytes)
     }
 
     /// A reader over the init section and the segments from `first` on,
@@ -287,10 +295,27 @@ impl HlsStream {
         let stop = cancel.clone();
         let _ = std::thread::Builder::new().name("lumen-hls".into()).spawn(move || {
             let send = |chunk: Result<Vec<u8>, String>, tx: &SyncSender<Result<Vec<u8>, String>>| tx.send(chunk).is_ok();
-            if stream.playlist.init.is_some() && !send(stream.fetch(None), &tx) {
+            // Initialization and the first audio segment are independent HTTP
+            // requests. Fetch them together, but deliver init before audio.
+            let mut next = first;
+            if stream.playlist.init.is_some() && first < stream.playlist.segments.len() {
+                let delivered = std::thread::scope(|scope| {
+                    let first_audio = scope.spawn(|| stream.fetch(Some(first)));
+                    let init = stream.fetch(None);
+                    let failed = init.is_err();
+                    if !send(init, &tx) || failed || stop.load(Ordering::Relaxed) {
+                        return false;
+                    }
+                    let chunk = first_audio.join().unwrap_or_else(|_| Err("HLS fetch worker stopped".into()));
+                    let failed = chunk.is_err();
+                    send(chunk, &tx) && !failed
+                });
+                if !delivered { return; }
+                next += 1;
+            } else if stream.playlist.init.is_some() && !send(stream.fetch(None), &tx) {
                 return;
             }
-            for i in first..stream.playlist.segments.len() {
+            for i in next..stream.playlist.segments.len() {
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
@@ -445,5 +470,62 @@ mod tests {
         assert!(is_hls("http://h/api/tracks/tidal%3A12/stream", ""));
         assert!(is_hls("http://h/api/tracks/abc/stream", "application/vnd.apple.mpegurl"));
         assert!(!is_hls("http://h/api/tracks/abc/stream", "audio/flac"));
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn init_and_audio_overlap_and_seeks_reuse_init() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/list.m3u8", listener.local_addr().unwrap());
+        let (audio_tx, audio_rx) = std::sync::mpsc::channel();
+        let audio_rx = Arc::new(std::sync::Mutex::new(audio_rx));
+        let inits = Arc::new(AtomicUsize::new(0));
+        let count = inits.clone();
+        // Exactly one init and two audio requests (the second reader is a seek).
+        let server = std::thread::spawn(move || {
+            let mut workers = Vec::new();
+            for socket in listener.incoming().take(3) {
+                let (audio_tx, audio_rx, count) = (audio_tx.clone(), audio_rx.clone(), count.clone());
+                workers.push(std::thread::spawn(move || {
+                    let mut socket = socket.unwrap();
+                    socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                    let mut reader = BufReader::new(socket.try_clone().unwrap());
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let init = line.contains("/init ");
+                    loop {
+                        let mut h = String::new();
+                        reader.read_line(&mut h).unwrap();
+                        if h.trim().is_empty() { break; }
+                    }
+                    let (status, bytes) = if init {
+                        count.fetch_add(1, Ordering::Relaxed);
+                        if audio_rx.lock().unwrap().recv_timeout(Duration::from_secs(2)).is_ok() {
+                            (200, "INIT")
+                        } else { (409, "audio did not start alongside init") }
+                    } else {
+                        let _ = audio_tx.send(());
+                        (200, "AUDIO")
+                    };
+                    write!(socket, "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{bytes}", bytes.len()).unwrap();
+                }));
+            }
+            for worker in workers { worker.join().unwrap(); }
+        });
+        let stream = HlsStream::open(Http::new(None), &base,
+            "#EXTM3U\n#EXT-X-MAP:URI=\"init\"\n#EXTINF:4,\naudio\n#EXT-X-ENDLIST\n").unwrap();
+        for _ in 0..2 {
+            let mut bytes = Vec::new();
+            stream.reader(0, Arc::new(AtomicBool::new(false))).read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, b"INITAUDIO", "init must precede audio even when audio arrives first");
+        }
+        server.join().unwrap();
+        assert_eq!(inits.load(Ordering::Relaxed), 1);
     }
 }

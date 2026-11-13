@@ -48,8 +48,8 @@ impl Player {
 
     /// `startListPlayback`: the list from its first playable track, or a
     /// random one when `shuffle` (callers pass the player's own setting, or
-    /// false for a list that always starts at the top). False when nothing
-    /// in it can play.
+    /// false for a list that always starts at the top). The shuffle mode
+    /// stays as it is. False when nothing in it can play.
     pub fn start_list(&mut self, tracks: &[TrackListItem], shuffle: bool) -> bool {
         let queue = playable_tracks(tracks);
         if queue.is_empty() {
@@ -57,6 +57,18 @@ impl Player {
         }
         let start = if shuffle { queue[self::core::random_below(queue.len())].clone() } else { queue[0].clone() };
         self.play(&start, &queue, PlayOptions::default())
+    }
+
+    /// `startShuffledListPlayback` (core's, which the mobile app uses): shuffle
+    /// goes on and the list starts from a random playable track in a fresh
+    /// shuffled order. False, changing nothing, when nothing in it can play.
+    pub fn start_shuffled_list(&mut self, tracks: &[TrackListItem]) -> bool {
+        let queue = playable_tracks(tracks);
+        if queue.is_empty() {
+            return false;
+        }
+        let start = queue[self::core::random_below(queue.len())].clone();
+        self.play(&start, &queue, PlayOptions { shuffle: Some(true), ..Default::default() })
     }
 
     pub fn toggle_play(&mut self) {

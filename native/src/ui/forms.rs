@@ -150,7 +150,7 @@ pub fn select(
             .radius(t.radius_md())
             .child(line(label, font(14.0, 400.0), t.c.muted_foreground).group_color(t.c.foreground))
             .child(ico(&i::CHEVRONS_UP_DOWN, 14.0, t.c.muted_foreground).group_color(t.c.foreground))
-            .hover(Color::TRANSPARENT),
+            .hover_group(),
         SelectVariant::Toolbar => {
             let hot = color_mix(t.c.foreground, 0.07, Color::TRANSPARENT);
             let ink = if open { t.c.foreground } else { t.c.muted_foreground };

@@ -182,7 +182,7 @@ fn item_box(b: El, t: &Theme, key: &str, highlighted: bool, enabled: bool) -> El
 }
 
 /// A one-line `.ctx-item`: icon and label.
-fn list_item(t: &Theme, key: &str, glyph: Option<&'static rune::Icon>, label: &str, highlighted: bool, enabled: bool) -> El {
+pub(crate) fn list_item(t: &Theme, key: &str, glyph: Option<&'static rune::Icon>, label: &str, highlighted: bool, enabled: bool) -> El {
     let mut r = row().key(key).w_full().min_h(28.0).px(6.0).py(4.0).gap(6.0).items_center();
     if let Some(g) = glyph {
         r = r.child(ico(g, 14.0, t.c.popover_foreground).group_color(t.c.accent_foreground));

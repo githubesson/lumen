@@ -27,6 +27,8 @@ pub const FONTS: &[&[u8]] = &[
 ];
 
 fn main() {
+    // Match lumen.desktop so Wayland taskbars and docks can identify this window.
+    rune::set_app_id("lumen");
     // `requestSingleInstanceLock`: a second launch brings the first forward.
     // Headless runs (snapshots, scripts) are never the app.
     let headless = rune::is_headless();

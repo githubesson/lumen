@@ -7,6 +7,7 @@ pub mod desktop_bridge;
 pub mod discord;
 pub mod discord_card;
 pub mod rows;
+pub mod equalizer;
 
 use rune::{Cursor, Cx, El, Icon, TextEdit, col, el, row, text};
 
@@ -22,6 +23,7 @@ pub enum SectionId {
     #[default]
     Appearance,
     Playback,
+    Equalizer,
     Desktop,
     Connections,
     Discord,
@@ -34,6 +36,7 @@ const SIDE_ROOM: f32 = 1100.0;
 #[derive(Default)]
 pub struct State {
     pub active: SectionId,
+    pub eq_drag: Option<(usize, f32)>,
     pub query: TextEdit,
     /// The side column, toggled on (it stays as left for the session).
     pub side_shown: bool,
@@ -122,6 +125,7 @@ fn sections<'a>(app: &'a App, t: &'a Theme, cx: &mut Cx<App>, side: bool) -> Vec
     let mut out = vec![
         SectionDef { id: SectionId::Appearance, title: "Appearance", icon: &i::PALETTE, settings: rows::appearance(app, t) },
         SectionDef { id: SectionId::Playback, title: "Playback", icon: &i::VOLUME_2, settings: rows::playback(app, t) },
+        SectionDef { id: SectionId::Equalizer, title: "Equalizer", icon: &i::VOLUME_2, settings: equalizer::settings(app, t) },
         SectionDef { id: SectionId::Desktop, title: "Desktop", icon: &i::MONITOR, settings: rows::desktop(app, t, &d) },
         SectionDef { id: SectionId::Connections, title: "Connections", icon: &i::LINK_2, settings: rows::connections(app, t, &d) },
         SectionDef { id: SectionId::Discord, title: "Discord", icon: &discord::DISCORD_ICON, settings: discord::settings(app, t, cx, &d, side) },
@@ -196,6 +200,7 @@ fn nav(app: &App, t: &Theme, list: &[(SectionId, &'static str, &'static Icon)], 
                 s.active = id;
             });
         if selected {
+            // `.settings-nav-item:hover, .active`: the same fill either way.
             it = it.fill(t.c.sidebar_accent);
         }
         items = items.child(it);

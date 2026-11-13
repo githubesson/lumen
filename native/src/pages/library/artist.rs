@@ -2,13 +2,13 @@
 //! and shuffle, track search, discography, songs) and a TIDAL artist's
 //! (popular tracks, folded discography, retry on failure).
 
-use rune::{Color, Cursor, Cx, El, col, el, row, text};
+use rune::{Cursor, Cx, El, col, el, row, text};
 
 use crate::api::TrackListItem;
 use crate::app::App;
 use crate::format::display_text;
 use crate::shell::{Bp, window_size};
-use crate::theme::{Theme, color_mix};
+use crate::theme::Theme;
 use crate::ui::forms::search_input;
 use crate::ui::kit::{empty_state, error_banner, loading_state};
 use crate::ui::shelf::{SHELF_COL, shelf};
@@ -176,7 +176,6 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
     let (here, show_pause, can_play) = (st.playing_here, st.show_pause, st.can_play);
     let label = display_text(Some(name), "");
     let queue = tracks.to_vec();
-    let hot = color_mix(t.c.primary, 0.8, Color::TRANSPARENT);
     let mut play = el()
         .key("artist-play")
         .size(40.0, 40.0)
@@ -190,7 +189,7 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
         play = play
             .cursor(Cursor::Pointer)
             .focusable(true)
-            .hover(ui::hover_overlay(t.c.primary, hot))
+            .hover(t.c.background.alpha(0.2))
             .press_scale(0.97)
             .on_press(move |app: &mut App| {
                 if here {
@@ -256,7 +255,7 @@ fn more_button(t: &Theme, key: &str, label: &str, on_press: fn(&mut App)) -> El 
         .role("button")
         .cursor(Cursor::Pointer)
         .focusable(true)
-        .hover(Color::TRANSPARENT)
+        .hover_group()
         .child(text(label.to_string()).font(font(14.0, 500.0)).color(t.c.muted_foreground).group_color(t.c.foreground))
         .on_press(on_press)
 }
@@ -289,7 +288,13 @@ fn discography(app: &App, t: &Theme, releases: &[ArtistRelease], width: f32) -> 
             d.show_all = !d.show_all;
         })
     });
-    let mut body = col().w_full();
+    let all = releases.to_vec();
+    let shuffled = all.clone();
+    let mut body = col().w_full().child(row().gap(8.0).flex_wrap().mb(12.0)
+        .child(Btn::new("discography-play", "Play all").primary().icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
+            .on_press(move |app: &mut App| crate::overlays::collection_play::releases(app, all.clone(), false)))
+        .child(crate::ui::blocks::shuffle_button(t, "discography-shuffle", false)
+            .on_press(move |app: &mut App| crate::overlays::collection_play::releases(app, shuffled.clone(), true))));
     if logic::has_release_filters(releases) {
         let mut chips = row().gap(8.0).flex_wrap().mb(12.0);
         for (value, label) in RELEASE_FILTER_OPTIONS {

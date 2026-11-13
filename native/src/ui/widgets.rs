@@ -83,7 +83,8 @@ pub fn iconbtn(t: &Theme, key: &str, glyph: &'static Icon, glyph_size: f32, stat
     if state.disabled {
         b = b.opacity(0.4).disabled(true);
     } else {
-        b = b.hover(t.c.ghost_hover).focusable(true);
+        // `.iconbtn.active` outranks `.iconbtn:hover`: lit, it stays muted.
+        b = if state.active { b.hover_group() } else { b.hover(t.c.ghost_hover) }.focusable(true);
     }
     b
 }

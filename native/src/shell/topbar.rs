@@ -81,11 +81,16 @@ fn breadcrumbs(app: &App, t: &Theme) -> El {
             ui::line(c.label, style, t.c.foreground)
         } else if let Some(to) = c.to {
             let replace = c.replace;
-            ui::line(c.label, style, t.c.muted_foreground)
-                .group_color(t.c.foreground)
+            // `.crumbs a:hover`: only the text lights up. `group_color`
+            // follows an ancestor's hover, so the link wraps the line.
+            row()
+                .shrink()
                 .hover_group()
+                .focusable(true)
                 .role("link")
+                .label(c.label.clone())
                 .cursor(Cursor::Pointer)
+                .child(ui::line(c.label, style, t.c.muted_foreground).group_color(t.c.foreground))
                 .on_press(move |app: &mut App| {
                     if replace {
                         app.navigate_replace(Location::parse(&to));

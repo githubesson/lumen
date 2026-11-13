@@ -78,6 +78,7 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
         palette_query(a, "weather");
     }),
     ("settings", |a| settings(a, SectionId::Appearance)),
+    ("settings-equalizer", |a| settings(a, SectionId::Equalizer)),
     ("settings-playback", |a| settings(a, SectionId::Playback)),
     ("settings-connections", |a| settings(a, SectionId::Connections)),
     ("settings-search", |a| {

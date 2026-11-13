@@ -1,12 +1,13 @@
 //! `Shell.tsx`: the signed-in frame (`app-shell.css`). A grid of the sidebar,
 //! the main pane (top bar over the routed page) and the lyrics panel, over
 //! the player bar, on the sidebar colour with the window's rounded corners.
+pub mod panes;
 pub mod player;
 pub mod player_bar;
 pub mod sidebar;
 pub mod topbar;
 
-use rune::{Cx, El, col, el, row};
+use rune::{Cx, El, col, row};
 
 use crate::app::App;
 use crate::theme::Theme;
@@ -47,9 +48,10 @@ pub fn window_size(cx: &Cx<App>) -> [f32; 2] {
 /// scrollbar gutter. The page takes its own padding off.
 pub fn content_estimate(app: &App, t: &Theme, window_w: f32) -> f32 {
     let narrow = Bp::of(window_w) == Bp::Narrow;
-    let mut w = window_w - if narrow { 8.0 } else { 16.0 + t.layout.sidebar_w() + 8.0 };
+    let (sidebar, lyrics) = panes::widths(app, t, window_w);
+    let mut w = window_w - if narrow { 8.0 } else { 16.0 + sidebar + 8.0 };
     if app.ui.lyrics_open && !app.ui.player.mini.on && !narrow {
-        w -= 8.0 + player::lyrics::column_width(t);
+        w -= 8.0 + lyrics;
     }
     w - 2.0 - 10.0
 }
@@ -83,7 +85,7 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let gap = if narrow { 4.0 } else { 8.0 };
     let mut grid = row().grow(1.0).min_h(0.0);
     if !narrow {
-        grid = grid.child(sidebar::view(app, t, false)).child(el().w(8.0));
+        grid = grid.child(sidebar::view(app, t, false).w(panes::widths(app, t, window_w).0)).child(panes::divider(app, t, window_w, false));
     }
     grid = grid.child(main);
     if !narrow && let Some(lyrics) = player::lyrics::column(app, t, cx) {

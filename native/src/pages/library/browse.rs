@@ -138,6 +138,11 @@ fn tracks_view(app: &App, t: &Theme, mut head: El, grid_w: f32) -> El {
     let s = &app.pages.library;
     let p = &s.tracks;
     head = head.child(list_meta(t, p.len().map(|n| n as u64), p.total, "track"));
+    head = head.child(rune::row().gap(8.0).flex_wrap()
+        .child(crate::ui::Btn::new("library-play", "Play all").primary().icon(&crate::ui::icons::PLAY_FILLED).icon_size(16.0).disabled(p.items.as_ref().is_none_or(|v| v.is_empty()) || p.stale()).build(t)
+            .on_press(|app: &mut App| crate::overlays::collection_play::library(app, false)))
+        .child(crate::ui::blocks::shuffle_button(t, "library-shuffle", p.items.as_ref().is_none_or(|v| v.is_empty()) || p.stale())
+            .on_press(|app: &mut App| crate::overlays::collection_play::library(app, true))));
     if let Some(e) = &p.error {
         head = head.child(error_banner(t, e));
     }

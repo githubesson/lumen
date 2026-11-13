@@ -283,6 +283,7 @@ fn toggle_play(app: &mut App) {
         let engine = crate::player::engine::Engine::start(app.waker.clone(), app.config.audio_sink_id.clone());
         let shared = Arc::new(std::sync::Mutex::new(Some(client.clone())));
         let mut audio: Box<dyn crate::player::adapter::AudioAdapter> = Box::new(crate::player::engine::EngineAdapter::new(engine, shared));
+        audio.set_equalizer(app.tweaks.equalizer);
         audio.load(&client.url(&crate::api::media::stream_path(&id)));
         s.audio = Some(audio);
     }
@@ -301,6 +302,7 @@ pub fn poll(app: &mut App, tx: &mut rune::Tx) -> bool {
     let s = &mut app.overlays.share;
     let end = window(s).end_sec;
     let Some(audio) = s.audio.as_mut() else { return false };
+    audio.set_equalizer(app.tweaks.equalizer);
     let mut ended = false;
     while let Some(ev) = audio.next_event() {
         ended |= matches!(ev, crate::player::adapter::AdapterEvent::Ended | crate::player::adapter::AdapterEvent::Error);

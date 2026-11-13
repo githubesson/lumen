@@ -370,6 +370,9 @@ pub fn segmented_counted<T: Copy + PartialEq + 'static>(
             .items_center()
             .role("tab")
             .checked(active)
+            .focusable(true)
+            // `.segmented button:hover`: the label's colour, no fill.
+            .hover_group()
             .cursor(Cursor::Pointer)
             .on_press(move |app: &mut App| on_pick(app, v));
         if active {
@@ -381,7 +384,7 @@ pub fn segmented_counted<T: Copy + PartialEq + 'static>(
             b = b.child(text(*c).font(crate::ui::mono(size.fs, 500.0)).color(t.c.muted_foreground).ml(4.0));
         }
         if !active {
-            b = b.hover(Color::TRANSPARENT).press_scale(0.97);
+            b = b.press_scale(0.97);
         }
         group = group.child(b);
     }

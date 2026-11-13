@@ -29,6 +29,7 @@ pub struct Ui {
     pub settings_open: bool,
     pub upload_open: bool,
     pub lyrics_open: bool,
+    pub pane_drag: Option<crate::shell::panes::DragState>,
     /// The sidebar drawer of narrow windows (`useMobileNav`).
     pub mobile_nav_open: bool,
     /// A `SeekBar` being dragged: its key and the value under the pointer.
@@ -371,6 +372,7 @@ fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     // Overlay work that finished off the UI thread and needs a `Tx` (a copy, a save dialog).
     changed |= crate::overlays::poll(app, tx);
     changed |= crate::shell::player::poll(app, clock, tx);
+    changed |= crate::shell::panes::poll(app);
     changed
 }
 
