@@ -163,7 +163,7 @@ export function BoardTrackList({
               label={track.album_title || track.title}
             />
           )}
-          <div className="board-row-text">
+          <div className="board-row-text board-row-text-linked">
             {/* An unavailable track's button is aria-disabled rather than
                 disabled: it covers the row, and the browser sends no
                 mouse events to a disabled control, so a right-click on
@@ -184,14 +184,15 @@ export function BoardTrackList({
           <span className="board-row-end">
             <span className="board-row-meta">{meta(track)}</span>
             {!ranked && !track.unavailable && (
-              // A real button, as on playlist rows: the row's title button
-              // already plays from the keyboard, so this one stays out of
-              // the tab order.
+              // A pointer shortcut, like the shelf arrows: the row's title
+              // button already plays the track from the keyboard and names
+              // it for screen readers, so this one stays out of the tab
+              // order and the accessibility tree.
               <button
                 type="button"
                 className="board-play"
                 tabIndex={-1}
-                aria-label={`Play ${displayText(track.title)}`}
+                aria-hidden="true"
                 onClick={() => onPlay(track)}
               >
                 <PlayIcon className="size-3.5" />

@@ -169,10 +169,10 @@ it("opens the album from the hero's title and cover, and the artist from their n
   render(<MemoryRouter><Home /><Routes><Route path="*" element={<Where />} /></Routes></MemoryRouter>);
   await act(async () => {});
   const hero = within(document.querySelector(".board-resume") as HTMLElement);
-  await act(async () => { fireEvent.click(hero.getByRole("button", { name: "Mafia Bidness" })); });
+  await act(async () => { fireEvent.click(hero.getByRole("link", { name: "Mafia Bidness" })); });
   expect(at).toBe("/library?view=albums&album=al-9");
-  await act(async () => { fireEvent.click(hero.getByRole("button", { name: "Shoreline Mafia" })); });
+  await act(async () => { fireEvent.click(hero.getByRole("link", { name: "Shoreline Mafia" })); });
   expect(at).toBe("/library?view=artists&artist=ar-5");
-  await act(async () => { fireEvent.click(hero.getByRole("button", { name: "Go to Mafia Bidness" })); });
+  await act(async () => { fireEvent.click(hero.getByRole("link", { name: "Go to Mafia Bidness" })); });
   expect(at).toBe("/library?view=albums&album=al-9");
 });

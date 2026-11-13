@@ -385,10 +385,15 @@ it("opens the album from the title and album, and each artist's page from their 
       <Routes><Route path="*" element={<Where />} /></Routes>
     </MemoryRouter>,
   );
-  await act(async () => { screen.getByRole("button", { name: "The Sign" }).click(); });
+  await act(async () => { screen.getByRole("link", { name: "The Sign" }).click(); });
   expect(at).toBe("/library?view=albums&album=al-1");
-  await act(async () => { screen.getByRole("button", { name: "Pase Rock" }).click(); });
+  await act(async () => { screen.getByRole("link", { name: "Pase Rock" }).click(); });
   expect(at).toBe("/library?view=artists&artist=a-pase");
-  await act(async () => { screen.getByRole("button", { name: "Modal Soul" }).click(); });
+  await act(async () => { screen.getByRole("link", { name: "Modal Soul" }).click(); });
   expect(at).toBe("/library?view=albums&album=al-1");
+  // Links from the keyboard too: focusable, and Enter opens the page.
+  const nujabes = screen.getByRole("link", { name: "Nujabes" });
+  expect(nujabes.tabIndex).toBe(0);
+  await act(async () => { fireEvent.keyDown(nujabes, { key: "Enter" }); });
+  expect(at).toBe("/library?view=artists&artist=a-nujabes");
 });

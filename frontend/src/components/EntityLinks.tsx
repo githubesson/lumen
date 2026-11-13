@@ -4,7 +4,14 @@ import type { TrackListItem } from "@music-library/core";
 import { displayText } from "../lib/format";
 import { artistNames, trackArtistHref } from "../lib/nowPlayingLinks";
 
-/** Text (or a cover) that opens a page, looked up when clicked. Needs a router. */
+/**
+ * Text (or a cover) that opens a page, looked up when clicked. Needs a router.
+ *
+ * An inline link rather than a button: it sits in a line of text (a title, an
+ * artist line), so that line's ellipsis truncates it like the words around it,
+ * and screen readers hear it as navigation. The page is looked up on click,
+ * so there's no href to give an `<a>`.
+ */
 export function PageLink({
   label,
   href,
@@ -20,17 +27,26 @@ export function PageLink({
   children: ReactNode;
 }) {
   const navigate = useNavigate();
+  // A lookup that fails or finds nothing leaves the page as it is.
+  const open = () => void href().then((to) => to && navigate(to)).catch(() => {});
+  // A cover is a block, and a span can't hold one.
+  const Tag = named ? "div" : "span";
   return (
-    <button
-      type="button"
+    <Tag
+      role="link"
+      tabIndex={0}
       className={"entity-link" + (className ? ` ${className}` : "")}
       title={label}
       aria-label={named ? label : undefined}
-      // A lookup that fails or finds nothing leaves the page as it is.
-      onClick={() => void href().then((to) => to && navigate(to)).catch(() => {})}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || event.repeat) return;
+        event.preventDefault();
+        open();
+      }}
     >
       {children}
-    </button>
+    </Tag>
   );
 }
 

@@ -223,6 +223,11 @@
   display: grid;
   gap: 1px;
 }
+/* A track's artists open their pages, so its two lines are two targets:
+   the gap keeps a 24px circle around each clear of the other (WCAG 2.5.8). */
+.board-row-text-linked {
+  gap: 4px;
+}
 
 /* The row's title is its button or link, and its ::after covers the whole
    row (or tile), so a click anywhere on it plays or opens. */
