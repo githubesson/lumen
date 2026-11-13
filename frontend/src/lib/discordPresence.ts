@@ -89,6 +89,12 @@ interface SignedCoverCacheEntry {
  * so the embed updates the same frame the audio engine reacts. Avoids the
  * React-state round-trip and the 250 ms quantization in `usePlayerTime`.
  */
+/**
+ * How long a track's end waits for the queue to go on before the card comes
+ * down: long enough for the next track (or a stream) to start.
+ */
+export const QUEUE_END_GRACE_MS = 3000;
+
 export function useDiscordPresence() {
   const { current, isPlaying } = usePlayer();
   const adapter = usePlayerAdapter();
@@ -98,6 +104,7 @@ export function useDiscordPresence() {
   const isPlayingRef = useRef(false);
   // The track whose end stopped playback (the queue ran out), until playing again.
   const endedTrackRef = useRef<string | null>(null);
+  const queueEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const coverUrlCacheRef = useRef<Map<string, SignedCoverCacheEntry>>(new Map());
   const remoteActivityPushedRef = useRef(false);
   const remoteActivityPendingRef = useRef(false);
@@ -247,16 +254,29 @@ export function useDiscordPresence() {
       }
     };
 
+    const cancelQueueEnd = () => {
+      if (queueEndTimerRef.current) clearTimeout(queueEndTimerRef.current);
+      queueEndTimerRef.current = null;
+    };
     const offPlay = adapter.on("play", () => {
+      cancelQueueEnd();
       endedTrackRef.current = null;
       pushPreferred({ isPlaying: true });
     });
-    // The element fires `pause` before `ended`, so the paused card is already
-    // out by now: take it down here. A next track (or repeat) pushes again.
-    // As with a pause, a device that's playing elsewhere keeps its card.
+    // Every track's end fires `pause`, then `ended`, and the paused card is
+    // out by then. When the queue goes on, the next track (or a repeat)
+    // starts playing within moments; when it ran out, nothing does, and the
+    // card comes down rather than staying paused. As with a pause, a device
+    // that's playing elsewhere keeps its card.
     const offEnded = adapter.on("ended", () => {
-      endedTrackRef.current = currentRef.current?.id ?? null;
-      pushPreferred({ isPlaying: false });
+      const ended = currentRef.current?.id ?? null;
+      endedTrackRef.current = ended;
+      cancelQueueEnd();
+      queueEndTimerRef.current = setTimeout(() => {
+        queueEndTimerRef.current = null;
+        if (isPlayingRef.current || currentRef.current?.id !== ended) return;
+        pushPreferred({ isPlaying: false });
+      }, QUEUE_END_GRACE_MS);
     });
     const offPause = adapter.on("pause", () =>
       pushPreferred({ isPlaying: false }),
@@ -273,6 +293,7 @@ export function useDiscordPresence() {
 
     return () => {
       pushLocalActivityRef.current = () => {};
+      cancelQueueEnd();
       offPlay();
       offEnded();
       offPause();
