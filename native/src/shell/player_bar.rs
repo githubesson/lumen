@@ -150,20 +150,20 @@ pub fn np_art(app: &App, t: &Theme, size: f32, radius: f32) -> El {
 /// `underline_at` is where the error's underline sits in the line's box.
 pub fn np_artist(app: &App, t: &Theme, style: rune::TextStyle, underline_at: f32) -> El {
     let d = display::display(app);
-    match &d.error {
-        Some(summary) => error::line_button(app, t, summary, style, underline_at),
-        None => {
-            if let Some(track) = d.current.filter(|_| !app.ui.player.mini.on) {
-                let mut parts = row().min_w(0.0).child(ui::entity_links::artists(track, style, t.c.muted_foreground));
-                if let Some(album) = &track.album_title {
-                    let tr = track.clone();
-                    parts = parts.child(line(format!(" · {album}"), style, t.c.muted_foreground).cursor(Cursor::Pointer).role("link")
-                        .on_press(move |app: &mut App| ui::entity_links::album(app, tr.clone())));
-                }
-                parts
-            } else { line(d.artist.clone(), style, t.c.muted_foreground).tip_truncated("np-artist", &d.artist, style) }
-        },
+    if let Some(summary) = &d.error {
+        return error::line_button(app, t, summary, style, underline_at);
     }
+    let shown = match linked(app, &d) {
+        Some(track) => ui::entity_links::line(track, ui::entity_links::np_artist_links(track), style, t.c.muted_foreground),
+        None => line(d.artist.clone(), style, t.c.muted_foreground),
+    };
+    shown.tip_truncated("np-artist", &d.artist, style)
+}
+
+/// The track whose title, artists and album open their pages: the bar's
+/// (not the mini player's), and not while a failure shows in their place.
+fn linked<'a>(app: &App, d: &display::Display<'a>) -> Option<&'a crate::api::TrackListItem> {
+    d.current.filter(|_| !app.ui.player.mini.on && d.error.is_none())
 }
 
 /// Right-click on the now-playing block opens the track's menu (not while
@@ -184,18 +184,21 @@ pub fn np_context(app: &App, e: El) -> El {
 fn now_playing(app: &App, t: &Theme, bp: Bp) -> El {
     let art_size = if bp == Bp::Narrow { 44.0 } else { 48.0 };
     let d = display::display(app);
+    let title_style = font(14.0, 500.0);
+    let title = match linked(app, &d) {
+        Some(track) => ui::entity_links::line(track, ui::entity_links::album_title_link(&d.title), title_style, t.c.foreground),
+        None => line(d.title.clone(), title_style, t.c.foreground),
+    };
+    // 6 px apart, not 2: the title and the artist line are both links, each
+    // a 24 px target clear of the other (WCAG 2.5.8). It stays while a
+    // failure replaces the links, so the lines don't jump.
     let lines = col()
         .grow(1.0)
         .min_w(0.0)
         .h(art_size)
-        .gap(2.0)
+        .gap(6.0)
         .justify_center()
-        .child({
-            let title = line(d.title.clone(), font(14.0, 500.0), t.c.foreground).tip_truncated("np-title", &d.title, font(14.0, 500.0)).h(20.3);
-            if let Some(track) = d.current.cloned() {
-                title.cursor(Cursor::Pointer).role("link").on_press(move |app: &mut App| ui::entity_links::album(app, track.clone()))
-            } else { title }
-        })
+        .child(title.tip_truncated("np-title", &d.title, title_style).h(20.3))
         .child(el().h(17.4).min_w(0.0).child(np_artist(app, t, font(12.0, 400.0), error::underline_at(12.0, 17.4))));
     let np = row()
         .key("np")

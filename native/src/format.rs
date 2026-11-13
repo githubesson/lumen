@@ -166,13 +166,6 @@ pub fn display_text(s: Option<&str>, fallback: &str) -> String {
     if cleaned.is_empty() { fallback.to_string() } else { cleaned }
 }
 
-/// core's `displayText(value, fallback)` itself: the fallback stands in only
-/// for a missing value (`??`); an empty one stays empty. Compare
-/// [`display_text`], the `displayText(value) || fallback` most views use.
-pub fn display_text_nullish(value: Option<&str>, fallback: &str) -> String {
-    clean_text(Some(value.unwrap_or(fallback)))
-}
-
 /// `Math.round`: halves round up (towards +∞).
 pub fn js_round(x: f64) -> i64 {
     (x + 0.5).floor() as i64

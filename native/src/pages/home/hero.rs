@@ -12,7 +12,7 @@ use crate::app::App;
 use crate::core::entity_target::track_album_target;
 use crate::ui::tooltip::TipExt;
 use crate::theme::Theme;
-use crate::ui::{Btn, cover_art, font, icons as i, line, skeleton_line_w, with_lh};
+use crate::ui::{Btn, cover_art, entity_links, font, icons as i, line, skeleton_line_w, with_lh};
 
 use super::arrangement::HomePanel;
 use super::board::{self, Queue, TrackRow};
@@ -20,7 +20,7 @@ use super::fill::{FillUsual, count_in};
 use super::logic::{self, pluralize};
 use super::panels::{Ctx, Out};
 use super::Source;
-use crate::format::{clean_text, display_text_nullish};
+use crate::format::clean_text;
 
 /// `.hero-art`'s side on a wide window.
 const ART: f32 = 168.0;
@@ -43,6 +43,7 @@ fn title_height(s: &str, width: f32) -> f32 {
 
 /// What the hero's text says.
 struct Body {
+    /// The album's track, when the title and artists open their pages.
     track: Option<TrackListItem>,
     eyebrow: Option<String>,
     /// None: the loading skeleton.
@@ -129,12 +130,11 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
         Some(title) => {
             let w = if narrow { l.body_w } else { crate::ui::balanced_width(title, title_style(), l.body_w) };
             let h = title_height(title, l.body_w);
-            {
-                let title = board::lh(text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w), h).mb(6.0);
-                if let Some(track) = b.track.clone() {
-                    title.cursor(rune::Cursor::Pointer).role("link").on_press(move |app: &mut App| crate::ui::entity_links::album(app, track.clone()))
-                } else { title }
+            let mut e = text(title.clone()).font(title_style()).color(t.c.card_foreground).wrap_anywhere().max_w(w);
+            if let Some(track) = &b.track {
+                e = entity_links::links(e, track, &entity_links::album_title_link(title), t.c.card_foreground);
             }
+            board::lh(e, h).mb(6.0)
         }
         // A `12ch` bar on the title's line.
         None => skeleton_line_w(t, 24.0, 27.6, crate::ui::ch(12.0, title_style())).mb(6.0),
@@ -153,8 +153,9 @@ fn body_view(t: &Theme, b: Body, l: &HeadLayout, narrow: bool) -> El {
                 m = m.child(dot(t));
             }
             let mut p = text(part.clone()).font(font(14.0, 400.0)).color(t.c.muted_foreground);
-            if n == 0 {
-                if let Some(track) = &b.track { p = crate::ui::entity_links::artists(track, font(14.0, 400.0), t.c.muted_foreground); }
+            // An album's artists (`ArtistLinks`) lead its line.
+            if let Some(track) = b.track.as_ref().filter(|_| n == 0) {
+                p = entity_links::links(p, track, &entity_links::artist_links(track, "Unknown artist"), t.c.muted_foreground);
             }
             if b.status_meta {
                 p = p.role("status");
@@ -272,7 +273,7 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let year = album.and_then(|a| a.release_year).filter(|y| *y != 0);
     let track_count = album.map(|a| a.track_count).filter(|n| *n > 0);
     let from_recent = st.recent.data.as_ref().is_some_and(|r| !r.is_empty());
-    let mut meta = vec![display_text_nullish(track.artist.as_deref(), "Unknown artist")];
+    let mut meta = vec![entity_links::artist_links(track, "Unknown artist").text];
     if let Some(y) = year {
         meta.push(y.to_string());
     }
@@ -293,9 +294,9 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     }
     let title_text = clean_text(Some(track.album_title.as_deref().unwrap_or(&track.title)));
     let body = Body {
-            track: Some(track.clone()),
+        track: Some(track.clone()),
         eyebrow: Some(p.title.clone().unwrap_or_else(|| (if from_recent { "Jump back in" } else { "From your library" }).into())),
-        title: Some(title_text),
+        title: Some(title_text.clone()),
         meta,
         actions,
         status_meta: false,
@@ -318,9 +319,14 @@ fn hero_album(app: &App, t: &Theme, ctx: &Ctx, p: &HomePanel, track: &TrackListI
     let label = track.album_title.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| track.title.clone());
     let side = l.art.unwrap_or(ART);
     let art = cover_art(t, &app.images, Some(&track.cover_at(None)), &label, side, side, t.radius_lg());
+    // The cover opens the album too (`hero-art-link`), named for it.
     let tr = track.clone();
-    let art = art.cursor(rune::Cursor::Pointer).role("link").label(format!("Open {label}"))
-        .on_press(move |app: &mut App| crate::ui::entity_links::album(app, tr.clone()));
+    let art = art
+        .cursor(rune::Cursor::Pointer)
+        .role("link")
+        .label(format!("Go to {title_text}"))
+        .focusable(true)
+        .on_press(move |app: &mut App| entity_links::open_album(app, &tr));
     let art = if l.stacked && narrow { el().w_full().center().child(art) } else { art };
     let head = head_view(Some(art), body_view(t, body, &l, narrow), &l);
     let mut hero = shell(t, &key, w, h);
