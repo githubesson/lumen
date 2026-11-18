@@ -729,6 +729,17 @@ func TestAlbumKeepsNoYearFromAPlaceholderDate(t *testing.T) {
 	}
 }
 
+func TestTrackKeepsNoYearFromAPlaceholderDate(t *testing.T) {
+	placeholder := apiTrack{ID: "1", Title: "Song", Album: apiAlbum{ID: "2", ReleaseDate: "0001-01-01T00:00:00.000+0000"}}
+	if got := placeholder.track(); got.Year != 0 {
+		t.Fatalf("placeholder year = %d, want 0", got.Year)
+	}
+	dated := apiTrack{ID: "1", Title: "Song", Album: apiAlbum{ID: "2", ReleaseDate: " 2020-03-27"}}
+	if got := dated.track(); got.Year != 2020 {
+		t.Fatalf("year = %d, want 2020", got.Year)
+	}
+}
+
 func TestAlbumReadsTheYearFromAPaddedDate(t *testing.T) {
 	got := apiAlbum{ID: "1", Title: "Record", ReleaseDate: " 2020-03-27T00:00:00"}.album()
 	if got.ReleaseYear != 2020 || got.ReleaseDate != "2020-03-27" {

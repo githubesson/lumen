@@ -885,18 +885,24 @@ func releaseDate(raw string) string {
 	return raw[:10]
 }
 
-func (a apiAlbum) album() Album {
-	// The year comes from the validated date when there is one, else from a
-	// year-only value; a placeholder before year 1000 gives neither.
-	date := releaseDate(a.ReleaseDate)
-	year := 0
-	if raw := strings.TrimSpace(a.ReleaseDate); date != "" {
-		year, _ = strconv.Atoi(date[:4])
-	} else if len(raw) >= 4 {
-		if y, err := strconv.Atoi(raw[:4]); err == nil && y >= 1000 {
-			year = y
-		}
+// releaseYear is the year of a TIDAL release date, full ("2020-03-27") or
+// year-only ("2020"), or 0 for a placeholder before year 1000 or anything
+// else. Albums and tracks both read it here, so a download files a track
+// under the same year its album page shows.
+func releaseYear(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 4 {
+		return 0
 	}
+	year, err := strconv.Atoi(raw[:4])
+	if err != nil || year < 1000 {
+		return 0
+	}
+	return year
+}
+
+func (a apiAlbum) album() Album {
+	date, year := releaseDate(a.ReleaseDate), releaseYear(a.ReleaseDate)
 	artist, artistID := strings.TrimSpace(a.Artist.Name), string(a.Artist.ID)
 	if artist == "" && len(a.Artists) > 0 {
 		artist, artistID = strings.TrimSpace(a.Artists[0].Name), string(a.Artists[0].ID)
@@ -986,10 +992,7 @@ func (t apiTrack) track() Track {
 	if len(artists) == 0 && strings.TrimSpace(t.Artist.Name) != "" {
 		artists = append(artists, strings.TrimSpace(t.Artist.Name))
 	}
-	year := 0
-	if len(t.Album.ReleaseDate) >= 4 {
-		year, _ = strconv.Atoi(t.Album.ReleaseDate[:4])
-	}
+	year := releaseYear(t.Album.ReleaseDate)
 	coverID := strings.TrimSpace(t.Album.Cover)
 	return Track{
 		ID:          string(t.ID),

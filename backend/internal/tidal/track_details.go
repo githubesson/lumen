@@ -220,8 +220,6 @@ func artistID(id tidalID) string {
 	return ""
 }
 
-// isoDate keeps the YYYY-MM-DD of a TIDAL date ("2023-03-17" or
-// "2023-03-17T00:00:00.000+0000"), or "" if it isn't one.
 var qualityRank = map[string]int{"LOW": 1, "HIGH": 2, "LOSSLESS": 3, "HI_RES_LOSSLESS": 4}
 
 // availableQuality is the best quality TIDAL offers a track at. The tags
