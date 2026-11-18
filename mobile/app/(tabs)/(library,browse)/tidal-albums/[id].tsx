@@ -12,7 +12,6 @@ import {
   ALBUM_DOWNLOAD_REFRESH_MS,
   albumArtists,
   albumArtUrl,
-  albumLength,
   api,
   displayText,
   formatTotalMs,
@@ -270,7 +269,8 @@ export default function TidalAlbumDetailScreen() {
         <AlbumFooter
           releaseDate={album.release_date}
           releaseYear={album.release_year}
-          length={albumLength(tracks)}
+          trackCount={album.track_count}
+          durationMs={album.duration_ms}
           copyright={album.copyright}
           inset={coverInset}
         />
@@ -302,7 +302,7 @@ export default function TidalAlbumDetailScreen() {
         />
       </View>
     );
-  }, [albumQuery.data, tracks, coverInset, moreBy, versionsArtist, router, switching]);
+  }, [albumQuery.data, coverInset, moreBy, versionsArtist, router, switching]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   // A version that can't load (failed, or waiting offline) shows the error,

@@ -84,7 +84,8 @@ export function formatCalendarDate(
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date?.trim() ?? "");
   if (!match) return "—";
   const day = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-  if (day.getUTCDate() !== Number(match[3])) return "—";
+  // Date.UTC rolls an impossible day or month into the next one.
+  if (day.getUTCDate() !== Number(match[3]) || day.getUTCMonth() !== Number(match[2]) - 1) return "—";
   return day.toLocaleDateString(locale, { year: "numeric", month, day: "numeric", timeZone: "UTC" });
 }
 

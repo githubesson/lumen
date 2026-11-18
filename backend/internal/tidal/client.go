@@ -863,6 +863,12 @@ type apiAlbumItem struct {
 	Type string   `json:"type"`
 }
 
+// DateInYear reports whether a release date ("2020-03-27") falls in year,
+// so a date and a year from different sources aren't shown side by side.
+func DateInYear(date string, year int) bool {
+	return len(date) >= 4 && date[:4] == fmt.Sprintf("%04d", year)
+}
+
 // releaseDate keeps the calendar date of a TIDAL releaseDate ("2020-03-27",
 // sometimes with a time after it), or "" when it isn't one.
 func releaseDate(raw string) string {
@@ -878,8 +884,8 @@ func releaseDate(raw string) string {
 
 func (a apiAlbum) album() Album {
 	year := 0
-	if len(a.ReleaseDate) >= 4 {
-		year, _ = strconv.Atoi(a.ReleaseDate[:4])
+	if raw := strings.TrimSpace(a.ReleaseDate); len(raw) >= 4 {
+		year, _ = strconv.Atoi(raw[:4])
 	}
 	artist, artistID := strings.TrimSpace(a.Artist.Name), string(a.Artist.ID)
 	if artist == "" && len(a.Artists) > 0 {

@@ -12,7 +12,7 @@ vi.mock("../theme/theme", () => ({
 }));
 
 const footer = (props: Partial<React.ComponentProps<typeof AlbumFooter>>) =>
-  renderToStaticMarkup(<AlbumFooter length="13 tracks · 43 min" {...props} />);
+  renderToStaticMarkup(<AlbumFooter trackCount={13} durationMs={2_605_000} {...props} />);
 
 it("spells out the release date, then the length and the copyright line", () => {
   const html = footer({ releaseDate: "2020-03-27", releaseYear: 2020, copyright: "© 2020 Label" });
@@ -30,4 +30,9 @@ it("falls back to the year, and leaves out what it doesn't know", () => {
     "<div><p>2020</p><p>13 tracks · 43 min</p></div>",
   );
   expect(footer({})).toBe("<div><p>13 tracks · 43 min</p></div>");
+});
+
+it("counts the album's own totals, and leaves out an unknown length", () => {
+  expect(footer({ trackCount: 1, durationMs: 0 })).toBe("<div><p>1 track</p></div>");
+  expect(footer({ trackCount: 40, durationMs: 7_200_000 })).toBe("<div><p>40 tracks · 2 hr 0 min</p></div>");
 });

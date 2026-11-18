@@ -14,7 +14,6 @@ import {
   albumArtists,
   albumArtUrl,
   albumCredits,
-  albumLength,
   api,
   displayText,
   formatTotalMs,
@@ -138,8 +137,16 @@ export default function AlbumDetailScreen() {
   const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
   const linkedArtist = credits.find((credit) => credit.artistId);
   const linkedArtistId = linkedArtist?.artistId;
+  // "More by" asks the library's album artist, whom the credits leave out
+  // when the copied TIDAL release names its artists differently.
+  const album = albumQuery.data;
+  const shelfArtist =
+    linkedArtist ??
+    (album?.artist_has_page && album.artist_id && album.artist_name
+      ? { name: album.artist_name, artistId: album.artist_id }
+      : undefined);
   const [nearEnd, setNearEnd] = useState(false);
-  const moreBy = useLibraryMoreBy(linkedArtistId, id, nearEnd);
+  const moreBy = useLibraryMoreBy(shelfArtist?.artistId, id, nearEnd);
   const openArtist = useMemo(
     () =>
       linkedArtistId
@@ -150,6 +157,18 @@ export default function AlbumDetailScreen() {
             })
         : undefined,
     [router, linkedArtistId],
+  );
+  const shelfArtistId = shelfArtist?.artistId;
+  const openShelfArtist = useMemo(
+    () =>
+      shelfArtistId
+        ? () =>
+            router.push({
+              pathname: "/(tabs)/artists/[id]",
+              params: { id: shelfArtistId },
+            })
+        : undefined,
+    [router, shelfArtistId],
   );
 
   const renderItem = useCallback(
@@ -235,14 +254,15 @@ export default function AlbumDetailScreen() {
         <AlbumFooter
           releaseDate={album.release_date}
           releaseYear={album.release_year}
-          length={albumLength(tracks)}
+          trackCount={album.track_count}
+          durationMs={album.duration_ms}
           copyright={album.copyright}
           inset={coverInset}
         />
         <AlbumMoreBy
-          artist={linkedArtist?.name ?? ""}
+          artist={displayText(shelfArtist?.name ?? "")}
           releases={moreBy}
-          onOpenArtist={openArtist}
+          onOpenArtist={openShelfArtist}
           onOpenRelease={(release) =>
             router.push({ pathname: "/(tabs)/albums/[id]", params: { id: release.id } })
           }
@@ -250,7 +270,7 @@ export default function AlbumDetailScreen() {
         />
       </View>
     );
-  }, [albumQuery.data, tracks, coverInset, linkedArtist?.name, moreBy, openArtist, router]);
+  }, [albumQuery.data, coverInset, shelfArtist?.name, moreBy, openShelfArtist, router]);
 
   const openEdit = useCallback(() => {
     if (!id) return;

@@ -90,7 +90,7 @@ describe("formatCalendarDate", () => {
   });
 
   it("shows an em dash for anything else", () => {
-    for (const value of [undefined, null, "", "2023", "2023-02-30", "2023-03-17T00:00:00Z", "17/03/2023"]) {
+    for (const value of [undefined, null, "", "2023", "2023-02-30", "2021-13-14", "2023-00-10", "2023-03-17T00:00:00Z", "17/03/2023"]) {
       expect(formatCalendarDate(value)).toBe("—");
     }
   });

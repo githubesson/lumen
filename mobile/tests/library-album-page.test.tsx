@@ -134,7 +134,8 @@ it("closes the page with the release's date, length and copyright", () => {
     releaseDate: "2021-05-14",
     releaseYear: 2021,
     copyright: "© 2021 Band Records",
-    length: "2 tracks",
+    trackCount: 2,
+    durationMs: 300_000,
   });
 });
 
@@ -145,6 +146,13 @@ it("asks for the linked artist's other albums only once the page nears its end",
   expect(typeof mock.moreBy.onOpenArtist).toBe("function");
   expect(typeof mock.list.onEndReached).toBe("function");
   expect(mock.list.onEndReachedThreshold).toBe(1);
+});
+
+it("asks the library's album artist when the copied release credits someone else", () => {
+  mock.album = { ...mock.album, tidal_album_id: "77", artist_names: ["TIDAL Name"] };
+  renderToStaticMarkup(<AlbumDetailScreen />);
+  expect(mock.moreByArgs[0]).toBe("ar1");
+  expect(mock.moreBy.artist).toBe("Band");
 });
 
 it("has no artist to ask when the album artist has no page", () => {

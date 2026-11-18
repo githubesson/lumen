@@ -65,3 +65,17 @@ func TestMergeCachedReleaseKeepsReleaseFactsTheRefreshOmits(t *testing.T) {
 		t.Fatalf("fresh release facts not taken: %+v", got)
 	}
 }
+
+func TestMergeCachedReleaseDropsADateFromAnotherYear(t *testing.T) {
+	old := cachedRelease{Title: "Record", ReleaseYear: 2019, ReleaseDate: "2019-02-01"}
+	// TIDAL moves the release to 2021 with only a year.
+	got := mergeCachedRelease(old, cachedRelease{Title: "Record", ReleaseYear: 2021})
+	if got.ReleaseYear != 2021 || got.ReleaseDate != "" {
+		t.Fatalf("year %d date %q, want 2021 and no date", got.ReleaseYear, got.ReleaseDate)
+	}
+	// A refresh that keeps the year keeps the stored date.
+	got = mergeCachedRelease(old, cachedRelease{Title: "Record", ReleaseYear: 2019})
+	if got.ReleaseDate != "2019-02-01" {
+		t.Fatalf("date %q, want the stored one", got.ReleaseDate)
+	}
+}

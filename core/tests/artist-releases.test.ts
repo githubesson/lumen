@@ -226,3 +226,14 @@ it("lists an artist's other releases for an album page, leaving out the one show
   // An album the artist doesn't list keeps every tile.
   expect(releasesBesides(releases, "elsewhere").map((r) => r.id)).toEqual(["explicit", "deluxe", "other"]);
 });
+
+it("leaves a clean edition that crossed the single cutoff out of the album's own More by", () => {
+  const releases = tidalArtistReleases([
+    roads("explicit", { track_count: 4, duration_ms: minutes(14) }),
+    // The clean edition drops a track and reads as a single.
+    roads("clean", { explicit: false, track_count: 3, duration_ms: minutes(10) }),
+    album("other", { source_id: "other", release_year: 2025 }),
+  ]);
+  expect(releasesBesides(releases, "explicit").map((r) => r.id)).toEqual(["other"]);
+  expect(releasesBesides(releases, "clean").map((r) => r.id)).toEqual(["other"]);
+});

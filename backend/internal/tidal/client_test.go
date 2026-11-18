@@ -715,3 +715,16 @@ func TestReleaseDateKeepsOnlyACalendarDate(t *testing.T) {
 		}
 	}
 }
+
+func TestAlbumReadsTheYearFromAPaddedDate(t *testing.T) {
+	got := apiAlbum{ID: "1", Title: "Record", ReleaseDate: " 2020-03-27T00:00:00"}.album()
+	if got.ReleaseYear != 2020 || got.ReleaseDate != "2020-03-27" {
+		t.Fatalf("year %d date %q", got.ReleaseYear, got.ReleaseDate)
+	}
+}
+
+func TestDateInYear(t *testing.T) {
+	if !DateInYear("2020-03-27", 2020) || DateInYear("2020-03-27", 2021) || DateInYear("", 2020) || DateInYear("0999-01-01", 999) == false {
+		t.Fatal("DateInYear disagrees with the date's own year")
+	}
+}

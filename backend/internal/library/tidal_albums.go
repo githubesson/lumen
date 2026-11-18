@@ -89,8 +89,14 @@ func (s *Store) SaveTIDALAlbum(ctx context.Context, a tidal.Album) error {
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
 			ON CONFLICT (tidal_id) DO UPDATE SET
 				title = EXCLUDED.title, artist = EXCLUDED.artist, artists = EXCLUDED.artists,
-				release_year = EXCLUDED.release_year, release_date = EXCLUDED.release_date,
-				copyright = EXCLUDED.copyright, cover_id = EXCLUDED.cover_id,
+				release_year = EXCLUDED.release_year,
+				-- Two first writes can race past the row lock (there's no row yet):
+				-- the one without these facts mustn't blank the other's.
+				release_date = CASE WHEN EXCLUDED.release_date <> '' THEN EXCLUDED.release_date
+				                    WHEN tidal_albums.release_year = EXCLUDED.release_year THEN tidal_albums.release_date
+				                    ELSE '' END,
+				copyright = COALESCE(NULLIF(EXCLUDED.copyright, ''), tidal_albums.copyright),
+				cover_id = EXCLUDED.cover_id,
 				cover_url = EXCLUDED.cover_url, track_count = EXCLUDED.track_count,
 				duration_ms = EXCLUDED.duration_ms, tracks = EXCLUDED.tracks, fetched_at = NOW()`,
 			a.ID, fresh.Title, fresh.Artist, artistsJSON, fresh.ReleaseYear, fresh.ReleaseDate, fresh.Copyright,
@@ -150,13 +156,19 @@ func mergeCachedRelease(old, fresh cachedRelease) cachedRelease {
 	out.Artist = pick(fresh.Artist, old.Artist)
 	out.CoverID = pick(fresh.CoverID, old.CoverID)
 	out.CoverURL = pick(fresh.CoverURL, old.CoverURL)
-	out.ReleaseDate = pick(fresh.ReleaseDate, old.ReleaseDate)
 	out.Copyright = pick(fresh.Copyright, old.Copyright)
 	if len(fresh.Artists) == 0 {
 		out.Artists = old.Artists
 	}
 	if fresh.ReleaseYear == 0 {
 		out.ReleaseYear = old.ReleaseYear
+	}
+	// A stored date only outlives a refresh that leaves it out while the
+	// year still agrees with it: a refresh moving the release to another
+	// year without a date would otherwise pair the new year with the old day.
+	out.ReleaseDate = pick(fresh.ReleaseDate, old.ReleaseDate)
+	if out.ReleaseDate != "" && out.ReleaseYear != 0 && !tidal.DateInYear(out.ReleaseDate, out.ReleaseYear) {
+		out.ReleaseDate = ""
 	}
 	if fresh.DurationMS == 0 {
 		out.DurationMS = old.DurationMS

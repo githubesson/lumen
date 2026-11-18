@@ -99,7 +99,9 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 				// fetch, when there was one, does. It also has the release
 				// date and copyright when the record predates them.
 				cached.ArtistID = album.ArtistID
-				cached.ReleaseDate = firstNonEmpty(cached.ReleaseDate, album.ReleaseDate)
+				if cached.ReleaseDate == "" && (cached.ReleaseYear == 0 || tidal.DateInYear(album.ReleaseDate, cached.ReleaseYear)) {
+					cached.ReleaseDate = album.ReleaseDate
+				}
 				cached.Copyright = firstNonEmpty(cached.Copyright, album.Copyright)
 				album, err = cached, nil
 				if !unpaged {
