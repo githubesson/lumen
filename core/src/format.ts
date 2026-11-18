@@ -83,8 +83,10 @@ export function formatCalendarDate(
 ): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date?.trim() ?? "");
   if (!match) return "—";
-  const day = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-  // Date.UTC rolls an impossible day or month into the next one.
+  // setUTCFullYear rather than Date.UTC, which reads years 0-99 as 1900-1999.
+  const day = new Date(0);
+  day.setUTCFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  // An impossible day or month rolls into the next one.
   if (day.getUTCDate() !== Number(match[3]) || day.getUTCMonth() !== Number(match[2]) - 1) return "—";
   return day.toLocaleDateString(locale, { year: "numeric", month, day: "numeric", timeZone: "UTC" });
 }

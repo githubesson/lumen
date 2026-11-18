@@ -870,13 +870,15 @@ func DateInYear(date string, year int) bool {
 }
 
 // releaseDate keeps the calendar date of a TIDAL releaseDate ("2020-03-27",
-// sometimes with a time after it), or "" when it isn't one.
+// sometimes with a time after it), or "" when it isn't one. Dates before
+// year 1000 are catalog placeholders ("0001-01-01"), not release days.
 func releaseDate(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if len(raw) < 10 {
 		return ""
 	}
-	if _, err := time.Parse(time.DateOnly, raw[:10]); err != nil {
+	day, err := time.Parse(time.DateOnly, raw[:10])
+	if err != nil || day.Year() < 1000 {
 		return ""
 	}
 	return raw[:10]

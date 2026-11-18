@@ -708,6 +708,8 @@ func TestReleaseDateKeepsOnlyACalendarDate(t *testing.T) {
 		" 2020-03-27T00:00:00": "2020-03-27",
 		"2020":                 "",
 		"2020-13-01":           "",
+		"0001-01-01":           "",
+		"0000-01-01":           "",
 		"":                     "",
 	} {
 		if got := releaseDate(raw); got != want {
