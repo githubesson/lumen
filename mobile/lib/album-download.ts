@@ -7,6 +7,7 @@ import {
   useAuth,
   type TrackListItem,
 } from "@music-library/core";
+import type { AlbumDownloadButton } from "../components/album-header";
 
 /**
  * Admin action for an album header that saves a TIDAL release into the
@@ -24,7 +25,7 @@ export function useAlbumDownloadAction(
   tracks: TrackListItem[],
   queuedCount: number,
   onQueuedChanged: (queuedCount: number) => void,
-): { label: string; onPress: () => void; disabled?: boolean } | undefined {
+): AlbumDownloadButton | undefined {
   const { me } = useAuth();
   const isAdmin = me?.role === "admin";
   const [busy, setBusy] = useState(false);
@@ -51,6 +52,7 @@ export function useAlbumDownloadAction(
       return {
         label: state.label,
         disabled: busy,
+        queued: true,
         onPress: () =>
           Alert.alert("Cancel album download?", "Tracks already saved stay in the library.", [
             { text: "Keep downloading", style: "cancel" },

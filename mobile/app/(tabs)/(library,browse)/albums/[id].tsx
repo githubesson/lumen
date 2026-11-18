@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import {
   PixelRatio,
   Pressable,
+  View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,12 +13,15 @@ import {
   ALBUM_DOWNLOAD_REFRESH_MS,
   albumArtists,
   albumArtUrl,
+  albumCredits,
   api,
   displayText,
+  formatTotalMs,
   libraryAlbumMetaParts,
   metaLine,
   playableTracks,
   startListPlayback,
+  startShuffledListPlayback,
   useAuth,
   type Album,
   type TrackListItem,
@@ -27,13 +31,26 @@ import {
   useBottomDockInset,
   useDockScrollHandler,
 } from "../../../../components/dock/dock-context";
-import { TrackRow } from "../../../../components/track-row";
-import { usePlayerPlayback, usePlayTrack } from "../../../../context/player";
+import { AlbumTrackRow } from "../../../../components/album-track-row";
+import {
+  useCurrentTrack,
+  useIsPlaying,
+  usePlayerPlayback,
+  usePlayTrack,
+} from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
+import { albumTrackNumbers } from "../../../../lib/album-track-numbers";
+import { useImageFailure } from "../../../../lib/use-image-failure";
 import { useTheme } from "../../../../theme/theme";
-import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
+import {
+  AlbumHeader,
+  AlbumTopScrim,
+  useAlbumCoverInset,
+  useAlbumCoverSize,
+  useAlbumHeroScroll,
+} from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 export default function AlbumDetailScreen() {
@@ -41,9 +58,14 @@ export default function AlbumDetailScreen() {
   const router = useRouter();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
+  const hero = useAlbumHeroScroll(dockScroll.onScroll);
+  const coverSize = useAlbumCoverSize();
+  const coverInset = useAlbumCoverInset();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
+  const currentId = useCurrentTrack()?.id;
+  const isPlaying = useIsPlaying();
   const { me } = useAuth();
   const userId = me?.id;
   const isAdmin = me?.role === "admin";
@@ -103,39 +125,97 @@ export default function AlbumDetailScreen() {
     onQueuedChanged,
   );
 
+  const credits = useMemo(
+    () => (albumQuery.data ? albumCredits(albumQuery.data) : []),
+    [albumQuery.data],
+  );
+  const numbers = useMemo(() => albumTrackNumbers(tracks), [tracks]);
+  const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
+  const linkedArtistId = credits.find((credit) => credit.artistId)?.artistId;
+
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<TrackListItem>) => (
-      <TrackRow track={item} onPress={onTrackPress} />
+    ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
+      // On an iPad the rows line up with the centred cover.
+      <View style={coverInset ? { marginHorizontal: coverInset } : undefined}>
+        <AlbumTrackRow
+          track={item}
+          number={numbers[index] ?? index + 1}
+          albumArtists={creditNames}
+          current={item.id === currentId}
+          playing={item.id === currentId && isPlaying}
+          onPress={onTrackPress}
+        />
+      </View>
     ),
-    [onTrackPress],
+    [onTrackPress, numbers, creditNames, currentId, isPlaying, coverInset],
   );
 
   const keyExtractor = useCallback((t: TrackListItem) => t.id, []);
+  const rowState = useMemo(() => ({ currentId, isPlaying }), [currentId, isPlaying]);
+
+  const coverUri = useMemo(() => {
+    const album = albumQuery.data;
+    if (!album) return null;
+    const requestSize = Math.max(1, Math.round(coverSize * PixelRatio.get()));
+    return albumArtUrl(album, requestSize, coverBust);
+  }, [albumQuery.data, coverSize, coverBust]);
+  // A cover that fails to load shows the placeholder, with no scrim over it.
+  const coverFailure = useImageFailure(coverUri);
+  const shownCover = coverFailure.failed ? null : coverUri;
 
   const header = useMemo(() => {
     const album = albumQuery.data;
     if (!album) return null;
-    const requestSize = Math.max(
-      1,
-      Math.round(ALBUM_ART_SIZE * PixelRatio.get()),
-    );
-    const coverUri = albumArtUrl(album, requestSize, coverBust);
+    const playable = playableTracks(tracks).length;
     return (
       <AlbumHeader
         title={album.title}
         artist={albumArtists(album)}
-        coverUri={coverUri}
-        coverKey={coverUri ?? undefined}
-        metadata={metaLine(libraryAlbumMetaParts(album))}
+        onOpenArtist={
+          linkedArtistId
+            ? () =>
+                router.push({
+                  pathname: "/(tabs)/artists/[id]",
+                  params: { id: linkedArtistId },
+                })
+            : undefined
+        }
+        coverUri={shownCover}
+        coverKey={shownCover ?? undefined}
+        onCoverError={coverFailure.onError}
+        metadata={metaLine([
+          ...libraryAlbumMetaParts(album),
+          album.duration_ms > 0 ? formatTotalMs(Math.max(album.duration_ms, 60_000)) : "",
+        ])}
         onPlay={
-          playableTracks(tracks).length > 0
+          playable > 0
             ? () => startListPlayback(play, listPlaybackQueue(tracks), shuffle)
             : undefined
         }
-        secondaryAction={downloadAction}
+        onShuffle={
+          playable > 1
+            ? () => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                startShuffledListPlayback(play, listPlaybackQueue(tracks));
+              }
+            : undefined
+        }
+        download={downloadAction}
+        onTitleBottom={hero.onTitleBottom}
       />
     );
-  }, [albumQuery.data, coverBust, tracks, play, shuffle, downloadAction]);
+  }, [
+    albumQuery.data,
+    shownCover,
+    coverFailure.onError,
+    tracks,
+    play,
+    shuffle,
+    downloadAction,
+    linkedArtistId,
+    router,
+    hero.onTitleBottom,
+  ]);
 
   const openEdit = useCallback(() => {
     if (!id) return;
@@ -164,6 +244,13 @@ export default function AlbumDetailScreen() {
         options={{
           title: displayText(albumQuery.data.title),
           headerLargeTitle: false,
+          // The list sits under the bar from the first point of scroll, so
+          // the scrolled-under hairline would cross the cover.
+          headerShadowVisible: false,
+          // The hero carries the title until it scrolls under the bar.
+          headerTitleStyle: {
+            color: hero.titleShown ? theme.color.fg : "transparent",
+          },
           headerRight: isAdmin
             ? () => (
                 <Pressable
@@ -186,15 +273,21 @@ export default function AlbumDetailScreen() {
       />
       <FlashList
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
-        {...dockScroll}
+        onScroll={hero.onScroll}
+        scrollEventThrottle={hero.scrollEventThrottle}
         data={tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
+        extraData={rowState}
         ListHeaderComponent={header}
-        contentInsetAdjustmentBehavior="automatic"
+        // The cover runs up under the status bar and the nav bar.
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustsScrollIndicatorInsets={false}
+        scrollIndicatorInsets={{ top: hero.headerHeight, bottom: hero.bottomInset + dockInset }}
         style={{ backgroundColor: theme.color.bg }}
-        contentContainerStyle={{ paddingBottom: dockInset + 24 }}
+        contentContainerStyle={{ paddingBottom: hero.bottomInset + dockInset + 24 }}
       />
+      <AlbumTopScrim overCover={hero.overCover} hasCover={!!shownCover} />
     </>
   );
 }

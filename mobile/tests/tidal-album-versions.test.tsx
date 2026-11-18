@@ -3,7 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import TidalAlbumDetailScreen from "../app/(tabs)/(library,browse)/tidal-albums/[id]";
 
-type Album = { id: string; title: string; artist_id?: string; tracks: { id: string; title: string }[] };
+type Album = {
+  id: string;
+  title: string;
+  artist_id?: string;
+  cover_url?: string;
+  tracks: { id: string; title: string; track_no?: number; unavailable?: boolean }[];
+};
 const mock = vi.hoisted(() => ({
   params: {} as { id: string; artist?: string },
   album: {} as {
@@ -29,6 +35,13 @@ const mock = vi.hoisted(() => ({
     | undefined
     | { options: { value: string; label: string }[]; value: string; onChange: (v: string) => void },
   pending: undefined as boolean | undefined,
+  rows: [] as { title: string; number: number; current: boolean; playing: boolean }[],
+  currentId: null as string | null,
+  isPlaying: false,
+  coverFailed: false,
+  failureKey: undefined as string | null | undefined,
+  header: {} as { coverUri?: string | null },
+  scrim: {} as { hasCover?: boolean },
 }));
 vi.mock("react-native", () => ({
   View: ({
@@ -82,7 +95,12 @@ vi.mock("expo-router", () => ({
   }),
 }));
 vi.mock("expo-symbols", () => ({ SymbolView: () => null }));
-vi.mock("expo-haptics", () => ({ selectionAsync: vi.fn() }));
+vi.mock("expo-haptics", () => ({
+  selectionAsync: vi.fn(),
+  impactAsync: vi.fn(),
+  ImpactFeedbackStyle: { Medium: "medium" },
+}));
+vi.mock("expo-router/react-navigation", () => ({ useHeaderHeight: () => 116 }));
 // The pure album, label and artwork helpers are the real ones.
 vi.mock("@music-library/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@music-library/core")>()),
@@ -110,9 +128,34 @@ vi.mock("@shopify/flash-list", () => ({
   ),
 }));
 vi.mock("../components/album-header", () => ({
-  ALBUM_ART_SIZE: 220,
-  AlbumHeader: ({ title, versions, pending }: { title: string; versions?: ReactNode; pending?: boolean }) => {
+  useAlbumCoverSize: () => 440,
+  useAlbumCoverInset: () => 0,
+  useAlbumHeroScroll: () => ({
+    onScroll: () => {},
+    scrollEventThrottle: 16,
+    titleShown: false,
+    overCover: true,
+    onTitleBottom: () => {},
+    headerHeight: 116,
+    bottomInset: 34,
+  }),
+  AlbumTopScrim: (props: { hasCover: boolean }) => {
+    mock.scrim = props;
+    return null;
+  },
+  AlbumHeader: ({
+    title,
+    versions,
+    pending,
+    coverUri,
+  }: {
+    title: string;
+    versions?: ReactNode;
+    pending?: boolean;
+    coverUri?: string | null;
+  }) => {
     mock.pending = pending;
+    mock.header = { coverUri };
     return (
       <header>
         {title}
@@ -129,8 +172,21 @@ vi.mock("../components/glass-segmented-control", () => ({
 }));
 vi.mock("../components/optional-swift-ui", () => ({ getOptionalSwiftUI: () => null }));
 vi.mock("../lib/action-menu", () => ({ showActionMenu: mock.showActionMenu }));
-vi.mock("../components/track-row", () => ({
-  TrackRow: ({ track }: { track: { title: string } }) => <span>{track.title}</span>,
+vi.mock("../components/album-track-row", () => ({
+  AlbumTrackRow: ({
+    track,
+    number,
+    current,
+    playing,
+  }: {
+    track: { title: string };
+    number: number;
+    current: boolean;
+    playing: boolean;
+  }) => {
+    mock.rows.push({ title: track.title, number, current, playing });
+    return <span>{track.title}</span>;
+  },
 }));
 vi.mock("../components/empty-state", () => ({
   EmptyState: ({ message, loading }: { message?: string; loading?: boolean }) => (
@@ -145,14 +201,22 @@ vi.mock("../components/dock/dock-context", () => ({
 vi.mock("../context/player", () => ({
   usePlayTrack: () => vi.fn(),
   usePlayerPlayback: () => ({ shuffle: false }),
+  useCurrentTrack: () => (mock.currentId ? { id: mock.currentId } : null),
+  useIsPlaying: () => mock.isPlaying,
 }));
 vi.mock("../lib/use-play-queue", () => ({
   usePlayQueue: () => vi.fn(),
   listPlaybackQueue: () => [],
 }));
 vi.mock("../lib/album-download", () => ({ useAlbumDownloadAction: () => undefined }));
+vi.mock("../lib/use-image-failure", () => ({
+  useImageFailure: (key: string | null) => {
+    mock.failureKey = key;
+    return { failed: mock.coverFailed, onError: () => {} };
+  },
+}));
 vi.mock("../theme/theme", () => ({
-  useTheme: () => ({ space: { lg: 24, md: 16 }, color: { bg: "black" } }),
+  useTheme: () => ({ space: { lg: 24, md: 16 }, color: { bg: "black", fg: "white" } }),
 }));
 
 const single = (sourceId: string, explicit: boolean, dolby_atmos = false) => ({
@@ -183,6 +247,12 @@ beforeEach(() => {
   mock.setParams.mockReset();
   mock.segments = undefined;
   mock.pending = undefined;
+  mock.rows = [];
+  mock.currentId = null;
+  mock.isPlaying = false;
+  mock.coverFailed = false;
+  mock.header = {};
+  mock.scrim = {};
 });
 const markup = () => renderToStaticMarkup(<TidalAlbumDetailScreen />);
 
@@ -303,4 +373,33 @@ it("lists four or more versions in a menu", () => {
   ]);
   items[2].onPress();
   expect(mock.setParams).toHaveBeenCalledWith({ id: "4", artist: "77" });
+});
+
+it("numbers rows by their place on the album and moves only the current row's bars", () => {
+  mock.album.data!.tracks = [
+    { id: "t1", title: "One", track_no: 1 },
+    { id: "t2", title: "Gone", unavailable: true },
+    { id: "t3", title: "Three", track_no: 3 },
+  ] as Album["tracks"];
+  mock.currentId = "t3";
+  mock.isPlaying = true;
+  markup();
+  expect(mock.rows).toEqual([
+    { title: "One", number: 1, current: false, playing: false },
+    { title: "Gone", number: 2, current: false, playing: false },
+    { title: "Three", number: 3, current: true, playing: true },
+  ]);
+});
+
+it("drops the scrim and falls back to the placeholder when the cover fails to load", () => {
+  mock.album.data = { ...mock.album.data!, cover_url: "https://resources.tidal.com/images/a/b/c/d/e/640x640.jpg" } as Album;
+  markup();
+  expect(mock.header.coverUri).toBeTruthy();
+  expect(mock.scrim.hasCover).toBe(true);
+  // Keyed by the version, so another version sharing the artwork retries it.
+  expect(mock.failureKey).toBe(`tidal:1:${mock.header.coverUri}`);
+  mock.coverFailed = true;
+  markup();
+  expect(mock.header.coverUri).toBeNull();
+  expect(mock.scrim.hasCover).toBe(false);
 });

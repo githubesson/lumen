@@ -41,6 +41,7 @@ export function ListRow({
   onAccessibilityAction,
   disabled = false,
   style,
+  titleColor,
 }: {
   leading?: ReactNode;
   title: string;
@@ -55,6 +56,8 @@ export function ListRow({
   onAccessibilityAction?: (event: AccessibilityActionEvent) => void;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
+  /** Tints the title (the album page's now-playing row). */
+  titleColor?: string;
 }) {
   const theme = useTheme();
   return (
@@ -86,7 +89,7 @@ export function ListRow({
       <View style={styles.body}>
         <Text
           numberOfLines={1}
-          style={{ fontSize: 16, fontWeight: "500", color: theme.color.fg }}
+          style={{ fontSize: 16, fontWeight: "500", color: titleColor ?? theme.color.fg }}
         >
           {title}
         </Text>
