@@ -258,8 +258,15 @@ export default function TidalAlbumDetailScreen() {
   const footer = useMemo(() => {
     const album = albumQuery.data;
     if (!album) return null;
+    // Like the rows, the previous version's footer waits, dimmed and out
+    // of reach, while the picked one loads.
     return (
-      <View>
+      <View
+        pointerEvents={switching ? "none" : "auto"}
+        accessibilityElementsHidden={switching}
+        importantForAccessibility={switching ? "no-hide-descendants" : "auto"}
+        style={switching ? { opacity: 0.4 } : undefined}
+      >
         <AlbumFooter
           releaseDate={album.release_date}
           releaseYear={album.release_year}
@@ -268,7 +275,11 @@ export default function TidalAlbumDetailScreen() {
           inset={coverInset}
         />
         <AlbumMoreBy
-          artist={displayText(moreBy.name)}
+          // The artist profile can fail while its releases arrive: the
+          // album's own artist names them when it's the same artist.
+          artist={displayText(
+            moreBy.name || (versionsArtist === album.artist_id ? album.artist : ""),
+          )}
           releases={moreBy.releases}
           onOpenArtist={
             versionsArtist
@@ -291,7 +302,7 @@ export default function TidalAlbumDetailScreen() {
         />
       </View>
     );
-  }, [albumQuery.data, tracks, coverInset, moreBy, versionsArtist, router]);
+  }, [albumQuery.data, tracks, coverInset, moreBy, versionsArtist, router, switching]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   // A version that can't load (failed, or waiting offline) shows the error,
@@ -324,7 +335,7 @@ export default function TidalAlbumDetailScreen() {
           // The list sits under the bar from the first point of scroll, so
           // the scrolled-under hairline would cross the cover.
           headerShadowVisible: false,
-          scrollEdgeEffects: albumScrollEdgeEffects(failed || hero.titleShown),
+          scrollEdgeEffects: albumScrollEdgeEffects(failed || hero.titleShown, hero.edgeNudge),
           // The hero carries the title until it scrolls under the bar.
           headerTitleStyle: {
             color: failed || hero.titleShown ? theme.color.fg : "transparent",
@@ -335,6 +346,7 @@ export default function TidalAlbumDetailScreen() {
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         onScroll={hero.onScroll}
         scrollEventThrottle={hero.scrollEventThrottle}
+        onLayout={hero.onListLayout}
         data={failed ? [] : tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}

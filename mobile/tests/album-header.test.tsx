@@ -192,4 +192,8 @@ it("keeps iOS's scroll edge blur off the cover, and soft once the songs are unde
   expect(albumScrollEdgeEffects(false).top).toBe("hidden");
   expect(albumScrollEdgeEffects(true).top).toBe("soft");
   expect(albumScrollEdgeEffects(false).bottom).toBe("automatic");
+  // The nudge changes an edge that shows nothing, so the effects apply again
+  // to a list mounted anew, without touching the top.
+  expect(albumScrollEdgeEffects(false, true).left).not.toBe(albumScrollEdgeEffects(false, false).left);
+  expect(albumScrollEdgeEffects(false, true).top).toBe("hidden");
 });

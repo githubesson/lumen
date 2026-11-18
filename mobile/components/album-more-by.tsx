@@ -59,8 +59,10 @@ export function AlbumMoreBy({
   return (
     <View style={{ paddingTop: theme.space.xl, gap: theme.space.md }}>
       {onOpenArtist ? (
+        // A link, like the hero's artist name: VoiceOver lists it with the
+        // page's other links rather than as a plain heading.
         <Pressable
-          accessibilityRole="header"
+          accessibilityRole="link"
           accessibilityLabel={title}
           accessibilityHint="Opens the artist"
           onPress={() => {

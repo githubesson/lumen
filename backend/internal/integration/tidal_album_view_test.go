@@ -121,6 +121,23 @@ func TestLibraryAlbumShowsFullTIDALRelease(t *testing.T) {
 	if head.ReleaseDate != "2021-05-14" || head.Copyright != "© 2021 Band Records" {
 		t.Fatalf("release facts = %q %q", head.ReleaseDate, head.Copyright)
 	}
+	// An album whose year was set apart from the release's keeps its own
+	// year, so the release's full date would contradict it: left out.
+	if _, err := pool.Exec(ctx, `UPDATE albums SET release_year = 2022 WHERE id = $1`, album); err != nil {
+		t.Fatal(err)
+	}
+	var mismatched struct {
+		ReleaseYear int    `json:"release_year"`
+		ReleaseDate string `json:"release_date"`
+		Copyright   string `json:"copyright"`
+	}
+	get("/api/albums/"+album.String(), &mismatched)
+	if mismatched.ReleaseYear != 2022 || mismatched.ReleaseDate != "" || mismatched.Copyright != "© 2021 Band Records" {
+		t.Fatalf("year-mismatched album = %+v", mismatched)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE albums SET release_year = NULL WHERE id = $1`, album); err != nil {
+		t.Fatal(err)
+	}
 	// An admin edit returns the album as its page shows it, release fields
 	// included, so the page doesn't lose them (or its download control).
 	editor := uuid.New()

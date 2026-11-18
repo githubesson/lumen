@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   PixelRatio,
   Pressable,
@@ -138,7 +138,8 @@ export default function AlbumDetailScreen() {
   const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
   const linkedArtist = credits.find((credit) => credit.artistId);
   const linkedArtistId = linkedArtist?.artistId;
-  const moreBy = useLibraryMoreBy(linkedArtistId, id);
+  const [nearEnd, setNearEnd] = useState(false);
+  const moreBy = useLibraryMoreBy(linkedArtistId, id, nearEnd);
   const openArtist = useMemo(
     () =>
       linkedArtistId
@@ -281,7 +282,7 @@ export default function AlbumDetailScreen() {
           // The list sits under the bar from the first point of scroll, so
           // the scrolled-under hairline would cross the cover.
           headerShadowVisible: false,
-          scrollEdgeEffects: albumScrollEdgeEffects(hero.titleShown),
+          scrollEdgeEffects: albumScrollEdgeEffects(hero.titleShown, hero.edgeNudge),
           // The hero carries the title until it scrolls under the bar.
           headerTitleStyle: {
             color: hero.titleShown ? theme.color.fg : "transparent",
@@ -310,6 +311,10 @@ export default function AlbumDetailScreen() {
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         onScroll={hero.onScroll}
         scrollEventThrottle={hero.scrollEventThrottle}
+        onLayout={hero.onListLayout}
+        // "More by" needs the artist's track listing: ask once near the end.
+        onEndReached={() => setNearEnd(true)}
+        onEndReachedThreshold={1}
         data={tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}

@@ -7,6 +7,7 @@ import {
   tidalArtistReleases,
   type ArtistRelease,
 } from "@music-library/core/artist-releases";
+import { QUERY_STALE_TIME } from "./query-policy";
 import { qk } from "./query-keys";
 
 /** At most this many tiles: the artist's page lists the rest. */
@@ -44,18 +45,22 @@ export function useTidalMoreBy(
 
 /**
  * A library album page's "More by": the album artist's other albums in the
- * library, from the same track listing the artist page loads. Empty without
- * an artist page to ask, until it loads, and on failure.
+ * library, from the same track listing the artist page loads. That listing
+ * is the artist's every track, so it's only asked for once `wanted` (the
+ * page has scrolled near its end) and kept fresh like a library list. Empty
+ * without an artist page to ask, until it loads, and on failure.
  */
 export function useLibraryMoreBy(
   artistId: string | undefined,
   albumId: string | undefined,
+  wanted: boolean,
 ): ArtistRelease[] {
   const { me } = useAuth();
   const { data } = useQuery({
     queryKey: qk.artistTracks(me?.id, artistId),
     queryFn: ({ signal }) => api.listArtistTracks(artistId!, { signal }),
-    enabled: !!me && !!artistId,
+    enabled: !!me && !!artistId && wanted,
+    staleTime: QUERY_STALE_TIME.libraryList,
   });
   return useMemo(
     () =>

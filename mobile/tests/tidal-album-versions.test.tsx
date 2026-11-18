@@ -7,6 +7,7 @@ type Album = {
   id: string;
   title: string;
   artist_id?: string;
+  artist?: string;
   cover_url?: string;
   release_date?: string;
   copyright?: string;
@@ -42,6 +43,8 @@ const mock = vi.hoisted(() => ({
   isPlaying: false,
   coverFailed: false,
   moreByArtist: undefined as string | undefined,
+  moreByName: "Kayah",
+  moreByShownArtist: undefined as string | undefined,
   failureKey: undefined as string | null | undefined,
   header: {} as { coverUri?: string | null },
   scrim: {} as { hasCover?: boolean },
@@ -219,7 +222,7 @@ vi.mock("../lib/album-download", () => ({ useAlbumDownloadAction: () => undefine
 vi.mock("../lib/album-more-by", () => ({
   useTidalMoreBy: (artistId?: string) => {
     mock.moreByArtist = artistId;
-    return { name: "Kayah", releases: [] };
+    return { name: mock.moreByName, releases: [] };
   },
 }));
 vi.mock("../components/album-footer", () => ({
@@ -229,7 +232,12 @@ vi.mock("../components/album-footer", () => ({
     </footer>
   ),
 }));
-vi.mock("../components/album-more-by", () => ({ AlbumMoreBy: () => null }));
+vi.mock("../components/album-more-by", () => ({
+  AlbumMoreBy: ({ artist }: { artist: string }) => {
+    mock.moreByShownArtist = artist;
+    return null;
+  },
+}));
 vi.mock("../lib/use-image-failure", () => ({
   useImageFailure: (key: string | null) => {
     mock.failureKey = key;
@@ -272,6 +280,8 @@ beforeEach(() => {
   mock.currentId = null;
   mock.isPlaying = false;
   mock.coverFailed = false;
+  mock.moreByName = "Kayah";
+  mock.moreByShownArtist = undefined;
   mock.header = {};
   mock.scrim = {};
 });
@@ -442,4 +452,16 @@ it("leaves the footer off a version that failed to load", () => {
   mock.album.isError = true;
   mock.album.data = undefined;
   expect(markup()).not.toContain("<footer>");
+});
+
+it("names the More by shelf after the album's own artist when the artist profile didn't load", () => {
+  mock.params = { id: "1" };
+  mock.moreByName = "";
+  mock.album.data = { ...mock.album.data!, artist_id: "77", artist: "Kayah" } as Album;
+  markup();
+  expect(mock.moreByShownArtist).toBe("Kayah");
+  // Opened from another artist, whose name the album can't vouch for.
+  mock.params = { id: "1", artist: "88" };
+  markup();
+  expect(mock.moreByShownArtist).toBe("");
 });
