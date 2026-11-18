@@ -82,7 +82,12 @@ vi.mock("expo-router", () => ({
   }),
 }));
 vi.mock("expo-symbols", () => ({ SymbolView: () => null }));
-vi.mock("expo-haptics", () => ({ selectionAsync: vi.fn() }));
+vi.mock("expo-haptics", () => ({
+  selectionAsync: vi.fn(),
+  impactAsync: vi.fn(),
+  ImpactFeedbackStyle: { Medium: "medium" },
+}));
+vi.mock("expo-router/react-navigation", () => ({ useHeaderHeight: () => 116 }));
 // The pure album, label and artwork helpers are the real ones.
 vi.mock("@music-library/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@music-library/core")>()),
@@ -110,7 +115,15 @@ vi.mock("@shopify/flash-list", () => ({
   ),
 }));
 vi.mock("../components/album-header", () => ({
-  ALBUM_ART_SIZE: 220,
+  useAlbumCoverSize: () => 440,
+  useAlbumHeroScroll: () => ({
+    onScroll: () => {},
+    scrollEventThrottle: 16,
+    titleShown: false,
+    overCover: true,
+    onTitleBottom: () => {},
+  }),
+  AlbumStatusBar: () => null,
   AlbumHeader: ({ title, versions, pending }: { title: string; versions?: ReactNode; pending?: boolean }) => {
     mock.pending = pending;
     return (
@@ -129,8 +142,8 @@ vi.mock("../components/glass-segmented-control", () => ({
 }));
 vi.mock("../components/optional-swift-ui", () => ({ getOptionalSwiftUI: () => null }));
 vi.mock("../lib/action-menu", () => ({ showActionMenu: mock.showActionMenu }));
-vi.mock("../components/track-row", () => ({
-  TrackRow: ({ track }: { track: { title: string } }) => <span>{track.title}</span>,
+vi.mock("../components/album-track-row", () => ({
+  AlbumTrackRow: ({ track }: { track: { title: string } }) => <span>{track.title}</span>,
 }));
 vi.mock("../components/empty-state", () => ({
   EmptyState: ({ message, loading }: { message?: string; loading?: boolean }) => (
@@ -145,6 +158,8 @@ vi.mock("../components/dock/dock-context", () => ({
 vi.mock("../context/player", () => ({
   usePlayTrack: () => vi.fn(),
   usePlayerPlayback: () => ({ shuffle: false }),
+  useCurrentTrack: () => null,
+  useIsPlaying: () => false,
 }));
 vi.mock("../lib/use-play-queue", () => ({
   usePlayQueue: () => vi.fn(),
@@ -152,7 +167,7 @@ vi.mock("../lib/use-play-queue", () => ({
 }));
 vi.mock("../lib/album-download", () => ({ useAlbumDownloadAction: () => undefined }));
 vi.mock("../theme/theme", () => ({
-  useTheme: () => ({ space: { lg: 24, md: 16 }, color: { bg: "black" } }),
+  useTheme: () => ({ space: { lg: 24, md: 16 }, color: { bg: "black", fg: "white" } }),
 }));
 
 const single = (sourceId: string, explicit: boolean, dolby_atmos = false) => ({

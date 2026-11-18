@@ -12,12 +12,15 @@ import {
   ALBUM_DOWNLOAD_REFRESH_MS,
   albumArtists,
   albumArtUrl,
+  albumCredits,
   api,
   displayText,
+  formatTotalMs,
   libraryAlbumMetaParts,
   metaLine,
   playableTracks,
   startListPlayback,
+  startShuffledListPlayback,
   useAuth,
   type Album,
   type TrackListItem,
@@ -27,13 +30,23 @@ import {
   useBottomDockInset,
   useDockScrollHandler,
 } from "../../../../components/dock/dock-context";
-import { TrackRow } from "../../../../components/track-row";
-import { usePlayerPlayback, usePlayTrack } from "../../../../context/player";
+import { AlbumTrackRow } from "../../../../components/album-track-row";
+import {
+  useCurrentTrack,
+  useIsPlaying,
+  usePlayerPlayback,
+  usePlayTrack,
+} from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
-import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
+import {
+  AlbumHeader,
+  AlbumStatusBar,
+  useAlbumCoverSize,
+  useAlbumHeroScroll,
+} from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 export default function AlbumDetailScreen() {
@@ -41,9 +54,13 @@ export default function AlbumDetailScreen() {
   const router = useRouter();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
+  const hero = useAlbumHeroScroll(dockScroll.onScroll);
+  const coverSize = useAlbumCoverSize();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
+  const currentId = useCurrentTrack()?.id;
+  const isPlaying = useIsPlaying();
   const { me } = useAuth();
   const userId = me?.id;
   const isAdmin = me?.role === "admin";
@@ -103,39 +120,84 @@ export default function AlbumDetailScreen() {
     onQueuedChanged,
   );
 
+  const credits = useMemo(
+    () => (albumQuery.data ? albumCredits(albumQuery.data) : []),
+    [albumQuery.data],
+  );
+  const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
+  const linkedArtistId = credits.find((credit) => credit.artistId)?.artistId;
+
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<TrackListItem>) => (
-      <TrackRow track={item} onPress={onTrackPress} />
+    ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
+      <AlbumTrackRow
+        track={item}
+        number={index + 1}
+        albumArtists={creditNames}
+        current={item.id === currentId}
+        playing={isPlaying}
+        onPress={onTrackPress}
+      />
     ),
-    [onTrackPress],
+    [onTrackPress, creditNames, currentId, isPlaying],
   );
 
   const keyExtractor = useCallback((t: TrackListItem) => t.id, []);
+  const rowState = useMemo(() => ({ currentId, isPlaying }), [currentId, isPlaying]);
 
   const header = useMemo(() => {
     const album = albumQuery.data;
     if (!album) return null;
-    const requestSize = Math.max(
-      1,
-      Math.round(ALBUM_ART_SIZE * PixelRatio.get()),
-    );
+    const requestSize = Math.max(1, Math.round(coverSize * PixelRatio.get()));
     const coverUri = albumArtUrl(album, requestSize, coverBust);
+    const playable = playableTracks(tracks).length;
     return (
       <AlbumHeader
         title={album.title}
         artist={albumArtists(album)}
+        onOpenArtist={
+          linkedArtistId
+            ? () =>
+                router.push({
+                  pathname: "/(tabs)/artists/[id]",
+                  params: { id: linkedArtistId },
+                })
+            : undefined
+        }
         coverUri={coverUri}
         coverKey={coverUri ?? undefined}
-        metadata={metaLine(libraryAlbumMetaParts(album))}
+        metadata={metaLine([
+          ...libraryAlbumMetaParts(album),
+          album.duration_ms > 0 ? formatTotalMs(Math.max(album.duration_ms, 60_000)) : "",
+        ])}
         onPlay={
-          playableTracks(tracks).length > 0
+          playable > 0
             ? () => startListPlayback(play, listPlaybackQueue(tracks), shuffle)
             : undefined
         }
-        secondaryAction={downloadAction}
+        onShuffle={
+          playable > 1
+            ? () => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                startShuffledListPlayback(play, listPlaybackQueue(tracks));
+              }
+            : undefined
+        }
+        download={downloadAction}
+        onTitleBottom={hero.onTitleBottom}
       />
     );
-  }, [albumQuery.data, coverBust, tracks, play, shuffle, downloadAction]);
+  }, [
+    albumQuery.data,
+    coverBust,
+    coverSize,
+    tracks,
+    play,
+    shuffle,
+    downloadAction,
+    linkedArtistId,
+    router,
+    hero.onTitleBottom,
+  ]);
 
   const openEdit = useCallback(() => {
     if (!id) return;
@@ -164,6 +226,10 @@ export default function AlbumDetailScreen() {
         options={{
           title: displayText(albumQuery.data.title),
           headerLargeTitle: false,
+          // The hero carries the title until it scrolls under the bar.
+          headerTitleStyle: {
+            color: hero.titleShown ? theme.color.fg : "transparent",
+          },
           headerRight: isAdmin
             ? () => (
                 <Pressable
@@ -184,14 +250,18 @@ export default function AlbumDetailScreen() {
             : undefined,
         }}
       />
+      <AlbumStatusBar overCover={hero.overCover} />
       <FlashList
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
-        {...dockScroll}
+        onScroll={hero.onScroll}
+        scrollEventThrottle={hero.scrollEventThrottle}
         data={tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
+        extraData={rowState}
         ListHeaderComponent={header}
-        contentInsetAdjustmentBehavior="automatic"
+        // The cover runs up under the status bar and the nav bar.
+        contentInsetAdjustmentBehavior="never"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{ paddingBottom: dockInset + 24 }}
       />

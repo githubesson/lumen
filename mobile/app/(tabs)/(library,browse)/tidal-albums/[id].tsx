@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { PixelRatio, View } from "react-native";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import {
   keepPreviousData,
@@ -7,15 +8,19 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import * as Haptics from "expo-haptics";
 import {
   ALBUM_DOWNLOAD_REFRESH_MS,
   albumArtists,
   albumArtUrl,
   api,
   displayText,
+  formatTotalMs,
   metaLine,
   playableTracks,
   startListPlayback,
+  startShuffledListPlayback,
+  tidalAlbumCredits,
   tidalAlbumMetaParts,
   useAuth,
   type TidalAlbum,
@@ -27,20 +32,33 @@ import {
   useDockScrollHandler,
 } from "../../../../components/dock/dock-context";
 import { ReleaseVersionPicker } from "../../../../components/library/release-version-picker";
-import { TrackRow } from "../../../../components/track-row";
-import { usePlayerPlayback, usePlayTrack } from "../../../../context/player";
+import { AlbumTrackRow } from "../../../../components/album-track-row";
+import {
+  useCurrentTrack,
+  useIsPlaying,
+  usePlayerPlayback,
+  usePlayTrack,
+} from "../../../../context/player";
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
 import { useReleaseVersions } from "../../../../lib/release-versions";
 import { useTheme } from "../../../../theme/theme";
-import { AlbumHeader, ALBUM_ART_SIZE } from "../../../../components/album-header";
+import {
+  AlbumHeader,
+  AlbumStatusBar,
+  useAlbumCoverSize,
+  useAlbumHeroScroll,
+} from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
 
 export default function TidalAlbumDetailScreen() {
   const theme = useTheme();
   const dockInset = useBottomDockInset();
   const dockScroll = useDockScrollHandler();
+  const hero = useAlbumHeroScroll(dockScroll.onScroll);
+  const coverSize = useAlbumCoverSize();
+  const headerHeight = useHeaderHeight();
   const router = useRouter();
   // `artist`: the TIDAL artist the album was opened from, whose releases list
   // its versions. Without one, the album's own artist is asked once it loads.
@@ -94,6 +112,8 @@ export default function TidalAlbumDetailScreen() {
   );
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
+  const currentId = useCurrentTrack()?.id;
+  const isPlaying = useIsPlaying();
   const { refetch } = albumQuery;
   const onQueuedChanged = useCallback(
     (queued: number) => {
@@ -111,57 +131,98 @@ export default function TidalAlbumDetailScreen() {
     onQueuedChanged,
   );
 
+  const credits = useMemo(
+    () => (albumQuery.data ? tidalAlbumCredits(albumQuery.data) : []),
+    [albumQuery.data],
+  );
+  const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
+  const linkedArtistId = credits.find((credit) => credit.tidalArtistId)?.tidalArtistId;
+
   // The previous version's tracks stay dimmed, out of reach of touch and
   // VoiceOver, until the picked one loads.
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<TrackListItem>) => (
+    ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
       <View
         pointerEvents={switching ? "none" : "auto"}
         accessibilityElementsHidden={switching}
         importantForAccessibility={switching ? "no-hide-descendants" : "auto"}
         style={switching ? { opacity: 0.4 } : undefined}
       >
-        <TrackRow track={item} onPress={onTrackPress} />
+        <AlbumTrackRow
+          track={item}
+          number={index + 1}
+          albumArtists={creditNames}
+          current={item.id === currentId}
+          playing={isPlaying}
+          onPress={onTrackPress}
+        />
       </View>
     ),
-    [onTrackPress, switching],
+    [onTrackPress, switching, creditNames, currentId, isPlaying],
   );
 
   const keyExtractor = useCallback((track: TrackListItem) => track.id, []);
+  const rowState = useMemo(
+    () => ({ switching, currentId, isPlaying }),
+    [switching, currentId, isPlaying],
+  );
 
   const header = useMemo(() => {
     const album = albumQuery.data;
     if (!album) return null;
-    const requestSize = Math.max(
-      1,
-      Math.round(ALBUM_ART_SIZE * PixelRatio.get()),
-    );
+    const requestSize = Math.max(1, Math.round(coverSize * PixelRatio.get()));
     const coverUri = albumArtUrl({ ...album, source: "tidal" }, requestSize);
+    const playable = playableTracks(tracks).length;
     return (
       <AlbumHeader
         title={album.title}
         artist={albumArtists(album)}
+        onOpenArtist={
+          linkedArtistId
+            ? () =>
+                router.push({
+                  pathname: "/(tabs)/tidal-artists/[id]",
+                  params: { id: linkedArtistId },
+                })
+            : undefined
+        }
         coverUri={coverUri}
         coverKey={`${album.id}:${requestSize}`}
-        metadata={metaLine(tidalAlbumMetaParts(album))}
+        metadata={metaLine([
+          ...tidalAlbumMetaParts(album),
+          album.duration_ms > 0 ? formatTotalMs(Math.max(album.duration_ms, 60_000)) : "",
+        ])}
         onPlay={
-          playableTracks(tracks).length > 0
+          playable > 0
             ? () => startListPlayback(play, listPlaybackQueue(tracks), shuffle)
             : undefined
         }
-        secondaryAction={downloadAction}
+        onShuffle={
+          playable > 1
+            ? () => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                startShuffledListPlayback(play, listPlaybackQueue(tracks));
+              }
+            : undefined
+        }
+        download={downloadAction}
         versions={versionPicker}
         pending={switching}
+        onTitleBottom={hero.onTitleBottom}
       />
     );
   }, [
     albumQuery.data,
+    coverSize,
     play,
     shuffle,
     tracks,
     downloadAction,
     versionPicker,
     switching,
+    linkedArtistId,
+    router,
+    hero.onTitleBottom,
   ]);
 
   if (albumQuery.isLoading) return <EmptyState fill loading />;
@@ -192,21 +253,27 @@ export default function TidalAlbumDetailScreen() {
             ? "TIDAL album"
             : displayText(albumQuery.data?.title ?? ""),
           headerLargeTitle: false,
+          // The hero carries the title until it scrolls under the bar.
+          headerTitleStyle: {
+            color: failed || hero.titleShown ? theme.color.fg : "transparent",
+          },
         }}
       />
+      {failed ? null : <AlbumStatusBar overCover={hero.overCover} />}
       <FlashList
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
-        {...dockScroll}
+        onScroll={hero.onScroll}
+        scrollEventThrottle={hero.scrollEventThrottle}
         data={failed ? [] : tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        extraData={switching}
+        extraData={rowState}
         ListHeaderComponent={
           failed ? (
             <View
               style={{
                 paddingHorizontal: theme.space.lg,
-                paddingTop: theme.space.md,
+                paddingTop: headerHeight + theme.space.md,
               }}
             >
               {versionPicker}
@@ -216,7 +283,8 @@ export default function TidalAlbumDetailScreen() {
           )
         }
         ListEmptyComponent={failed ? failure : undefined}
-        contentInsetAdjustmentBehavior="automatic"
+        // The cover runs up under the status bar and the nav bar.
+        contentInsetAdjustmentBehavior="never"
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{ paddingBottom: dockInset + 24 }}
       />
