@@ -40,6 +40,8 @@ import {
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
+import { albumTrackNumbers } from "../../../../lib/album-track-numbers";
+import { useImageFailure } from "../../../../lib/use-image-failure";
 import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
@@ -124,6 +126,7 @@ export default function AlbumDetailScreen() {
     () => (albumQuery.data ? albumCredits(albumQuery.data) : []),
     [albumQuery.data],
   );
+  const numbers = useMemo(() => albumTrackNumbers(tracks), [tracks]);
   const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
   const linkedArtistId = credits.find((credit) => credit.artistId)?.artistId;
 
@@ -131,14 +134,14 @@ export default function AlbumDetailScreen() {
     ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
       <AlbumTrackRow
         track={item}
-        number={item.track_no || index + 1}
+        number={numbers[index] ?? index + 1}
         albumArtists={creditNames}
         current={item.id === currentId}
         playing={item.id === currentId && isPlaying}
         onPress={onTrackPress}
       />
     ),
-    [onTrackPress, creditNames, currentId, isPlaying],
+    [onTrackPress, numbers, creditNames, currentId, isPlaying],
   );
 
   const keyExtractor = useCallback((t: TrackListItem) => t.id, []);
@@ -150,6 +153,9 @@ export default function AlbumDetailScreen() {
     const requestSize = Math.max(1, Math.round(coverSize * PixelRatio.get()));
     return albumArtUrl(album, requestSize, coverBust);
   }, [albumQuery.data, coverSize, coverBust]);
+  // A cover that fails to load shows the placeholder, with no scrim over it.
+  const coverFailure = useImageFailure(coverUri);
+  const shownCover = coverFailure.failed ? null : coverUri;
 
   const header = useMemo(() => {
     const album = albumQuery.data;
@@ -168,8 +174,9 @@ export default function AlbumDetailScreen() {
                 })
             : undefined
         }
-        coverUri={coverUri}
-        coverKey={coverUri ?? undefined}
+        coverUri={shownCover}
+        coverKey={shownCover ?? undefined}
+        onCoverError={coverFailure.onError}
         metadata={metaLine([
           ...libraryAlbumMetaParts(album),
           album.duration_ms > 0 ? formatTotalMs(Math.max(album.duration_ms, 60_000)) : "",
@@ -193,7 +200,8 @@ export default function AlbumDetailScreen() {
     );
   }, [
     albumQuery.data,
-    coverUri,
+    shownCover,
+    coverFailure.onError,
     tracks,
     play,
     shuffle,
@@ -273,7 +281,7 @@ export default function AlbumDetailScreen() {
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{ paddingBottom: hero.bottomInset + dockInset + 24 }}
       />
-      <AlbumTopScrim overCover={hero.overCover} hasCover={!!coverUri} />
+      <AlbumTopScrim overCover={hero.overCover} hasCover={!!shownCover} />
     </>
   );
 }

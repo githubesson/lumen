@@ -7,6 +7,7 @@ type Album = {
   id: string;
   title: string;
   artist_id?: string;
+  cover_url?: string;
   tracks: { id: string; title: string; track_no?: number; unavailable?: boolean }[];
 };
 const mock = vi.hoisted(() => ({
@@ -37,6 +38,9 @@ const mock = vi.hoisted(() => ({
   rows: [] as { title: string; number: number; current: boolean; playing: boolean }[],
   currentId: null as string | null,
   isPlaying: false,
+  coverFailed: false,
+  header: {} as { coverUri?: string | null },
+  scrim: {} as { hasCover?: boolean },
 }));
 vi.mock("react-native", () => ({
   View: ({
@@ -133,9 +137,23 @@ vi.mock("../components/album-header", () => ({
     headerHeight: 116,
     bottomInset: 34,
   }),
-  AlbumTopScrim: () => null,
-  AlbumHeader: ({ title, versions, pending }: { title: string; versions?: ReactNode; pending?: boolean }) => {
+  AlbumTopScrim: (props: { hasCover: boolean }) => {
+    mock.scrim = props;
+    return null;
+  },
+  AlbumHeader: ({
+    title,
+    versions,
+    pending,
+    coverUri,
+  }: {
+    title: string;
+    versions?: ReactNode;
+    pending?: boolean;
+    coverUri?: string | null;
+  }) => {
     mock.pending = pending;
+    mock.header = { coverUri };
     return (
       <header>
         {title}
@@ -189,6 +207,9 @@ vi.mock("../lib/use-play-queue", () => ({
   listPlaybackQueue: () => [],
 }));
 vi.mock("../lib/album-download", () => ({ useAlbumDownloadAction: () => undefined }));
+vi.mock("../lib/use-image-failure", () => ({
+  useImageFailure: () => ({ failed: mock.coverFailed, onError: () => {} }),
+}));
 vi.mock("../theme/theme", () => ({
   useTheme: () => ({ space: { lg: 24, md: 16 }, color: { bg: "black", fg: "white" } }),
 }));
@@ -224,6 +245,9 @@ beforeEach(() => {
   mock.rows = [];
   mock.currentId = null;
   mock.isPlaying = false;
+  mock.coverFailed = false;
+  mock.header = {};
+  mock.scrim = {};
 });
 const markup = () => renderToStaticMarkup(<TidalAlbumDetailScreen />);
 
@@ -360,4 +384,15 @@ it("numbers rows by their place on the album and moves only the current row's ba
     { title: "Gone", number: 2, current: false, playing: false },
     { title: "Three", number: 3, current: true, playing: true },
   ]);
+});
+
+it("drops the scrim and falls back to the placeholder when the cover fails to load", () => {
+  mock.album.data = { ...mock.album.data!, cover_url: "https://resources.tidal.com/images/a/b/c/d/e/640x640.jpg" } as Album;
+  markup();
+  expect(mock.header.coverUri).toBeTruthy();
+  expect(mock.scrim.hasCover).toBe(true);
+  mock.coverFailed = true;
+  markup();
+  expect(mock.header.coverUri).toBeNull();
+  expect(mock.scrim.hasCover).toBe(false);
 });

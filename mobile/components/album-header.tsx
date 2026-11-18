@@ -61,6 +61,8 @@ interface Props {
   onOpenArtist?: () => void;
   coverUri: string | null;
   coverKey?: string;
+  /** The cover didn't load: the caller drops `coverUri` for the placeholder. */
+  onCoverError?: () => void;
   metadata: string;
   onPlay?: () => void;
   /** Shuffle-plays the album; left out when there's nothing to shuffle. */
@@ -86,6 +88,7 @@ export function AlbumHeader({
   onOpenArtist,
   coverUri,
   coverKey,
+  onCoverError,
   metadata,
   onPlay,
   onShuffle,
@@ -96,7 +99,10 @@ export function AlbumHeader({
 }: Props) {
   const theme = useTheme();
   const size = useAlbumCoverSize();
-  const wide = useWindowDimensions().width > size;
+  const windowWidth = useWindowDimensions().width;
+  const wide = windowWidth > size;
+  // On an iPad the text lines up with the centred cover, not the screen edge.
+  const side = (wide ? Math.round((windowWidth - size) / 2) : 0) + theme.space.lg;
   const page = theme.scheme === "light" ? "255, 255, 255" : "0, 0, 0";
   // Shuffle and Download: the first elevation all but vanishes on white.
   const quiet = theme.scheme === "light" ? theme.color.bgElev2 : theme.color.bgElev1;
@@ -134,6 +140,7 @@ export function AlbumHeader({
             allowDownscaling
             decodeFormat="rgb"
             recyclingKey={coverKey ?? coverUri}
+            onError={onCoverError}
             accessibilityIgnoresInvertColors
           />
         ) : (
@@ -159,7 +166,7 @@ export function AlbumHeader({
       <View
         style={{
           marginTop: -ALBUM_TITLE_OVERLAP,
-          paddingHorizontal: theme.space.lg,
+          paddingHorizontal: side,
           paddingBottom: theme.space.sm,
         }}
       >

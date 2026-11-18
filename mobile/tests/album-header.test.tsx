@@ -8,10 +8,19 @@ import {
   useAlbumCoverSize,
 } from "../components/album-header";
 
-const env = vi.hoisted(() => ({ width: 440, scheme: "dark", focused: true }));
+const env = vi.hoisted(() => ({
+  width: 440,
+  scheme: "dark",
+  focused: true,
+  images: [] as { onError?: () => void }[],
+  blocks: [] as { paddingHorizontal?: number }[],
+}));
 
 vi.mock("react-native", () => ({
-  View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  View: ({ children, style }: { children?: ReactNode; style?: { paddingHorizontal?: number } }) => {
+    if (style?.paddingHorizontal !== undefined) env.blocks.push(style);
+    return <div>{children}</div>;
+  },
   Text: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
   ActivityIndicator: () => <i>spinner</i>,
   Pressable: ({
@@ -41,7 +50,12 @@ vi.mock("react-native-reanimated", () => ({
   useAnimatedStyle: (style: () => object) => style(),
   withTiming: (value: number) => value,
 }));
-vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("expo-image", () => ({
+  Image: (props: { onError?: () => void }) => {
+    env.images.push(props);
+    return null;
+  },
+}));
 vi.mock("expo-symbols", () => ({
   SymbolView: ({ name }: { name: string }) => <i>{name}</i>,
 }));
@@ -151,4 +165,24 @@ it("holds the light status bar only in light mode, on screen, over a cover", () 
   expect(scrim({ overCover: true, hasCover: true }, "light", false)).not.toContain("status bar");
   // Dark mode's status bar is light already, so it leaves it to the app.
   expect(scrim({ overCover: true, hasCover: true }, "dark")).not.toContain("status bar");
+});
+
+it("hands a cover that fails to load back to the caller", () => {
+  env.images = [];
+  const onCoverError = vi.fn();
+  render({ coverUri: "https://example.com/cover.jpg", onCoverError });
+  env.images.forEach((image) => image.onError?.());
+  expect(onCoverError).toHaveBeenCalledTimes(1);
+});
+
+it("lines the text up with the centred cover on an iPad", () => {
+  env.blocks = [];
+  render();
+  expect(env.blocks.at(-1)?.paddingHorizontal).toBe(24);
+  env.width = 820;
+  env.blocks = [];
+  render();
+  // (820 - 560) / 2 + the 24pt gutter.
+  expect(env.blocks.at(-1)?.paddingHorizontal).toBe(154);
+  env.width = 440;
 });

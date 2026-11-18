@@ -41,6 +41,8 @@ import {
 import { qk } from "../../../../lib/query-keys";
 import { listPlaybackQueue, usePlayQueue } from "../../../../lib/use-play-queue";
 import { useAlbumDownloadAction } from "../../../../lib/album-download";
+import { albumTrackNumbers } from "../../../../lib/album-track-numbers";
+import { useImageFailure } from "../../../../lib/use-image-failure";
 import { useReleaseVersions } from "../../../../lib/release-versions";
 import { useTheme } from "../../../../theme/theme";
 import {
@@ -133,6 +135,7 @@ export default function TidalAlbumDetailScreen() {
     () => (albumQuery.data ? tidalAlbumCredits(albumQuery.data) : []),
     [albumQuery.data],
   );
+  const numbers = useMemo(() => albumTrackNumbers(tracks), [tracks]);
   const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
   const linkedArtistId = credits.find((credit) => credit.tidalArtistId)?.tidalArtistId;
 
@@ -148,8 +151,7 @@ export default function TidalAlbumDetailScreen() {
       >
         <AlbumTrackRow
           track={item}
-          // TIDAL lists hold unavailable entries too, so the index is the fallback.
-          number={item.track_no || index + 1}
+          number={numbers[index] ?? index + 1}
           albumArtists={creditNames}
           current={item.id === currentId}
           playing={item.id === currentId && isPlaying}
@@ -157,7 +159,7 @@ export default function TidalAlbumDetailScreen() {
         />
       </View>
     ),
-    [onTrackPress, switching, creditNames, currentId, isPlaying],
+    [onTrackPress, numbers, switching, creditNames, currentId, isPlaying],
   );
 
   const keyExtractor = useCallback((track: TrackListItem) => track.id, []);
@@ -172,6 +174,9 @@ export default function TidalAlbumDetailScreen() {
       albumQuery.data ? albumArtUrl({ ...albumQuery.data, source: "tidal" }, requestSize) : null,
     [albumQuery.data, requestSize],
   );
+  // A cover that fails to load shows the placeholder, with no scrim over it.
+  const coverFailure = useImageFailure(coverUri);
+  const shownCover = coverFailure.failed ? null : coverUri;
 
   const header = useMemo(() => {
     const album = albumQuery.data;
@@ -190,8 +195,9 @@ export default function TidalAlbumDetailScreen() {
                 })
             : undefined
         }
-        coverUri={coverUri}
+        coverUri={shownCover}
         coverKey={`${album.id}:${requestSize}`}
+        onCoverError={coverFailure.onError}
         metadata={metaLine([
           ...tidalAlbumMetaParts(album),
           album.duration_ms > 0 ? formatTotalMs(Math.max(album.duration_ms, 60_000)) : "",
@@ -217,7 +223,8 @@ export default function TidalAlbumDetailScreen() {
     );
   }, [
     albumQuery.data,
-    coverUri,
+    shownCover,
+    coverFailure.onError,
     requestSize,
     play,
     shuffle,
@@ -297,7 +304,7 @@ export default function TidalAlbumDetailScreen() {
         style={{ backgroundColor: theme.color.bg }}
         contentContainerStyle={{ paddingBottom: hero.bottomInset + dockInset + 24 }}
       />
-      <AlbumTopScrim overCover={hero.overCover} hasCover={!failed && !!coverUri} />
+      <AlbumTopScrim overCover={hero.overCover} hasCover={!failed && !!shownCover} />
     </>
   );
 }
