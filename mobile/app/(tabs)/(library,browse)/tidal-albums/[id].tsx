@@ -296,7 +296,8 @@ export default function TidalAlbumDetailScreen() {
           failed ? (
             <View
               style={{
-                paddingHorizontal: theme.space.lg,
+                // Where the picker sits over a cover, so it doesn't jump on an iPad.
+                paddingHorizontal: coverInset + theme.space.lg,
                 paddingTop: hero.headerHeight + theme.space.md,
               }}
             >
