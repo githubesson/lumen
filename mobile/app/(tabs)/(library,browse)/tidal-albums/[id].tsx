@@ -48,6 +48,7 @@ import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
   AlbumTopScrim,
+  useAlbumCoverInset,
   useAlbumCoverSize,
   useAlbumHeroScroll,
 } from "../../../../components/album-header";
@@ -59,6 +60,7 @@ export default function TidalAlbumDetailScreen() {
   const dockScroll = useDockScrollHandler();
   const hero = useAlbumHeroScroll(dockScroll.onScroll);
   const coverSize = useAlbumCoverSize();
+  const coverInset = useAlbumCoverInset();
   const router = useRouter();
   // `artist`: the TIDAL artist the album was opened from, whose releases list
   // its versions. Without one, the album's own artist is asked once it loads.
@@ -147,7 +149,11 @@ export default function TidalAlbumDetailScreen() {
         pointerEvents={switching ? "none" : "auto"}
         accessibilityElementsHidden={switching}
         importantForAccessibility={switching ? "no-hide-descendants" : "auto"}
-        style={switching ? { opacity: 0.4 } : undefined}
+        style={[
+          // On an iPad the rows line up with the centred cover.
+          coverInset ? { marginHorizontal: coverInset } : null,
+          switching ? { opacity: 0.4 } : null,
+        ]}
       >
         <AlbumTrackRow
           track={item}
@@ -159,7 +165,7 @@ export default function TidalAlbumDetailScreen() {
         />
       </View>
     ),
-    [onTrackPress, numbers, switching, creditNames, currentId, isPlaying],
+    [onTrackPress, numbers, switching, creditNames, currentId, isPlaying, coverInset],
   );
 
   const keyExtractor = useCallback((track: TrackListItem) => track.id, []);
@@ -175,7 +181,11 @@ export default function TidalAlbumDetailScreen() {
     [albumQuery.data, requestSize],
   );
   // A cover that fails to load shows the placeholder, with no scrim over it.
-  const coverFailure = useImageFailure(coverUri);
+  // Keyed by the version too: versions often share artwork, and picking
+  // another one should try its cover again.
+  const coverFailure = useImageFailure(
+    coverUri && albumQuery.data ? `${albumQuery.data.id}:${coverUri}` : null,
+  );
   const shownCover = coverFailure.failed ? null : coverUri;
 
   const header = useMemo(() => {

@@ -8,7 +8,7 @@ import { formatDurationMs } from "../lib/format";
 import { useTrackRowPresentation } from "../lib/use-track-row-presentation";
 import { useTheme } from "../theme/theme";
 
-/** Room for a three-digit position, centred under the hero's left edge. */
+/** Room for a three-digit position. */
 const NUMBER_WIDTH = 28;
 
 interface Props {

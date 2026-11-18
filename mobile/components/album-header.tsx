@@ -45,6 +45,16 @@ export function useAlbumCoverSize(): number {
   return Math.min(Math.round(useWindowDimensions().width), MAX_COVER);
 }
 
+/**
+ * How far the centred cover sits in from each screen edge: 0 on a phone. The
+ * hero's text and the album's rows indent by it, so on an iPad they line up
+ * with the cover rather than the screen.
+ */
+export function useAlbumCoverInset(): number {
+  const width = useWindowDimensions().width;
+  return Math.max(0, Math.round((width - useAlbumCoverSize()) / 2));
+}
+
 /** The admin album download, shown as a round button beside Shuffle. */
 export interface AlbumDownloadButton {
   label: string;
@@ -99,10 +109,8 @@ export function AlbumHeader({
 }: Props) {
   const theme = useTheme();
   const size = useAlbumCoverSize();
-  const windowWidth = useWindowDimensions().width;
-  const wide = windowWidth > size;
-  // On an iPad the text lines up with the centred cover, not the screen edge.
-  const side = (wide ? Math.round((windowWidth - size) / 2) : 0) + theme.space.lg;
+  const wide = useWindowDimensions().width > size;
+  const side = useAlbumCoverInset() + theme.space.lg;
   const page = theme.scheme === "light" ? "255, 255, 255" : "0, 0, 0";
   // Shuffle and Download: the first elevation all but vanishes on white.
   const quiet = theme.scheme === "light" ? theme.color.bgElev2 : theme.color.bgElev1;

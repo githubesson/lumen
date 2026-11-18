@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import {
   PixelRatio,
   Pressable,
+  View,
 } from "react-native";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,6 +47,7 @@ import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
   AlbumTopScrim,
+  useAlbumCoverInset,
   useAlbumCoverSize,
   useAlbumHeroScroll,
 } from "../../../../components/album-header";
@@ -58,6 +60,7 @@ export default function AlbumDetailScreen() {
   const dockScroll = useDockScrollHandler();
   const hero = useAlbumHeroScroll(dockScroll.onScroll);
   const coverSize = useAlbumCoverSize();
+  const coverInset = useAlbumCoverInset();
   const { id } = useLocalSearchParams<{ id: string }>();
   const play = usePlayTrack();
   const { shuffle } = usePlayerPlayback();
@@ -132,16 +135,19 @@ export default function AlbumDetailScreen() {
 
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
-      <AlbumTrackRow
-        track={item}
-        number={numbers[index] ?? index + 1}
-        albumArtists={creditNames}
-        current={item.id === currentId}
-        playing={item.id === currentId && isPlaying}
-        onPress={onTrackPress}
-      />
+      // On an iPad the rows line up with the centred cover.
+      <View style={coverInset ? { marginHorizontal: coverInset } : undefined}>
+        <AlbumTrackRow
+          track={item}
+          number={numbers[index] ?? index + 1}
+          albumArtists={creditNames}
+          current={item.id === currentId}
+          playing={item.id === currentId && isPlaying}
+          onPress={onTrackPress}
+        />
+      </View>
     ),
-    [onTrackPress, numbers, creditNames, currentId, isPlaying],
+    [onTrackPress, numbers, creditNames, currentId, isPlaying, coverInset],
   );
 
   const keyExtractor = useCallback((t: TrackListItem) => t.id, []);

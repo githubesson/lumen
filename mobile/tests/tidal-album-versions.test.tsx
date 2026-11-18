@@ -39,6 +39,7 @@ const mock = vi.hoisted(() => ({
   currentId: null as string | null,
   isPlaying: false,
   coverFailed: false,
+  failureKey: undefined as string | null | undefined,
   header: {} as { coverUri?: string | null },
   scrim: {} as { hasCover?: boolean },
 }));
@@ -128,6 +129,7 @@ vi.mock("@shopify/flash-list", () => ({
 }));
 vi.mock("../components/album-header", () => ({
   useAlbumCoverSize: () => 440,
+  useAlbumCoverInset: () => 0,
   useAlbumHeroScroll: () => ({
     onScroll: () => {},
     scrollEventThrottle: 16,
@@ -208,7 +210,10 @@ vi.mock("../lib/use-play-queue", () => ({
 }));
 vi.mock("../lib/album-download", () => ({ useAlbumDownloadAction: () => undefined }));
 vi.mock("../lib/use-image-failure", () => ({
-  useImageFailure: () => ({ failed: mock.coverFailed, onError: () => {} }),
+  useImageFailure: (key: string | null) => {
+    mock.failureKey = key;
+    return { failed: mock.coverFailed, onError: () => {} };
+  },
 }));
 vi.mock("../theme/theme", () => ({
   useTheme: () => ({ space: { lg: 24, md: 16 }, color: { bg: "black", fg: "white" } }),
@@ -391,6 +396,8 @@ it("drops the scrim and falls back to the placeholder when the cover fails to lo
   markup();
   expect(mock.header.coverUri).toBeTruthy();
   expect(mock.scrim.hasCover).toBe(true);
+  // Keyed by the version, so another version sharing the artwork retries it.
+  expect(mock.failureKey).toBe(`tidal:1:${mock.header.coverUri}`);
   mock.coverFailed = true;
   markup();
   expect(mock.header.coverUri).toBeNull();
