@@ -196,6 +196,10 @@ type Album struct {
 	Artist      string   // primary artist
 	Artists     []string // every main artist, primary first
 	ReleaseYear int
+	// ReleaseDate is the full release date ("2020-03-27") when TIDAL gives
+	// one; Copyright is its copyright line.
+	ReleaseDate string
+	Copyright   string
 	TrackCount  int
 	DurationMS  int
 	CoverID     string
@@ -834,6 +838,7 @@ type apiAlbum struct {
 	AudioModes     []string       `json:"audioModes"`
 	Cover          string         `json:"cover"`
 	ReleaseDate    string         `json:"releaseDate"`
+	Copyright      string         `json:"copyright"`
 	Duration       int            `json:"duration"`
 	NumberOfTracks int            `json:"numberOfTracks"`
 	Artist         apiArtist      `json:"artist"`
@@ -858,6 +863,19 @@ type apiAlbumItem struct {
 	Type string   `json:"type"`
 }
 
+// releaseDate keeps the calendar date of a TIDAL releaseDate ("2020-03-27",
+// sometimes with a time after it), or "" when it isn't one.
+func releaseDate(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 10 {
+		return ""
+	}
+	if _, err := time.Parse(time.DateOnly, raw[:10]); err != nil {
+		return ""
+	}
+	return raw[:10]
+}
+
 func (a apiAlbum) album() Album {
 	year := 0
 	if len(a.ReleaseDate) >= 4 {
@@ -878,6 +896,8 @@ func (a apiAlbum) album() Album {
 		Artist:      artist,
 		Artists:     albumArtists(artist, a.Artists),
 		ReleaseYear: year,
+		ReleaseDate: releaseDate(a.ReleaseDate),
+		Copyright:   strings.TrimSpace(a.Copyright),
 		TrackCount:  a.NumberOfTracks,
 		DurationMS:  max(0, a.Duration) * 1000,
 		CoverID:     coverID,

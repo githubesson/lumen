@@ -146,6 +146,19 @@ export function releaseVersionsOf(releases: ArtistRelease[], sourceId: string): 
   return versions?.map((version) => (copyKey(version) === copyKey(album) ? album : version)) ?? null;
 }
 
+/**
+ * An artist's other releases, for an album page's "More by" shelf: one tile
+ * per release (see `foldReleaseVersions`), leaving out the release the page
+ * shows in every version, including a duplicate copy the fold dropped.
+ */
+export function releasesBesides(releases: ArtistRelease[], sourceId: string): ArtistRelease[] {
+  const album = releases.find((release) => release.source_id === sourceId);
+  const shown = album ? releaseKey(album) : null;
+  return foldReleaseVersions(releases).filter(
+    (release) => release.source_id !== sourceId && releaseKey(release) !== shown,
+  );
+}
+
 export interface ReleaseVersionLabel {
   /** Short, for a segmented control: only what differs between the versions. */
   label: string;

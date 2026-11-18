@@ -42,7 +42,8 @@ func (s *Store) SaveTIDALAlbum(ctx context.Context, a tidal.Album) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
 		fresh := cachedRelease{
 			Title: dbtext.Clean(a.Title), Artist: dbtext.Clean(a.Artist), Artists: cleanAll(a.Artists),
-			ReleaseYear: a.ReleaseYear, CoverID: dbtext.Clean(a.CoverID), CoverURL: dbtext.Clean(a.CoverURL),
+			ReleaseYear: a.ReleaseYear, ReleaseDate: dbtext.Clean(a.ReleaseDate), Copyright: dbtext.Clean(a.Copyright),
+			CoverID: dbtext.Clean(a.CoverID), CoverURL: dbtext.Clean(a.CoverURL),
 			DurationMS: a.DurationMS,
 			// Stored as [] rather than null when TIDAL lists no tracks.
 			Tracks: []cachedTIDALTrack{},
@@ -58,10 +59,11 @@ func (s *Store) SaveTIDALAlbum(ctx context.Context, a tidal.Album) error {
 			artistsJSON, tracksJSON []byte
 		)
 		err := tx.QueryRow(ctx, `
-			SELECT title, artist, artists, release_year, cover_id, cover_url, duration_ms, tracks
+			SELECT title, artist, artists, release_year, release_date, copyright, cover_id, cover_url,
+			       duration_ms, tracks
 			FROM tidal_albums WHERE tidal_id = $1 FOR UPDATE`, a.ID).
-			Scan(&old.Title, &old.Artist, &artistsJSON, &old.ReleaseYear, &old.CoverID, &old.CoverURL,
-				&old.DurationMS, &tracksJSON)
+			Scan(&old.Title, &old.Artist, &artistsJSON, &old.ReleaseYear, &old.ReleaseDate, &old.Copyright,
+				&old.CoverID, &old.CoverURL, &old.DurationMS, &tracksJSON)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 		case err != nil:
@@ -82,28 +84,30 @@ func (s *Store) SaveTIDALAlbum(ctx context.Context, a tidal.Album) error {
 			return err
 		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO tidal_albums (tidal_id, title, artist, artists, release_year, cover_id, cover_url,
-			                          track_count, duration_ms, tracks, fetched_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+			INSERT INTO tidal_albums (tidal_id, title, artist, artists, release_year, release_date, copyright,
+			                          cover_id, cover_url, track_count, duration_ms, tracks, fetched_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
 			ON CONFLICT (tidal_id) DO UPDATE SET
 				title = EXCLUDED.title, artist = EXCLUDED.artist, artists = EXCLUDED.artists,
-				release_year = EXCLUDED.release_year, cover_id = EXCLUDED.cover_id,
+				release_year = EXCLUDED.release_year, release_date = EXCLUDED.release_date,
+				copyright = EXCLUDED.copyright, cover_id = EXCLUDED.cover_id,
 				cover_url = EXCLUDED.cover_url, track_count = EXCLUDED.track_count,
 				duration_ms = EXCLUDED.duration_ms, tracks = EXCLUDED.tracks, fetched_at = NOW()`,
-			a.ID, fresh.Title, fresh.Artist, artistsJSON, fresh.ReleaseYear, fresh.CoverID, fresh.CoverURL,
-			len(fresh.Tracks), fresh.DurationMS, tracksJSON)
+			a.ID, fresh.Title, fresh.Artist, artistsJSON, fresh.ReleaseYear, fresh.ReleaseDate, fresh.Copyright,
+			fresh.CoverID, fresh.CoverURL, len(fresh.Tracks), fresh.DurationMS, tracksJSON)
 		return err
 	})
 }
 
 // cachedRelease is a tidal_albums row without its id.
 type cachedRelease struct {
-	Title, Artist     string
-	Artists           []string
-	ReleaseYear       int
-	CoverID, CoverURL string
-	DurationMS        int
-	Tracks            []cachedTIDALTrack
+	Title, Artist          string
+	Artists                []string
+	ReleaseYear            int
+	ReleaseDate, Copyright string
+	CoverID, CoverURL      string
+	DurationMS             int
+	Tracks                 []cachedTIDALTrack
 }
 
 // mergeCachedTrack keeps a track's stored values for fields a fresh listing
@@ -146,6 +150,8 @@ func mergeCachedRelease(old, fresh cachedRelease) cachedRelease {
 	out.Artist = pick(fresh.Artist, old.Artist)
 	out.CoverID = pick(fresh.CoverID, old.CoverID)
 	out.CoverURL = pick(fresh.CoverURL, old.CoverURL)
+	out.ReleaseDate = pick(fresh.ReleaseDate, old.ReleaseDate)
+	out.Copyright = pick(fresh.Copyright, old.Copyright)
 	if len(fresh.Artists) == 0 {
 		out.Artists = old.Artists
 	}
@@ -207,11 +213,11 @@ func (s *Store) TIDALAlbum(ctx context.Context, id string) (tidal.Album, time.Ti
 		fetchedAt   time.Time
 	)
 	err := s.db.QueryRow(ctx, `
-		SELECT tidal_id, title, artist, artists, release_year, cover_id, cover_url,
+		SELECT tidal_id, title, artist, artists, release_year, release_date, copyright, cover_id, cover_url,
 		       track_count, duration_ms, tracks, fetched_at
 		FROM tidal_albums WHERE tidal_id = $1`, strings.TrimSpace(id)).
-		Scan(&a.ID, &a.Title, &a.Artist, &artistsJSON, &a.ReleaseYear, &a.CoverID, &a.CoverURL,
-			&a.TrackCount, &a.DurationMS, &tracksJSON, &fetchedAt)
+		Scan(&a.ID, &a.Title, &a.Artist, &artistsJSON, &a.ReleaseYear, &a.ReleaseDate, &a.Copyright,
+			&a.CoverID, &a.CoverURL, &a.TrackCount, &a.DurationMS, &tracksJSON, &fetchedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tidal.Album{}, time.Time{}, ErrNotFound
 	}

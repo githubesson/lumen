@@ -261,7 +261,7 @@ func TestHifiAlbum(t *testing.T) {
 		gotID = r.URL.Query().Get("id")
 		gotLimit = r.URL.Query().Get("limit")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"version":"2.10","data":{"id":58990510,"title":"OK Computer","duration":3216,"numberOfTracks":12,"releaseDate":"1997-07-01","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065","artist":{"name":"Radiohead"},"items":[{"type":"track","item":{"id":58990511,"title":"Airbag","duration":287,"trackNumber":1,"volumeNumber":1,"artist":{"name":"Radiohead"},"artists":[{"name":"Radiohead"}],"album":{"id":58990510,"title":"OK Computer","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065"}}}]}}`))
+		_, _ = w.Write([]byte(`{"version":"2.10","data":{"id":58990510,"title":"OK Computer","duration":3216,"numberOfTracks":12,"releaseDate":"1997-07-01","copyright":" ℗ 1997 Parlophone Records Ltd ","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065","artist":{"name":"Radiohead"},"items":[{"type":"track","item":{"id":58990511,"title":"Airbag","duration":287,"trackNumber":1,"volumeNumber":1,"artist":{"name":"Radiohead"},"artists":[{"name":"Radiohead"}],"album":{"id":58990510,"title":"OK Computer","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065"}}}]}}`))
 	}))
 	defer srv.Close()
 
@@ -275,6 +275,9 @@ func TestHifiAlbum(t *testing.T) {
 	}
 	if album.ID != "58990510" || album.Title != "OK Computer" || album.Artist != "Radiohead" {
 		t.Fatalf("unexpected album: %+v", album)
+	}
+	if album.ReleaseYear != 1997 || album.ReleaseDate != "1997-07-01" || album.Copyright != "℗ 1997 Parlophone Records Ltd" {
+		t.Fatalf("release facts = %d %q %q", album.ReleaseYear, album.ReleaseDate, album.Copyright)
 	}
 	if len(album.Tracks) != 1 || album.Tracks[0].ID != "58990511" || album.Tracks[0].AlbumID != "58990510" {
 		t.Fatalf("unexpected album tracks: %+v", album.Tracks)
@@ -696,5 +699,19 @@ func TestFullAlbumWithTitlelessTrackIsIncomplete(t *testing.T) {
 	defer srv.Close()
 	if _, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7"); !errors.Is(err, ErrIncompleteAlbum) {
 		t.Fatalf("err = %v, want ErrIncompleteAlbum", err)
+	}
+}
+
+func TestReleaseDateKeepsOnlyACalendarDate(t *testing.T) {
+	for raw, want := range map[string]string{
+		"2020-03-27":           "2020-03-27",
+		" 2020-03-27T00:00:00": "2020-03-27",
+		"2020":                 "",
+		"2020-13-01":           "",
+		"":                     "",
+	} {
+		if got := releaseDate(raw); got != want {
+			t.Errorf("releaseDate(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

@@ -8,6 +8,8 @@ type Album = {
   title: string;
   artist_id?: string;
   cover_url?: string;
+  release_date?: string;
+  copyright?: string;
   tracks: { id: string; title: string; track_no?: number; unavailable?: boolean }[];
 };
 const mock = vi.hoisted(() => ({
@@ -39,6 +41,7 @@ const mock = vi.hoisted(() => ({
   currentId: null as string | null,
   isPlaying: false,
   coverFailed: false,
+  moreByArtist: undefined as string | undefined,
   failureKey: undefined as string | null | undefined,
   header: {} as { coverUri?: string | null },
   scrim: {} as { hasCover?: boolean },
@@ -112,11 +115,13 @@ vi.mock("@shopify/flash-list", () => ({
     data,
     ListHeaderComponent,
     ListEmptyComponent,
+    ListFooterComponent,
     renderItem,
   }: {
     data: unknown[];
     ListHeaderComponent: ReactNode;
     ListEmptyComponent?: ReactNode;
+    ListFooterComponent?: ReactNode;
     renderItem: (args: { item: unknown; index: number }) => ReactNode;
   }) => (
     <div>
@@ -124,6 +129,7 @@ vi.mock("@shopify/flash-list", () => ({
       {data.length
         ? data.map((item, index) => <div key={index}>{renderItem({ item, index })}</div>)
         : ListEmptyComponent}
+      {ListFooterComponent}
     </div>
   ),
 }));
@@ -139,6 +145,7 @@ vi.mock("../components/album-header", () => ({
     headerHeight: 116,
     bottomInset: 34,
   }),
+  albumScrollEdgeEffects: (under: boolean) => ({ top: under ? "soft" : "hidden" }),
   AlbumTopScrim: (props: { hasCover: boolean }) => {
     mock.scrim = props;
     return null;
@@ -209,6 +216,20 @@ vi.mock("../lib/use-play-queue", () => ({
   listPlaybackQueue: () => [],
 }));
 vi.mock("../lib/album-download", () => ({ useAlbumDownloadAction: () => undefined }));
+vi.mock("../lib/album-more-by", () => ({
+  useTidalMoreBy: (artistId?: string) => {
+    mock.moreByArtist = artistId;
+    return { name: "Kayah", releases: [] };
+  },
+}));
+vi.mock("../components/album-footer", () => ({
+  AlbumFooter: ({ releaseDate, copyright }: { releaseDate?: string; copyright?: string }) => (
+    <footer>
+      {releaseDate} {copyright}
+    </footer>
+  ),
+}));
+vi.mock("../components/album-more-by", () => ({ AlbumMoreBy: () => null }));
 vi.mock("../lib/use-image-failure", () => ({
   useImageFailure: (key: string | null) => {
     mock.failureKey = key;
@@ -402,4 +423,23 @@ it("drops the scrim and falls back to the placeholder when the cover fails to lo
   markup();
   expect(mock.header.coverUri).toBeNull();
   expect(mock.scrim.hasCover).toBe(false);
+});
+
+it("closes the page with the release's date and copyright, and asks the versions' artist for more", () => {
+  mock.params = { id: "1", artist: "77" };
+  mock.album.data = {
+    ...mock.album.data!,
+    release_date: "2026-01-09",
+    copyright: "© 2026 Kayah",
+  } as Album;
+  const html = markup();
+  expect(html).toContain("<footer>2026-01-09 © 2026 Kayah</footer>");
+  expect(mock.moreByArtist).toBe("77");
+});
+
+it("leaves the footer off a version that failed to load", () => {
+  mock.params = { id: "2", artist: "77" };
+  mock.album.isError = true;
+  mock.album.data = undefined;
+  expect(markup()).not.toContain("<footer>");
 });

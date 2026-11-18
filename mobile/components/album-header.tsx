@@ -349,6 +349,21 @@ export function AlbumHeader({
 }
 
 /**
+ * The nav bar's scroll edge effect (iOS 26). The list starts under the bar,
+ * so iOS would blur the cover beneath it from the first frame and cut it off
+ * at the bar's edge. The effect stays hidden while the hero is under the bar
+ * and turns on, soft-edged, once the songs come up beneath the bar's title.
+ */
+export function albumScrollEdgeEffects(songsUnderBar: boolean) {
+  return {
+    top: songsUnderBar ? "soft" : "hidden",
+    bottom: "automatic",
+    left: "automatic",
+    right: "automatic",
+  } as const;
+}
+
+/**
  * What the album page's chrome shows at scroll offset `y`: the nav bar title
  * once the hero's title has gone fully under the bar, and the top scrim
  * while the status bar is over the cover rather than its fade into the page.

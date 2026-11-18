@@ -5,6 +5,7 @@ import {
   AlbumHeader,
   AlbumTopScrim,
   albumHeroScrollState,
+  albumScrollEdgeEffects,
   useAlbumCoverSize,
 } from "../components/album-header";
 
@@ -185,4 +186,10 @@ it("lines the text up with the centred cover on an iPad", () => {
   // (820 - 560) / 2 + the 24pt gutter.
   expect(env.blocks.at(-1)?.paddingHorizontal).toBe(154);
   env.width = 440;
+});
+
+it("keeps iOS's scroll edge blur off the cover, and soft once the songs are under the bar", () => {
+  expect(albumScrollEdgeEffects(false).top).toBe("hidden");
+  expect(albumScrollEdgeEffects(true).top).toBe("soft");
+  expect(albumScrollEdgeEffects(false).bottom).toBe("automatic");
 });

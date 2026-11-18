@@ -9,6 +9,7 @@ import {
   releaseSubtitle,
   releaseVersionLabels,
   releaseVersionsOf,
+  releasesBesides,
   tidalArtistReleases,
 } from "../src/artist-releases";
 
@@ -207,4 +208,21 @@ it("names versions by what differs between them", () => {
     "10 tracks",
     "12 tracks",
   ]);
+});
+
+it("lists an artist's other releases for an album page, leaving out the one shown in every version", () => {
+  const releases = tidalArtistReleases([
+    roads("atmos", { dolby_atmos: true }),
+    roads("clean", { explicit: false }),
+    roads("explicit", {}),
+    // A duplicate copy of the clean version, opened from search.
+    roads("clean-copy", { explicit: false }),
+    roads("deluxe", { version: "Deluxe" }),
+    album("other", { source_id: "other", release_year: 2025 }),
+  ]);
+  for (const shown of ["clean", "atmos", "clean-copy"]) {
+    expect(releasesBesides(releases, shown).map((r) => r.id)).toEqual(["deluxe", "other"]);
+  }
+  // An album the artist doesn't list keeps every tile.
+  expect(releasesBesides(releases, "elsewhere").map((r) => r.id)).toEqual(["explicit", "deluxe", "other"]);
 });

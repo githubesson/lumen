@@ -14,6 +14,7 @@ import {
   albumArtists,
   albumArtUrl,
   albumCredits,
+  albumLength,
   api,
   displayText,
   formatTotalMs,
@@ -47,11 +48,15 @@ import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
   AlbumTopScrim,
+  albumScrollEdgeEffects,
   useAlbumCoverInset,
   useAlbumCoverSize,
   useAlbumHeroScroll,
 } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
+import { AlbumFooter } from "../../../../components/album-footer";
+import { AlbumMoreBy } from "../../../../components/album-more-by";
+import { useLibraryMoreBy } from "../../../../lib/album-more-by";
 
 export default function AlbumDetailScreen() {
   const theme = useTheme();
@@ -131,7 +136,20 @@ export default function AlbumDetailScreen() {
   );
   const numbers = useMemo(() => albumTrackNumbers(tracks), [tracks]);
   const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
-  const linkedArtistId = credits.find((credit) => credit.artistId)?.artistId;
+  const linkedArtist = credits.find((credit) => credit.artistId);
+  const linkedArtistId = linkedArtist?.artistId;
+  const moreBy = useLibraryMoreBy(linkedArtistId, id);
+  const openArtist = useMemo(
+    () =>
+      linkedArtistId
+        ? () =>
+            router.push({
+              pathname: "/(tabs)/artists/[id]",
+              params: { id: linkedArtistId },
+            })
+        : undefined,
+    [router, linkedArtistId],
+  );
 
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
@@ -171,15 +189,7 @@ export default function AlbumDetailScreen() {
       <AlbumHeader
         title={album.title}
         artist={albumArtists(album)}
-        onOpenArtist={
-          linkedArtistId
-            ? () =>
-                router.push({
-                  pathname: "/(tabs)/artists/[id]",
-                  params: { id: linkedArtistId },
-                })
-            : undefined
-        }
+        onOpenArtist={openArtist}
         coverUri={shownCover}
         coverKey={shownCover ?? undefined}
         onCoverError={coverFailure.onError}
@@ -212,10 +222,34 @@ export default function AlbumDetailScreen() {
     play,
     shuffle,
     downloadAction,
-    linkedArtistId,
-    router,
+    openArtist,
     hero.onTitleBottom,
   ]);
+
+  const footer = useMemo(() => {
+    const album = albumQuery.data;
+    if (!album) return null;
+    return (
+      <View>
+        <AlbumFooter
+          releaseDate={album.release_date}
+          releaseYear={album.release_year}
+          length={albumLength(tracks)}
+          copyright={album.copyright}
+          inset={coverInset}
+        />
+        <AlbumMoreBy
+          artist={linkedArtist?.name ?? ""}
+          releases={moreBy}
+          onOpenArtist={openArtist}
+          onOpenRelease={(release) =>
+            router.push({ pathname: "/(tabs)/albums/[id]", params: { id: release.id } })
+          }
+          inset={coverInset}
+        />
+      </View>
+    );
+  }, [albumQuery.data, tracks, coverInset, linkedArtist?.name, moreBy, openArtist, router]);
 
   const openEdit = useCallback(() => {
     if (!id) return;
@@ -247,6 +281,7 @@ export default function AlbumDetailScreen() {
           // The list sits under the bar from the first point of scroll, so
           // the scrolled-under hairline would cross the cover.
           headerShadowVisible: false,
+          scrollEdgeEffects: albumScrollEdgeEffects(hero.titleShown),
           // The hero carries the title until it scrolls under the bar.
           headerTitleStyle: {
             color: hero.titleShown ? theme.color.fg : "transparent",
@@ -280,6 +315,7 @@ export default function AlbumDetailScreen() {
         keyExtractor={keyExtractor}
         extraData={rowState}
         ListHeaderComponent={header}
+        ListFooterComponent={footer}
         // The cover runs up under the status bar and the nav bar.
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustsScrollIndicatorInsets={false}

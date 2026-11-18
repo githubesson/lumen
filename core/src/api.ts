@@ -1040,6 +1040,9 @@ export interface TidalAlbum {
   /** Every main artist, primary first. */
   artists?: string[];
   release_year?: number;
+  /** The release's full date ("2020-03-27") and copyright line, when TIDAL gives them. */
+  release_date?: string;
+  copyright?: string;
   /** Tracks served from the library instead of TIDAL. */
   saved_count?: number;
   /** The library album copying this release, if any. */
@@ -1159,6 +1162,12 @@ export interface Album {
   queued_count?: number;
   /** Every main artist of the TIDAL release, primary first. */
   artist_names?: string[];
+  /**
+   * The copied TIDAL release's full date ("2020-03-27", only when the album's
+   * year is the release's) and copyright line.
+   */
+  release_date?: string;
+  copyright?: string;
 }
 
 export interface Artist {
