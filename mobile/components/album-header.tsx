@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -8,6 +8,11 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { Image } from "expo-image";
 import { SymbolView } from "expo-symbols";
 import * as Haptics from "expo-haptics";
@@ -22,12 +27,22 @@ import { useTheme } from "../theme/theme";
 export const ALBUM_TITLE_OVERLAP = 86;
 /** The playlist header's control size, so the two pages' buttons match. */
 const CONTROL_SIZE = 50;
-/** The darkened band at the top of the cover, under the status bar and back button. */
+/** The darkened band under the status bar and back button, over the cover. */
 const TOP_SCRIM = 140;
+/**
+ * The widest the cover gets. A phone's cover runs edge to edge; on an iPad it
+ * stops here and a blurred copy fills the band beside it.
+ */
+const MAX_COVER = 560;
+/**
+ * How far down the cover the status bar may sit and still count as over it.
+ * Below this the fade into the page has taken over.
+ */
+const COVER_UNDER_STATUS_BAR = 0.7;
 
-/** The cover runs edge to edge, so it's as wide as the screen. */
+/** The cover's side: the screen's width, up to `MAX_COVER`. */
 export function useAlbumCoverSize(): number {
-  return Math.round(useWindowDimensions().width);
+  return Math.min(Math.round(useWindowDimensions().width), MAX_COVER);
 }
 
 /** The admin album download, shown as a round button beside Shuffle. */
@@ -62,8 +77,8 @@ interface Props {
 /**
  * The album page's hero: the cover edge to edge under the status bar, fading
  * into the page, with the title, artist and controls left-aligned over its
- * foot. Scrims keep the status bar legible over light art and the title
- * legible in both schemes.
+ * foot. The fade keeps the title legible in both schemes; `AlbumTopScrim`
+ * keeps the status bar legible over the cover.
  */
 export function AlbumHeader({
   title,
@@ -81,6 +96,7 @@ export function AlbumHeader({
 }: Props) {
   const theme = useTheme();
   const size = useAlbumCoverSize();
+  const wide = useWindowDimensions().width > size;
   const page = theme.scheme === "light" ? "255, 255, 255" : "0, 0, 0";
   // Shuffle and Download: the first elevation all but vanishes on white.
   const quiet = theme.scheme === "light" ? theme.color.bgElev2 : theme.color.bgElev1;
@@ -90,17 +106,27 @@ export function AlbumHeader({
     <View>
       <View
         style={{
-          width: size,
           height: size,
           backgroundColor: theme.color.bgElev2,
           alignItems: "center",
           justifyContent: "center",
+          overflow: "hidden",
         }}
       >
+        {coverUri && wide ? (
+          <Image
+            source={{ uri: coverUri }}
+            style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, opacity: 0.75 }}
+            contentFit="cover"
+            blurRadius={48}
+            cachePolicy="memory-disk"
+            recyclingKey={coverKey ?? coverUri}
+          />
+        ) : null}
         {coverUri ? (
           <Image
             source={{ uri: coverUri }}
-            style={{ position: "absolute", top: 0, left: 0, width: size, height: size }}
+            style={{ width: size, height: size }}
             contentFit="cover"
             transition={120}
             cachePolicy="memory-disk"
@@ -117,18 +143,6 @@ export function AlbumHeader({
             tintColor={theme.color.fgMuted}
           />
         )}
-        <View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            height: TOP_SCRIM,
-            experimental_backgroundImage:
-              "linear-gradient(to bottom, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0) 100%)",
-          }}
-        />
         <View
           pointerEvents="none"
           style={{
@@ -321,9 +335,8 @@ export function AlbumHeader({
 
 /**
  * What the album page's chrome shows at scroll offset `y`: the nav bar title
- * once the hero's title has gone fully under the bar, and the light status
- * bar while the top half of the cover (the darkened part, before it fades
- * into the page) is under the status bar.
+ * once the hero's title has gone fully under the bar, and the top scrim
+ * while the status bar is over the cover rather than its fade into the page.
  */
 export function albumHeroScrollState(
   y: number,
@@ -336,22 +349,24 @@ export function albumHeroScrollState(
 ): { titleShown: boolean; overCover: boolean } {
   return {
     titleShown: y + headerHeight >= titleBottom,
-    overCover: y + topInset < coverSize / 2,
+    overCover: y + topInset < coverSize * COVER_UNDER_STATUS_BAR,
   };
 }
 
 /**
  * The album page's scroll-linked chrome. The nav bar title stays hidden while
  * the hero's own title is in view and shows once that has gone under the bar.
- * `overCover` is whether the cover's darkened top is still under the status
- * bar (see `AlbumStatusBar`). Wraps the list's other scroll handler.
+ * `overCover` is whether the cover is still under the status bar (see
+ * `AlbumTopScrim`). Wraps the list's other scroll handler, and hands back
+ * the header height and bottom inset the list pads itself with, since it
+ * runs under the bars rather than being inset by the system.
  */
 export function useAlbumHeroScroll(
   onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void,
 ) {
   const size = useAlbumCoverSize();
   const headerHeight = useHeaderHeight();
-  const { top } = useSafeAreaInsets();
+  const { top, bottom: bottomInset } = useSafeAreaInsets();
   // Until the title reports its layout, assume one line.
   const [titleBottom, setTitleBottom] = useState(size - ALBUM_TITLE_OVERLAP + 36);
   const [titleShown, setTitleShown] = useState(false);
@@ -397,16 +412,53 @@ export function useAlbumHeroScroll(
     titleShown,
     overCover,
     onTitleBottom,
+    headerHeight,
+    bottomInset,
   };
 }
 
 /**
- * Light status bar text while the cover's darkened top is under it. Only
- * light mode needs it (dark mode's is light already), and only while the
- * page is on screen, so it hands back to the app's own on the next page.
+ * A dark band fixed at the top of the screen while the cover is under the
+ * status bar, so the status bar and back button stay legible over light art
+ * wherever the cover has scrolled to; light mode also turns the status bar
+ * text light for it. It fades out once the page's own background comes up
+ * under the status bar, and stays off without a cover, whose plain
+ * placeholder needs neither. The light status bar is held only while the
+ * page is focused, so it hands back to the app's own on the next page.
  */
-export function AlbumStatusBar({ overCover }: { overCover: boolean }) {
+export function AlbumTopScrim({
+  overCover,
+  hasCover,
+}: {
+  overCover: boolean;
+  hasCover: boolean;
+}) {
   const theme = useTheme();
   const focused = useIsFocused();
-  return theme.scheme === "light" && focused && overCover ? <StatusBar style="light" /> : null;
+  const shown = overCover && hasCover;
+  const opacity = useSharedValue(shown ? 1 : 0);
+  useEffect(() => {
+    opacity.set(withTiming(shown ? 1 : 0, { duration: 200 }));
+  }, [shown, opacity]);
+  const fade = useAnimatedStyle(() => ({ opacity: opacity.get() }));
+  return (
+    <>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: TOP_SCRIM,
+            experimental_backgroundImage:
+              "linear-gradient(to bottom, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0) 100%)",
+          },
+          fade,
+        ]}
+      />
+      {theme.scheme === "light" && focused && shown ? <StatusBar style="light" /> : null}
+    </>
+  );
 }

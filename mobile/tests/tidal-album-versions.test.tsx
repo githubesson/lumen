@@ -3,7 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import TidalAlbumDetailScreen from "../app/(tabs)/(library,browse)/tidal-albums/[id]";
 
-type Album = { id: string; title: string; artist_id?: string; tracks: { id: string; title: string }[] };
+type Album = {
+  id: string;
+  title: string;
+  artist_id?: string;
+  tracks: { id: string; title: string; track_no?: number; unavailable?: boolean }[];
+};
 const mock = vi.hoisted(() => ({
   params: {} as { id: string; artist?: string },
   album: {} as {
@@ -29,6 +34,9 @@ const mock = vi.hoisted(() => ({
     | undefined
     | { options: { value: string; label: string }[]; value: string; onChange: (v: string) => void },
   pending: undefined as boolean | undefined,
+  rows: [] as { title: string; number: number; current: boolean; playing: boolean }[],
+  currentId: null as string | null,
+  isPlaying: false,
 }));
 vi.mock("react-native", () => ({
   View: ({
@@ -122,8 +130,10 @@ vi.mock("../components/album-header", () => ({
     titleShown: false,
     overCover: true,
     onTitleBottom: () => {},
+    headerHeight: 116,
+    bottomInset: 34,
   }),
-  AlbumStatusBar: () => null,
+  AlbumTopScrim: () => null,
   AlbumHeader: ({ title, versions, pending }: { title: string; versions?: ReactNode; pending?: boolean }) => {
     mock.pending = pending;
     return (
@@ -143,7 +153,20 @@ vi.mock("../components/glass-segmented-control", () => ({
 vi.mock("../components/optional-swift-ui", () => ({ getOptionalSwiftUI: () => null }));
 vi.mock("../lib/action-menu", () => ({ showActionMenu: mock.showActionMenu }));
 vi.mock("../components/album-track-row", () => ({
-  AlbumTrackRow: ({ track }: { track: { title: string } }) => <span>{track.title}</span>,
+  AlbumTrackRow: ({
+    track,
+    number,
+    current,
+    playing,
+  }: {
+    track: { title: string };
+    number: number;
+    current: boolean;
+    playing: boolean;
+  }) => {
+    mock.rows.push({ title: track.title, number, current, playing });
+    return <span>{track.title}</span>;
+  },
 }));
 vi.mock("../components/empty-state", () => ({
   EmptyState: ({ message, loading }: { message?: string; loading?: boolean }) => (
@@ -158,8 +181,8 @@ vi.mock("../components/dock/dock-context", () => ({
 vi.mock("../context/player", () => ({
   usePlayTrack: () => vi.fn(),
   usePlayerPlayback: () => ({ shuffle: false }),
-  useCurrentTrack: () => null,
-  useIsPlaying: () => false,
+  useCurrentTrack: () => (mock.currentId ? { id: mock.currentId } : null),
+  useIsPlaying: () => mock.isPlaying,
 }));
 vi.mock("../lib/use-play-queue", () => ({
   usePlayQueue: () => vi.fn(),
@@ -198,6 +221,9 @@ beforeEach(() => {
   mock.setParams.mockReset();
   mock.segments = undefined;
   mock.pending = undefined;
+  mock.rows = [];
+  mock.currentId = null;
+  mock.isPlaying = false;
 });
 const markup = () => renderToStaticMarkup(<TidalAlbumDetailScreen />);
 
@@ -318,4 +344,20 @@ it("lists four or more versions in a menu", () => {
   ]);
   items[2].onPress();
   expect(mock.setParams).toHaveBeenCalledWith({ id: "4", artist: "77" });
+});
+
+it("numbers rows by their place on the album and moves only the current row's bars", () => {
+  mock.album.data!.tracks = [
+    { id: "t1", title: "One", track_no: 1 },
+    { id: "t2", title: "Gone", unavailable: true },
+    { id: "t3", title: "Three", track_no: 3 },
+  ] as Album["tracks"];
+  mock.currentId = "t3";
+  mock.isPlaying = true;
+  markup();
+  expect(mock.rows).toEqual([
+    { title: "One", number: 1, current: false, playing: false },
+    { title: "Gone", number: 2, current: false, playing: false },
+    { title: "Three", number: 3, current: true, playing: true },
+  ]);
 });

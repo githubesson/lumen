@@ -43,7 +43,7 @@ import { useAlbumDownloadAction } from "../../../../lib/album-download";
 import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
-  AlbumStatusBar,
+  AlbumTopScrim,
   useAlbumCoverSize,
   useAlbumHeroScroll,
 } from "../../../../components/album-header";
@@ -131,10 +131,10 @@ export default function AlbumDetailScreen() {
     ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
       <AlbumTrackRow
         track={item}
-        number={index + 1}
+        number={item.track_no || index + 1}
         albumArtists={creditNames}
         current={item.id === currentId}
-        playing={isPlaying}
+        playing={item.id === currentId && isPlaying}
         onPress={onTrackPress}
       />
     ),
@@ -144,11 +144,16 @@ export default function AlbumDetailScreen() {
   const keyExtractor = useCallback((t: TrackListItem) => t.id, []);
   const rowState = useMemo(() => ({ currentId, isPlaying }), [currentId, isPlaying]);
 
-  const header = useMemo(() => {
+  const coverUri = useMemo(() => {
     const album = albumQuery.data;
     if (!album) return null;
     const requestSize = Math.max(1, Math.round(coverSize * PixelRatio.get()));
-    const coverUri = albumArtUrl(album, requestSize, coverBust);
+    return albumArtUrl(album, requestSize, coverBust);
+  }, [albumQuery.data, coverSize, coverBust]);
+
+  const header = useMemo(() => {
+    const album = albumQuery.data;
+    if (!album) return null;
     const playable = playableTracks(tracks).length;
     return (
       <AlbumHeader
@@ -188,8 +193,7 @@ export default function AlbumDetailScreen() {
     );
   }, [
     albumQuery.data,
-    coverBust,
-    coverSize,
+    coverUri,
     tracks,
     play,
     shuffle,
@@ -226,6 +230,9 @@ export default function AlbumDetailScreen() {
         options={{
           title: displayText(albumQuery.data.title),
           headerLargeTitle: false,
+          // The list sits under the bar from the first point of scroll, so
+          // the scrolled-under hairline would cross the cover.
+          headerShadowVisible: false,
           // The hero carries the title until it scrolls under the bar.
           headerTitleStyle: {
             color: hero.titleShown ? theme.color.fg : "transparent",
@@ -250,7 +257,6 @@ export default function AlbumDetailScreen() {
             : undefined,
         }}
       />
-      <AlbumStatusBar overCover={hero.overCover} />
       <FlashList
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         onScroll={hero.onScroll}
@@ -262,9 +268,12 @@ export default function AlbumDetailScreen() {
         ListHeaderComponent={header}
         // The cover runs up under the status bar and the nav bar.
         contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustsScrollIndicatorInsets={false}
+        scrollIndicatorInsets={{ top: hero.headerHeight, bottom: hero.bottomInset + dockInset }}
         style={{ backgroundColor: theme.color.bg }}
-        contentContainerStyle={{ paddingBottom: dockInset + 24 }}
+        contentContainerStyle={{ paddingBottom: hero.bottomInset + dockInset + 24 }}
       />
+      <AlbumTopScrim overCover={hero.overCover} hasCover={!!coverUri} />
     </>
   );
 }

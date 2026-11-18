@@ -1,7 +1,14 @@
 import React, { type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
-import { AlbumHeader, albumHeroScrollState } from "../components/album-header";
+import {
+  AlbumHeader,
+  AlbumTopScrim,
+  albumHeroScrollState,
+  useAlbumCoverSize,
+} from "../components/album-header";
+
+const env = vi.hoisted(() => ({ width: 440, scheme: "dark", focused: true }));
 
 vi.mock("react-native", () => ({
   View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
@@ -26,7 +33,13 @@ vi.mock("react-native", () => ({
       {children}
     </button>
   ),
-  useWindowDimensions: () => ({ width: 440, height: 956 }),
+  useWindowDimensions: () => ({ width: env.width, height: 956 }),
+}));
+vi.mock("react-native-reanimated", () => ({
+  default: { View: () => <div>scrim</div> },
+  useSharedValue: (value: number) => ({ get: () => value, set: () => {} }),
+  useAnimatedStyle: (style: () => object) => style(),
+  withTiming: (value: number) => value,
 }));
 vi.mock("expo-image", () => ({ Image: () => null }));
 vi.mock("expo-symbols", () => ({
@@ -37,15 +50,17 @@ vi.mock("expo-haptics", () => ({
   selectionAsync: vi.fn(),
   ImpactFeedbackStyle: { Medium: "medium" },
 }));
-vi.mock("expo-status-bar", () => ({ StatusBar: () => null }));
-vi.mock("expo-router", () => ({ useIsFocused: () => true }));
+vi.mock("expo-status-bar", () => ({
+  StatusBar: ({ style }: { style: string }) => <i>{style} status bar</i>,
+}));
+vi.mock("expo-router", () => ({ useIsFocused: () => env.focused }));
 vi.mock("expo-router/react-navigation", () => ({ useHeaderHeight: () => 116 }));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 62, bottom: 34, left: 0, right: 0 }),
 }));
 vi.mock("../theme/theme", () => ({
   useTheme: () => ({
-    scheme: "dark",
+    scheme: env.scheme,
     space: { sm: 8, md: 16, lg: 24, xl: 32 },
     radius: { md: 12, lg: 16 },
     color: {},
@@ -95,11 +110,45 @@ it("leaves Shuffle out when it isn't offered", () => {
   expect(render({ onShuffle: undefined })).not.toContain("Shuffle");
 });
 
-it("shows the nav title once the hero's title is under the bar, and keeps the status bar light over the cover's top half", () => {
+it("shows the nav title once the hero's title is under the bar, and counts the status bar over the cover until its fade", () => {
   const geometry = { headerHeight: 116, titleBottom: 390, topInset: 62, coverSize: 440 };
   expect(albumHeroScrollState(0, geometry)).toEqual({ titleShown: false, overCover: true });
   expect(albumHeroScrollState(273, geometry).titleShown).toBe(false);
   expect(albumHeroScrollState(274, geometry).titleShown).toBe(true);
-  expect(albumHeroScrollState(157, geometry).overCover).toBe(true);
-  expect(albumHeroScrollState(158, geometry).overCover).toBe(false);
+  // 70% of the cover: 308pt, with the status bar's 62pt on top of the offset.
+  expect(albumHeroScrollState(245, geometry).overCover).toBe(true);
+  expect(albumHeroScrollState(246, geometry).overCover).toBe(false);
+});
+
+it("runs the cover edge to edge on a phone and stops it at 560pt on an iPad", () => {
+  const size = (width: number) => {
+    env.width = width;
+    let out = 0;
+    const Probe = () => {
+      out = useAlbumCoverSize();
+      return null;
+    };
+    renderToStaticMarkup(<Probe />);
+    return out;
+  };
+  expect(size(440)).toBe(440);
+  expect(size(820)).toBe(560);
+  env.width = 440;
+});
+
+it("holds the light status bar only in light mode, on screen, over a cover", () => {
+  const scrim = (props: { overCover: boolean; hasCover: boolean }, scheme = "light", focused = true) => {
+    env.scheme = scheme;
+    env.focused = focused;
+    const html = renderToStaticMarkup(<AlbumTopScrim {...props} />);
+    env.scheme = "dark";
+    env.focused = true;
+    return html;
+  };
+  expect(scrim({ overCover: true, hasCover: true })).toContain("light status bar");
+  expect(scrim({ overCover: false, hasCover: true })).not.toContain("status bar");
+  expect(scrim({ overCover: true, hasCover: false })).not.toContain("status bar");
+  expect(scrim({ overCover: true, hasCover: true }, "light", false)).not.toContain("status bar");
+  // Dark mode's status bar is light already, so it leaves it to the app.
+  expect(scrim({ overCover: true, hasCover: true }, "dark")).not.toContain("status bar");
 });

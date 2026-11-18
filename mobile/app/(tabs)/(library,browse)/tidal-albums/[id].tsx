@@ -1,6 +1,5 @@
 import { useCallback, useMemo } from "react";
 import { PixelRatio, View } from "react-native";
-import { useHeaderHeight } from "expo-router/react-navigation";
 import { FlashList, type ListRenderItemInfo } from "@shopify/flash-list";
 import {
   keepPreviousData,
@@ -46,7 +45,7 @@ import { useReleaseVersions } from "../../../../lib/release-versions";
 import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
-  AlbumStatusBar,
+  AlbumTopScrim,
   useAlbumCoverSize,
   useAlbumHeroScroll,
 } from "../../../../components/album-header";
@@ -58,7 +57,6 @@ export default function TidalAlbumDetailScreen() {
   const dockScroll = useDockScrollHandler();
   const hero = useAlbumHeroScroll(dockScroll.onScroll);
   const coverSize = useAlbumCoverSize();
-  const headerHeight = useHeaderHeight();
   const router = useRouter();
   // `artist`: the TIDAL artist the album was opened from, whose releases list
   // its versions. Without one, the album's own artist is asked once it loads.
@@ -150,10 +148,11 @@ export default function TidalAlbumDetailScreen() {
       >
         <AlbumTrackRow
           track={item}
-          number={index + 1}
+          // TIDAL lists hold unavailable entries too, so the index is the fallback.
+          number={item.track_no || index + 1}
           albumArtists={creditNames}
           current={item.id === currentId}
-          playing={isPlaying}
+          playing={item.id === currentId && isPlaying}
           onPress={onTrackPress}
         />
       </View>
@@ -167,11 +166,16 @@ export default function TidalAlbumDetailScreen() {
     [switching, currentId, isPlaying],
   );
 
+  const requestSize = Math.max(1, Math.round(coverSize * PixelRatio.get()));
+  const coverUri = useMemo(
+    () =>
+      albumQuery.data ? albumArtUrl({ ...albumQuery.data, source: "tidal" }, requestSize) : null,
+    [albumQuery.data, requestSize],
+  );
+
   const header = useMemo(() => {
     const album = albumQuery.data;
     if (!album) return null;
-    const requestSize = Math.max(1, Math.round(coverSize * PixelRatio.get()));
-    const coverUri = albumArtUrl({ ...album, source: "tidal" }, requestSize);
     const playable = playableTracks(tracks).length;
     return (
       <AlbumHeader
@@ -213,7 +217,8 @@ export default function TidalAlbumDetailScreen() {
     );
   }, [
     albumQuery.data,
-    coverSize,
+    coverUri,
+    requestSize,
     play,
     shuffle,
     tracks,
@@ -253,13 +258,15 @@ export default function TidalAlbumDetailScreen() {
             ? "TIDAL album"
             : displayText(albumQuery.data?.title ?? ""),
           headerLargeTitle: false,
+          // The list sits under the bar from the first point of scroll, so
+          // the scrolled-under hairline would cross the cover.
+          headerShadowVisible: false,
           // The hero carries the title until it scrolls under the bar.
           headerTitleStyle: {
             color: failed || hero.titleShown ? theme.color.fg : "transparent",
           },
         }}
       />
-      {failed ? null : <AlbumStatusBar overCover={hero.overCover} />}
       <FlashList
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         onScroll={hero.onScroll}
@@ -273,7 +280,7 @@ export default function TidalAlbumDetailScreen() {
             <View
               style={{
                 paddingHorizontal: theme.space.lg,
-                paddingTop: headerHeight + theme.space.md,
+                paddingTop: hero.headerHeight + theme.space.md,
               }}
             >
               {versionPicker}
@@ -285,9 +292,12 @@ export default function TidalAlbumDetailScreen() {
         ListEmptyComponent={failed ? failure : undefined}
         // The cover runs up under the status bar and the nav bar.
         contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustsScrollIndicatorInsets={false}
+        scrollIndicatorInsets={{ top: hero.headerHeight, bottom: hero.bottomInset + dockInset }}
         style={{ backgroundColor: theme.color.bg }}
-        contentContainerStyle={{ paddingBottom: dockInset + 24 }}
+        contentContainerStyle={{ paddingBottom: hero.bottomInset + dockInset + 24 }}
       />
+      <AlbumTopScrim overCover={hero.overCover} hasCover={!failed && !!coverUri} />
     </>
   );
 }
