@@ -9,6 +9,7 @@ import {
   releaseSubtitle,
   releaseVersionLabels,
   releaseVersionsOf,
+  releasesBesides,
   tidalArtistReleases,
 } from "../src/artist-releases";
 
@@ -207,4 +208,32 @@ it("names versions by what differs between them", () => {
     "10 tracks",
     "12 tracks",
   ]);
+});
+
+it("lists an artist's other releases for an album page, leaving out the one shown in every version", () => {
+  const releases = tidalArtistReleases([
+    roads("atmos", { dolby_atmos: true }),
+    roads("clean", { explicit: false }),
+    roads("explicit", {}),
+    // A duplicate copy of the clean version, opened from search.
+    roads("clean-copy", { explicit: false }),
+    roads("deluxe", { version: "Deluxe" }),
+    album("other", { source_id: "other", release_year: 2025 }),
+  ]);
+  for (const shown of ["clean", "atmos", "clean-copy"]) {
+    expect(releasesBesides(releases, shown).map((r) => r.id)).toEqual(["deluxe", "other"]);
+  }
+  // An album the artist doesn't list keeps every tile.
+  expect(releasesBesides(releases, "elsewhere").map((r) => r.id)).toEqual(["explicit", "deluxe", "other"]);
+});
+
+it("leaves a clean edition that crossed the single cutoff out of the album's own More by", () => {
+  const releases = tidalArtistReleases([
+    roads("explicit", { track_count: 4, duration_ms: minutes(14) }),
+    // The clean edition drops a track and reads as a single.
+    roads("clean", { explicit: false, track_count: 3, duration_ms: minutes(10) }),
+    album("other", { source_id: "other", release_year: 2025 }),
+  ]);
+  expect(releasesBesides(releases, "explicit").map((r) => r.id)).toEqual(["other"]);
+  expect(releasesBesides(releases, "clean").map((r) => r.id)).toEqual(["other"]);
 });

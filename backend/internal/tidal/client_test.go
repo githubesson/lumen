@@ -261,7 +261,7 @@ func TestHifiAlbum(t *testing.T) {
 		gotID = r.URL.Query().Get("id")
 		gotLimit = r.URL.Query().Get("limit")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"version":"2.10","data":{"id":58990510,"title":"OK Computer","duration":3216,"numberOfTracks":12,"releaseDate":"1997-07-01","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065","artist":{"name":"Radiohead"},"items":[{"type":"track","item":{"id":58990511,"title":"Airbag","duration":287,"trackNumber":1,"volumeNumber":1,"artist":{"name":"Radiohead"},"artists":[{"name":"Radiohead"}],"album":{"id":58990510,"title":"OK Computer","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065"}}}]}}`))
+		_, _ = w.Write([]byte(`{"version":"2.10","data":{"id":58990510,"title":"OK Computer","duration":3216,"numberOfTracks":12,"releaseDate":"1997-07-01","copyright":" ℗ 1997 Parlophone Records Ltd ","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065","artist":{"name":"Radiohead"},"items":[{"type":"track","item":{"id":58990511,"title":"Airbag","duration":287,"trackNumber":1,"volumeNumber":1,"artist":{"name":"Radiohead"},"artists":[{"name":"Radiohead"}],"album":{"id":58990510,"title":"OK Computer","cover":"e77e4cc0-6cd0-4522-807d-88aeac488065"}}}]}}`))
 	}))
 	defer srv.Close()
 
@@ -275,6 +275,9 @@ func TestHifiAlbum(t *testing.T) {
 	}
 	if album.ID != "58990510" || album.Title != "OK Computer" || album.Artist != "Radiohead" {
 		t.Fatalf("unexpected album: %+v", album)
+	}
+	if album.ReleaseYear != 1997 || album.ReleaseDate != "1997-07-01" || album.Copyright != "℗ 1997 Parlophone Records Ltd" {
+		t.Fatalf("release facts = %d %q %q", album.ReleaseYear, album.ReleaseDate, album.Copyright)
 	}
 	if len(album.Tracks) != 1 || album.Tracks[0].ID != "58990511" || album.Tracks[0].AlbumID != "58990510" {
 		t.Fatalf("unexpected album tracks: %+v", album.Tracks)
@@ -696,5 +699,56 @@ func TestFullAlbumWithTitlelessTrackIsIncomplete(t *testing.T) {
 	defer srv.Close()
 	if _, err := NewClient(Config{HifiAPIURL: srv.URL}).FullAlbum(context.Background(), "7"); !errors.Is(err, ErrIncompleteAlbum) {
 		t.Fatalf("err = %v, want ErrIncompleteAlbum", err)
+	}
+}
+
+func TestReleaseDateKeepsOnlyACalendarDate(t *testing.T) {
+	for raw, want := range map[string]string{
+		"2020-03-27":           "2020-03-27",
+		" 2020-03-27T00:00:00": "2020-03-27",
+		"2020":                 "",
+		"2020-13-01":           "",
+		"0001-01-01":           "",
+		"0000-01-01":           "",
+		"":                     "",
+	} {
+		if got := releaseDate(raw); got != want {
+			t.Errorf("releaseDate(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestAlbumKeepsNoYearFromAPlaceholderDate(t *testing.T) {
+	for _, raw := range []string{"0001-01-01", "0001"} {
+		if got := (apiAlbum{ID: "1", Title: "Record", ReleaseDate: raw}).album(); got.ReleaseYear != 0 || got.ReleaseDate != "" {
+			t.Fatalf("%q: year %d date %q, want neither", raw, got.ReleaseYear, got.ReleaseDate)
+		}
+	}
+	if got := (apiAlbum{ID: "1", Title: "Record", ReleaseDate: "2020"}).album(); got.ReleaseYear != 2020 || got.ReleaseDate != "" {
+		t.Fatalf("year-only: year %d date %q", got.ReleaseYear, got.ReleaseDate)
+	}
+}
+
+func TestTrackKeepsNoYearFromAPlaceholderDate(t *testing.T) {
+	placeholder := apiTrack{ID: "1", Title: "Song", Album: apiAlbum{ID: "2", ReleaseDate: "0001-01-01T00:00:00.000+0000"}}
+	if got := placeholder.track(); got.Year != 0 {
+		t.Fatalf("placeholder year = %d, want 0", got.Year)
+	}
+	dated := apiTrack{ID: "1", Title: "Song", Album: apiAlbum{ID: "2", ReleaseDate: " 2020-03-27"}}
+	if got := dated.track(); got.Year != 2020 {
+		t.Fatalf("year = %d, want 2020", got.Year)
+	}
+}
+
+func TestAlbumReadsTheYearFromAPaddedDate(t *testing.T) {
+	got := apiAlbum{ID: "1", Title: "Record", ReleaseDate: " 2020-03-27T00:00:00"}.album()
+	if got.ReleaseYear != 2020 || got.ReleaseDate != "2020-03-27" {
+		t.Fatalf("year %d date %q", got.ReleaseYear, got.ReleaseDate)
+	}
+}
+
+func TestDateInYear(t *testing.T) {
+	if !DateInYear("2020-03-27", 2020) || DateInYear("2020-03-27", 2021) || DateInYear("", 2020) || DateInYear("0999-01-01", 999) == false {
+		t.Fatal("DateInYear disagrees with the date's own year")
 	}
 }

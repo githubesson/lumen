@@ -9,9 +9,12 @@ import { useTheme } from "../theme/theme";
  */
 export function HorizontalShelf({
   style,
+  inset = 0,
   children,
 }: {
   style?: StyleProp<ViewStyle>;
+  /** Extra room before the first tile and after the last (an iPad's centred column). */
+  inset?: number;
   children: ReactNode;
 }) {
   const theme = useTheme();
@@ -20,7 +23,7 @@ export function HorizontalShelf({
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{
-        paddingHorizontal: theme.space.lg,
+        paddingHorizontal: theme.space.lg + inset,
         gap: theme.space.md,
       }}
       style={style}

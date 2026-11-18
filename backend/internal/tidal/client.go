@@ -196,6 +196,10 @@ type Album struct {
 	Artist      string   // primary artist
 	Artists     []string // every main artist, primary first
 	ReleaseYear int
+	// ReleaseDate is the full release date ("2020-03-27") when TIDAL gives
+	// one; Copyright is its copyright line.
+	ReleaseDate string
+	Copyright   string
 	TrackCount  int
 	DurationMS  int
 	CoverID     string
@@ -834,6 +838,7 @@ type apiAlbum struct {
 	AudioModes     []string       `json:"audioModes"`
 	Cover          string         `json:"cover"`
 	ReleaseDate    string         `json:"releaseDate"`
+	Copyright      string         `json:"copyright"`
 	Duration       int            `json:"duration"`
 	NumberOfTracks int            `json:"numberOfTracks"`
 	Artist         apiArtist      `json:"artist"`
@@ -858,11 +863,46 @@ type apiAlbumItem struct {
 	Type string   `json:"type"`
 }
 
-func (a apiAlbum) album() Album {
-	year := 0
-	if len(a.ReleaseDate) >= 4 {
-		year, _ = strconv.Atoi(a.ReleaseDate[:4])
+// DateInYear reports whether a release date ("2020-03-27") falls in year,
+// so a date and a year from different sources aren't shown side by side.
+func DateInYear(date string, year int) bool {
+	return len(date) >= 4 && date[:4] == fmt.Sprintf("%04d", year)
+}
+
+// releaseDate keeps the calendar date of a TIDAL date ("2020-03-27",
+// sometimes with a time after it), or "" when it isn't one. Dates before
+// year 1000 are catalog placeholders ("0001-01-01"), not release days. Album
+// pages and track info both read release dates through it.
+func releaseDate(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 10 {
+		return ""
 	}
+	day, err := time.Parse(time.DateOnly, raw[:10])
+	if err != nil || day.Year() < 1000 {
+		return ""
+	}
+	return raw[:10]
+}
+
+// releaseYear is the year of a TIDAL release date, full ("2020-03-27") or
+// year-only ("2020"), or 0 for a placeholder before year 1000 or anything
+// else. Albums and tracks both read it here, so a download files a track
+// under the same year its album page shows.
+func releaseYear(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 4 {
+		return 0
+	}
+	year, err := strconv.Atoi(raw[:4])
+	if err != nil || year < 1000 {
+		return 0
+	}
+	return year
+}
+
+func (a apiAlbum) album() Album {
+	date, year := releaseDate(a.ReleaseDate), releaseYear(a.ReleaseDate)
 	artist, artistID := strings.TrimSpace(a.Artist.Name), string(a.Artist.ID)
 	if artist == "" && len(a.Artists) > 0 {
 		artist, artistID = strings.TrimSpace(a.Artists[0].Name), string(a.Artists[0].ID)
@@ -878,6 +918,8 @@ func (a apiAlbum) album() Album {
 		Artist:      artist,
 		Artists:     albumArtists(artist, a.Artists),
 		ReleaseYear: year,
+		ReleaseDate: date,
+		Copyright:   strings.TrimSpace(a.Copyright),
 		TrackCount:  a.NumberOfTracks,
 		DurationMS:  max(0, a.Duration) * 1000,
 		CoverID:     coverID,
@@ -950,10 +992,7 @@ func (t apiTrack) track() Track {
 	if len(artists) == 0 && strings.TrimSpace(t.Artist.Name) != "" {
 		artists = append(artists, strings.TrimSpace(t.Artist.Name))
 	}
-	year := 0
-	if len(t.Album.ReleaseDate) >= 4 {
-		year, _ = strconv.Atoi(t.Album.ReleaseDate[:4])
-	}
+	year := releaseYear(t.Album.ReleaseDate)
 	coverID := strings.TrimSpace(t.Album.Cover)
 	return Track{
 		ID:          string(t.ID),

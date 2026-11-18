@@ -41,6 +41,9 @@ type albumListResp struct {
 	SavedCount   int      `json:"saved_count,omitempty"`
 	QueuedCount  int      `json:"queued_count,omitempty"` // tracks waiting for an album download
 	ArtistNames  []string `json:"artist_names,omitempty"` // every main artist of the release
+	// The release's full date and copyright line, for the page's footer.
+	ReleaseDate string `json:"release_date,omitempty"`
+	Copyright   string `json:"copyright,omitempty"`
 }
 
 type artistListResp struct {
@@ -155,6 +158,12 @@ func albumDetailResp(ctx context.Context, lib *library.Store, a *library.AlbumDe
 	if out.ReleaseYear == 0 {
 		out.ReleaseYear = release.ReleaseYear
 	}
+	// The release's date only when the album's year is the release's: an
+	// album whose year was set otherwise would contradict its own footer.
+	if out.ReleaseYear == release.ReleaseYear {
+		out.ReleaseDate = release.ReleaseDate
+	}
+	out.Copyright = release.Copyright
 	return out, nil
 }
 

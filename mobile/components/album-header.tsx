@@ -349,6 +349,26 @@ export function AlbumHeader({
 }
 
 /**
+ * The nav bar's scroll edge effect (iOS 26). The list starts under the bar,
+ * so iOS would blur the cover beneath it from the first frame and cut it off
+ * at the bar's edge. The effect stays hidden while the hero is under the bar
+ * and turns on, soft-edged, once the songs come up beneath the bar's title.
+ */
+export function albumScrollEdgeEffects(songsUnderBar: boolean, nudge = false) {
+  return {
+    top: songsUnderBar ? "soft" : "hidden",
+    bottom: "automatic",
+    // react-native-screens applies the effects to the list only when one of
+    // them changes, so a list mounted again under an unchanged "hidden" (a
+    // retry after a failure) would get iOS's default. `nudge` flips with each
+    // list layout to make it apply them again; a vertical list has nothing
+    // under its side edges, so this edge's value shows nothing either way.
+    left: nudge ? "hidden" : "automatic",
+    right: "automatic",
+  } as const;
+}
+
+/**
  * What the album page's chrome shows at scroll offset `y`: the nav bar title
  * once the hero's title has gone fully under the bar, and the top scrim
  * while the status bar is over the cover rather than its fade into the page.
@@ -386,6 +406,9 @@ export function useAlbumHeroScroll(
   const [titleBottom, setTitleBottom] = useState(size - ALBUM_TITLE_OVERLAP + 36);
   const [titleShown, setTitleShown] = useState(false);
   const [overCover, setOverCover] = useState(true);
+  // Flips on each list layout (see `albumScrollEdgeEffects`).
+  const [edgeNudge, setEdgeNudge] = useState(false);
+  const onListLayout = useCallback(() => setEdgeNudge((nudge) => !nudge), []);
   // The last offset, so a title that changes height (another version's)
   // is judged where the list already is rather than on the next scroll.
   const lastY = useRef(0);
@@ -429,6 +452,8 @@ export function useAlbumHeroScroll(
     onTitleBottom,
     headerHeight,
     bottomInset,
+    edgeNudge,
+    onListLayout,
   };
 }
 

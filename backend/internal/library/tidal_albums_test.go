@@ -53,3 +53,29 @@ func TestMergeCachedReleaseKeepsRemovedTracks(t *testing.T) {
 		t.Fatalf("a listed track lost fields the refresh omitted: %+v", one)
 	}
 }
+
+func TestMergeCachedReleaseKeepsReleaseFactsTheRefreshOmits(t *testing.T) {
+	old := cachedRelease{Title: "Record", ReleaseDate: "2020-03-27", Copyright: "© 2020 Label"}
+	got := mergeCachedRelease(old, cachedRelease{Title: "Record"})
+	if got.ReleaseDate != "2020-03-27" || got.Copyright != "© 2020 Label" {
+		t.Fatalf("release facts lost: %+v", got)
+	}
+	got = mergeCachedRelease(old, cachedRelease{Title: "Record", ReleaseDate: "2021-01-01", Copyright: "© 2021 Label"})
+	if got.ReleaseDate != "2021-01-01" || got.Copyright != "© 2021 Label" {
+		t.Fatalf("fresh release facts not taken: %+v", got)
+	}
+}
+
+func TestMergeCachedReleaseDropsADateFromAnotherYear(t *testing.T) {
+	old := cachedRelease{Title: "Record", ReleaseYear: 2019, ReleaseDate: "2019-02-01"}
+	// TIDAL moves the release to 2021 with only a year.
+	got := mergeCachedRelease(old, cachedRelease{Title: "Record", ReleaseYear: 2021})
+	if got.ReleaseYear != 2021 || got.ReleaseDate != "" {
+		t.Fatalf("year %d date %q, want 2021 and no date", got.ReleaseYear, got.ReleaseDate)
+	}
+	// A refresh that keeps the year keeps the stored date.
+	got = mergeCachedRelease(old, cachedRelease{Title: "Record", ReleaseYear: 2019})
+	if got.ReleaseDate != "2019-02-01" {
+		t.Fatalf("date %q, want the stored one", got.ReleaseDate)
+	}
+}

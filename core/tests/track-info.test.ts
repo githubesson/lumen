@@ -85,8 +85,16 @@ describe("formatCalendarDate", () => {
     expect(formatCalendarDate("1969-01-01", "en-US")).toBe("Jan 1, 1969");
   });
 
+  it("spells the month out when asked", () => {
+    expect(formatCalendarDate("2020-03-27", "en-GB", "long")).toBe("27 March 2020");
+  });
+
+  it("keeps a year below 100 in its own century", () => {
+    expect(formatCalendarDate("0001-01-01", "en-GB", "long")).toBe("1 January 1");
+  });
+
   it("shows an em dash for anything else", () => {
-    for (const value of [undefined, null, "", "2023", "2023-02-30", "2023-03-17T00:00:00Z", "17/03/2023"]) {
+    for (const value of [undefined, null, "", "2023", "2023-02-30", "2021-13-14", "2023-00-10", "2023-03-17T00:00:00Z", "17/03/2023"]) {
       expect(formatCalendarDate(value)).toBe("—");
     }
   });

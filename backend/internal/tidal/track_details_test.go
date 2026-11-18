@@ -198,7 +198,7 @@ func TestMusicalKey(t *testing.T) {
 	}
 }
 
-func TestISODate(t *testing.T) {
+func TestTrackReleaseDate(t *testing.T) {
 	for in, want := range map[string]string{
 		"2023-03-17":                   "2023-03-17",
 		"2023-03-17T00:00:00.000+0000": "2023-03-17",
@@ -206,9 +206,11 @@ func TestISODate(t *testing.T) {
 		"2023-13-01":                   "",
 		"2023":                         "",
 		"":                             "",
+		// A catalog placeholder, not a release day.
+		"0001-01-01T00:00:00.000+0000": "",
 	} {
-		if got := isoDate(in); got != want {
-			t.Errorf("isoDate(%q) = %q, want %q", in, got, want)
+		if got := releaseDate(in); got != want {
+			t.Errorf("releaseDate(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

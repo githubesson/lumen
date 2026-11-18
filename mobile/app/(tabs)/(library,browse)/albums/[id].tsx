@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   PixelRatio,
   Pressable,
@@ -47,11 +47,15 @@ import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
   AlbumTopScrim,
+  albumScrollEdgeEffects,
   useAlbumCoverInset,
   useAlbumCoverSize,
   useAlbumHeroScroll,
 } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
+import { AlbumFooter } from "../../../../components/album-footer";
+import { AlbumMoreBy } from "../../../../components/album-more-by";
+import { useLibraryMoreBy } from "../../../../lib/album-more-by";
 
 export default function AlbumDetailScreen() {
   const theme = useTheme();
@@ -131,7 +135,41 @@ export default function AlbumDetailScreen() {
   );
   const numbers = useMemo(() => albumTrackNumbers(tracks), [tracks]);
   const creditNames = useMemo(() => credits.map((credit) => credit.name), [credits]);
-  const linkedArtistId = credits.find((credit) => credit.artistId)?.artistId;
+  const linkedArtist = credits.find((credit) => credit.artistId);
+  const linkedArtistId = linkedArtist?.artistId;
+  // "More by" asks the library's album artist, whom the credits leave out
+  // when the copied TIDAL release names its artists differently.
+  const album = albumQuery.data;
+  const shelfArtist =
+    linkedArtist ??
+    (album?.artist_has_page && album.artist_id && album.artist_name
+      ? { name: album.artist_name, artistId: album.artist_id }
+      : undefined);
+  const [nearEnd, setNearEnd] = useState(false);
+  const moreBy = useLibraryMoreBy(shelfArtist?.artistId, id, nearEnd);
+  const openArtist = useMemo(
+    () =>
+      linkedArtistId
+        ? () =>
+            router.push({
+              pathname: "/(tabs)/artists/[id]",
+              params: { id: linkedArtistId },
+            })
+        : undefined,
+    [router, linkedArtistId],
+  );
+  const shelfArtistId = shelfArtist?.artistId;
+  const openShelfArtist = useMemo(
+    () =>
+      shelfArtistId
+        ? () =>
+            router.push({
+              pathname: "/(tabs)/artists/[id]",
+              params: { id: shelfArtistId },
+            })
+        : undefined,
+    [router, shelfArtistId],
+  );
 
   const renderItem = useCallback(
     ({ item, index }: ListRenderItemInfo<TrackListItem>) => (
@@ -171,15 +209,7 @@ export default function AlbumDetailScreen() {
       <AlbumHeader
         title={album.title}
         artist={albumArtists(album)}
-        onOpenArtist={
-          linkedArtistId
-            ? () =>
-                router.push({
-                  pathname: "/(tabs)/artists/[id]",
-                  params: { id: linkedArtistId },
-                })
-            : undefined
-        }
+        onOpenArtist={openArtist}
         coverUri={shownCover}
         coverKey={shownCover ?? undefined}
         onCoverError={coverFailure.onError}
@@ -212,10 +242,35 @@ export default function AlbumDetailScreen() {
     play,
     shuffle,
     downloadAction,
-    linkedArtistId,
-    router,
+    openArtist,
     hero.onTitleBottom,
   ]);
+
+  const footer = useMemo(() => {
+    const album = albumQuery.data;
+    if (!album) return null;
+    return (
+      <View>
+        <AlbumFooter
+          releaseDate={album.release_date}
+          releaseYear={album.release_year}
+          trackCount={album.track_count}
+          durationMs={album.duration_ms}
+          copyright={album.copyright}
+          inset={coverInset}
+        />
+        <AlbumMoreBy
+          artist={displayText(shelfArtist?.name ?? "")}
+          releases={moreBy}
+          onOpenArtist={openShelfArtist}
+          onOpenRelease={(release) =>
+            router.push({ pathname: "/(tabs)/albums/[id]", params: { id: release.id } })
+          }
+          inset={coverInset}
+        />
+      </View>
+    );
+  }, [albumQuery.data, coverInset, shelfArtist?.name, moreBy, openShelfArtist, router]);
 
   const openEdit = useCallback(() => {
     if (!id) return;
@@ -247,6 +302,7 @@ export default function AlbumDetailScreen() {
           // The list sits under the bar from the first point of scroll, so
           // the scrolled-under hairline would cross the cover.
           headerShadowVisible: false,
+          scrollEdgeEffects: albumScrollEdgeEffects(hero.titleShown, hero.edgeNudge),
           // The hero carries the title until it scrolls under the bar.
           headerTitleStyle: {
             color: hero.titleShown ? theme.color.fg : "transparent",
@@ -275,11 +331,16 @@ export default function AlbumDetailScreen() {
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         onScroll={hero.onScroll}
         scrollEventThrottle={hero.scrollEventThrottle}
+        onLayout={hero.onListLayout}
+        // "More by" needs the artist's track listing: ask once near the end.
+        onEndReached={() => setNearEnd(true)}
+        onEndReachedThreshold={1}
         data={tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         extraData={rowState}
         ListHeaderComponent={header}
+        ListFooterComponent={footer}
         // The cover runs up under the status bar and the nav bar.
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustsScrollIndicatorInsets={false}

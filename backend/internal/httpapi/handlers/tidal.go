@@ -30,6 +30,9 @@ type tidalAlbumResp struct {
 	Artist      string   `json:"artist,omitempty"`
 	Artists     []string `json:"artists,omitempty"`
 	ReleaseYear int      `json:"release_year,omitempty"`
+	// ReleaseDate ("2020-03-27") and Copyright fill the album page's footer.
+	ReleaseDate string `json:"release_date,omitempty"`
+	Copyright   string `json:"copyright,omitempty"`
 	// SavedCount tracks are served from the library; LibraryAlbumID is the
 	// library album copying this release, if any.
 	SavedCount     int    `json:"saved_count,omitempty"`
@@ -93,8 +96,13 @@ func (h *TIDAL) Album(w http.ResponseWriter, r *http.Request) {
 			if cached, _, cerr := h.Library.TIDALAlbum(r.Context(), id); cerr == nil &&
 				(err != nil || !partial || len(cached.Tracks) >= len(album.Tracks)) {
 				// The stored record doesn't keep the artist id; the live
-				// fetch, when there was one, does.
+				// fetch, when there was one, does. It also has the release
+				// date and copyright when the record predates them.
 				cached.ArtistID = album.ArtistID
+				if cached.ReleaseDate == "" && (cached.ReleaseYear == 0 || tidal.DateInYear(album.ReleaseDate, cached.ReleaseYear)) {
+					cached.ReleaseDate = album.ReleaseDate
+				}
+				cached.Copyright = firstNonEmpty(cached.Copyright, album.Copyright)
 				album, err = cached, nil
 				if !unpaged {
 					album.Tracks = pageOf(album.Tracks, offset, limit)
@@ -161,6 +169,8 @@ func makeTIDALAlbumResp(album tidal.Album) tidalAlbumResp {
 		Artist:      album.Artist,
 		Artists:     album.Artists,
 		ReleaseYear: album.ReleaseYear,
+		ReleaseDate: album.ReleaseDate,
+		Copyright:   album.Copyright,
 		TrackCount:  album.TrackCount,
 		DurationMS:  album.DurationMS,
 		CoverURL:    proxyRemoteCoverURL(album.CoverURL, remoteCoverWarmFull),

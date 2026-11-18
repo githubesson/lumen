@@ -73,6 +73,7 @@ func TestLibraryAlbumShowsFullTIDALRelease(t *testing.T) {
 	lib := library.NewStore(pool)
 	if err := lib.SaveTIDALAlbum(ctx, tidal.Album{
 		ID: rel, Title: "Record " + run, Artist: "Band", Artists: []string{"Band", "Guest"}, ReleaseYear: 2021, TrackCount: 3,
+		ReleaseDate: "2021-05-14", Copyright: "© 2021 Band Records",
 		Tracks: []tidal.Track{
 			{ID: "t1" + run, Title: "One", TrackNo: 1, DurationMS: 1000},
 			{ID: "t2" + run, Title: "Two", TrackNo: 2, DurationMS: 2000, ISRC: "ZZ0000000002"},
@@ -110,10 +111,32 @@ func TestLibraryAlbumShowsFullTIDALRelease(t *testing.T) {
 		TIDALAlbumID string   `json:"tidal_album_id"`
 		ArtistNames  []string `json:"artist_names"`
 		ReleaseYear  int      `json:"release_year"`
+		ReleaseDate  string   `json:"release_date"`
+		Copyright    string   `json:"copyright"`
 	}
 	get("/api/albums/"+album.String(), &head)
 	if head.TrackCount != 4 || head.SavedCount != 3 || head.TIDALAlbumID != rel || len(head.ArtistNames) != 2 || head.ReleaseYear != 2021 {
 		t.Fatalf("album = %+v", head)
+	}
+	if head.ReleaseDate != "2021-05-14" || head.Copyright != "© 2021 Band Records" {
+		t.Fatalf("release facts = %q %q", head.ReleaseDate, head.Copyright)
+	}
+	// An album whose year was set apart from the release's keeps its own
+	// year, so the release's full date would contradict it: left out.
+	if _, err := pool.Exec(ctx, `UPDATE albums SET release_year = 2022 WHERE id = $1`, album); err != nil {
+		t.Fatal(err)
+	}
+	var mismatched struct {
+		ReleaseYear int    `json:"release_year"`
+		ReleaseDate string `json:"release_date"`
+		Copyright   string `json:"copyright"`
+	}
+	get("/api/albums/"+album.String(), &mismatched)
+	if mismatched.ReleaseYear != 2022 || mismatched.ReleaseDate != "" || mismatched.Copyright != "© 2021 Band Records" {
+		t.Fatalf("year-mismatched album = %+v", mismatched)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE albums SET release_year = NULL WHERE id = $1`, album); err != nil {
+		t.Fatal(err)
 	}
 	// An admin edit returns the album as its page shows it, release fields
 	// included, so the page doesn't lose them (or its download control).
@@ -188,7 +211,8 @@ func TestTIDALAlbumPageFallsBackToStoredRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	lib := library.NewStore(pool)
-	stored := tidal.Album{ID: rel, Title: "Long " + run, TrackCount: 150}
+	// Stored before copyright lines were kept: the live fetch fills it in.
+	stored := tidal.Album{ID: rel, Title: "Long " + run, TrackCount: 150, ReleaseYear: 2019, ReleaseDate: "2019-02-01"}
 	for i := 0; i < 150; i++ {
 		stored.Tracks = append(stored.Tracks, tidal.Track{ID: strconv.Itoa(1000 + i), Title: "T", TrackNo: i + 1})
 	}
@@ -206,7 +230,7 @@ func TestTIDALAlbumPageFallsBackToStoredRelease(t *testing.T) {
 		for i := range items {
 			items[i] = `{"type":"track","item":{"id":` + strconv.Itoa(1000+i) + `,"title":"T","trackNumber":` + strconv.Itoa(i+1) + `}}`
 		}
-		_, _ = w.Write([]byte(`{"data":{"id":` + rel + `,"title":"Long","numberOfTracks":150,"items":[` + strings.Join(items, ",") + `]}}`))
+		_, _ = w.Write([]byte(`{"data":{"id":` + rel + `,"title":"Long","numberOfTracks":150,"copyright":"© 2019 Live Label","items":[` + strings.Join(items, ",") + `]}}`))
 	}))
 	defer proxy.Close()
 
@@ -224,13 +248,18 @@ func TestTIDALAlbumPageFallsBackToStoredRelease(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	var page struct {
-		Tracks []json.RawMessage `json:"tracks"`
+		Tracks      []json.RawMessage `json:"tracks"`
+		ReleaseDate string            `json:"release_date"`
+		Copyright   string            `json:"copyright"`
 	}
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &page) != nil {
 		t.Fatalf("album page: %d %s", rec.Code, rec.Body)
 	}
 	if len(page.Tracks) != 150 {
 		t.Fatalf("album page lists %d tracks, want the stored 150", len(page.Tracks))
+	}
+	if page.ReleaseDate != "2019-02-01" || page.Copyright != "© 2019 Live Label" {
+		t.Fatalf("release facts = %q %q, want the stored date and the live copyright", page.ReleaseDate, page.Copyright)
 	}
 
 	// Explicit pages keep their window: live for the first, the stored

@@ -17,6 +17,7 @@ import {
   formatTotalMs,
   metaLine,
   playableTracks,
+  searchEntityTarget,
   startListPlayback,
   startShuffledListPlayback,
   tidalAlbumCredits,
@@ -48,11 +49,15 @@ import { useTheme } from "../../../../theme/theme";
 import {
   AlbumHeader,
   AlbumTopScrim,
+  albumScrollEdgeEffects,
   useAlbumCoverInset,
   useAlbumCoverSize,
   useAlbumHeroScroll,
 } from "../../../../components/album-header";
 import { EmptyState, retryAction } from "../../../../components/empty-state";
+import { AlbumFooter } from "../../../../components/album-footer";
+import { AlbumMoreBy } from "../../../../components/album-more-by";
+import { useTidalMoreBy } from "../../../../lib/album-more-by";
 
 export default function TidalAlbumDetailScreen() {
   const theme = useTheme();
@@ -88,6 +93,8 @@ export default function TidalAlbumDetailScreen() {
   const switching = albumQuery.isPlaceholderData;
   const versionsArtist = artist || albumQuery.data?.artist_id || undefined;
   const versions = useReleaseVersions(versionsArtist, id);
+  // The same artist's other releases, from the same (shared) query.
+  const moreBy = useTidalMoreBy(versionsArtist, id);
   const queryClient = useQueryClient();
   // Like a tab: picking a version replaces this page rather than pushing one.
   // The artist listing the versions goes along, so the next version's page
@@ -247,6 +254,56 @@ export default function TidalAlbumDetailScreen() {
     hero.onTitleBottom,
   ]);
 
+  const footer = useMemo(() => {
+    const album = albumQuery.data;
+    if (!album) return null;
+    // Like the rows, the previous version's footer waits, dimmed and out
+    // of reach, while the picked one loads.
+    return (
+      <View
+        pointerEvents={switching ? "none" : "auto"}
+        accessibilityElementsHidden={switching}
+        importantForAccessibility={switching ? "no-hide-descendants" : "auto"}
+        style={switching ? { opacity: 0.4 } : undefined}
+      >
+        <AlbumFooter
+          releaseDate={album.release_date}
+          releaseYear={album.release_year}
+          trackCount={album.track_count}
+          durationMs={album.duration_ms}
+          copyright={album.copyright}
+          inset={coverInset}
+        />
+        <AlbumMoreBy
+          // The artist profile can fail while its releases arrive: the
+          // album's own artist names them when it's the same artist.
+          artist={displayText(
+            moreBy.name || (versionsArtist === album.artist_id ? album.artist : ""),
+          )}
+          releases={moreBy.releases}
+          onOpenArtist={
+            versionsArtist
+              ? () =>
+                  router.push({
+                    pathname: "/(tabs)/tidal-artists/[id]",
+                    params: { id: versionsArtist },
+                  })
+              : undefined
+          }
+          // Like the artist page: the album keeps the artist it came from,
+          // whose releases list its versions.
+          onOpenRelease={(release) =>
+            router.push({
+              pathname: "/(tabs)/tidal-albums/[id]",
+              params: { id: searchEntityTarget(release).id, artist: versionsArtist },
+            })
+          }
+          inset={coverInset}
+        />
+      </View>
+    );
+  }, [albumQuery.data, coverInset, moreBy, versionsArtist, router, switching]);
+
   if (albumQuery.isLoading) return <EmptyState fill loading />;
   // A version that can't load (failed, or waiting offline) shows the error,
   // with the picker kept above it so the other versions stay a tap away.
@@ -278,6 +335,7 @@ export default function TidalAlbumDetailScreen() {
           // The list sits under the bar from the first point of scroll, so
           // the scrolled-under hairline would cross the cover.
           headerShadowVisible: false,
+          scrollEdgeEffects: albumScrollEdgeEffects(failed || hero.titleShown, hero.edgeNudge),
           // The hero carries the title until it scrolls under the bar.
           headerTitleStyle: {
             color: failed || hero.titleShown ? theme.color.fg : "transparent",
@@ -288,6 +346,7 @@ export default function TidalAlbumDetailScreen() {
         {...TRACK_FLASH_LIST_PERFORMANCE_PROPS}
         onScroll={hero.onScroll}
         scrollEventThrottle={hero.scrollEventThrottle}
+        onLayout={hero.onListLayout}
         data={failed ? [] : tracks}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
@@ -308,6 +367,7 @@ export default function TidalAlbumDetailScreen() {
           )
         }
         ListEmptyComponent={failed ? failure : undefined}
+        ListFooterComponent={failed ? null : footer}
         // The cover runs up under the status bar and the nav bar.
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustsScrollIndicatorInsets={false}

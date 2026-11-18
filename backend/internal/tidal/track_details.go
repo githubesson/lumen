@@ -7,7 +7,6 @@ import (
 	"math"
 	"regexp"
 	"strings"
-	"time"
 )
 
 // TrackDetails is what TIDAL knows about a track beyond what Track keeps.
@@ -162,10 +161,10 @@ func (c *Client) TrackDetails(ctx context.Context, id string) (TrackDetails, err
 		}
 	}
 	if out.Album != nil {
-		d.ReleaseDate = isoDate(out.Album.ReleaseDate)
+		d.ReleaseDate = releaseDate(out.Album.ReleaseDate)
 	}
 	if d.ReleaseDate == "" {
-		d.ReleaseDate = isoDate(t.StreamStartDate)
+		d.ReleaseDate = releaseDate(t.StreamStartDate)
 	}
 	for _, section := range out.FailedSections {
 		switch section {
@@ -219,19 +218,6 @@ func artistID(id tidalID) string {
 		return s
 	}
 	return ""
-}
-
-// isoDate keeps the YYYY-MM-DD of a TIDAL date ("2023-03-17" or
-// "2023-03-17T00:00:00.000+0000"), or "" if it isn't one.
-func isoDate(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) < 10 {
-		return ""
-	}
-	if _, err := time.Parse("2006-01-02", s[:10]); err != nil {
-		return ""
-	}
-	return s[:10]
 }
 
 var qualityRank = map[string]int{"LOW": 1, "HIGH": 2, "LOSSLESS": 3, "HI_RES_LOSSLESS": 4}
