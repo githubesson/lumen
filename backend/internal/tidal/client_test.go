@@ -718,6 +718,17 @@ func TestReleaseDateKeepsOnlyACalendarDate(t *testing.T) {
 	}
 }
 
+func TestAlbumKeepsNoYearFromAPlaceholderDate(t *testing.T) {
+	for _, raw := range []string{"0001-01-01", "0001"} {
+		if got := (apiAlbum{ID: "1", Title: "Record", ReleaseDate: raw}).album(); got.ReleaseYear != 0 || got.ReleaseDate != "" {
+			t.Fatalf("%q: year %d date %q, want neither", raw, got.ReleaseYear, got.ReleaseDate)
+		}
+	}
+	if got := (apiAlbum{ID: "1", Title: "Record", ReleaseDate: "2020"}).album(); got.ReleaseYear != 2020 || got.ReleaseDate != "" {
+		t.Fatalf("year-only: year %d date %q", got.ReleaseYear, got.ReleaseDate)
+	}
+}
+
 func TestAlbumReadsTheYearFromAPaddedDate(t *testing.T) {
 	got := apiAlbum{ID: "1", Title: "Record", ReleaseDate: " 2020-03-27T00:00:00"}.album()
 	if got.ReleaseYear != 2020 || got.ReleaseDate != "2020-03-27" {

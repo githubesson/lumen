@@ -869,9 +869,10 @@ func DateInYear(date string, year int) bool {
 	return len(date) >= 4 && date[:4] == fmt.Sprintf("%04d", year)
 }
 
-// releaseDate keeps the calendar date of a TIDAL releaseDate ("2020-03-27",
+// releaseDate keeps the calendar date of a TIDAL date ("2020-03-27",
 // sometimes with a time after it), or "" when it isn't one. Dates before
-// year 1000 are catalog placeholders ("0001-01-01"), not release days.
+// year 1000 are catalog placeholders ("0001-01-01"), not release days. Album
+// pages and track info both read release dates through it.
 func releaseDate(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if len(raw) < 10 {
@@ -885,9 +886,16 @@ func releaseDate(raw string) string {
 }
 
 func (a apiAlbum) album() Album {
+	// The year comes from the validated date when there is one, else from a
+	// year-only value; a placeholder before year 1000 gives neither.
+	date := releaseDate(a.ReleaseDate)
 	year := 0
-	if raw := strings.TrimSpace(a.ReleaseDate); len(raw) >= 4 {
-		year, _ = strconv.Atoi(raw[:4])
+	if raw := strings.TrimSpace(a.ReleaseDate); date != "" {
+		year, _ = strconv.Atoi(date[:4])
+	} else if len(raw) >= 4 {
+		if y, err := strconv.Atoi(raw[:4]); err == nil && y >= 1000 {
+			year = y
+		}
 	}
 	artist, artistID := strings.TrimSpace(a.Artist.Name), string(a.Artist.ID)
 	if artist == "" && len(a.Artists) > 0 {
@@ -904,7 +912,7 @@ func (a apiAlbum) album() Album {
 		Artist:      artist,
 		Artists:     albumArtists(artist, a.Artists),
 		ReleaseYear: year,
-		ReleaseDate: releaseDate(a.ReleaseDate),
+		ReleaseDate: date,
 		Copyright:   strings.TrimSpace(a.Copyright),
 		TrackCount:  a.NumberOfTracks,
 		DurationMS:  max(0, a.Duration) * 1000,
