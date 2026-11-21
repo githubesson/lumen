@@ -54,6 +54,9 @@ pub struct VoiceState {
     pub failed: AtomicBool,
     /// Dropped: the decoder stops.
     pub cancelled: Arc<AtomicBool>,
+    /// True while the decoder is parked waiting for ring-buffer room.
+    pub decoder_waiting: AtomicBool,
+    decoder_thread: std::sync::OnceLock<std::thread::Thread>,
 }
 
 impl VoiceState {
@@ -66,6 +69,21 @@ impl VoiceState {
             ready: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             cancelled: Arc::new(AtomicBool::new(false)),
+            decoder_waiting: AtomicBool::new(false),
+            decoder_thread: std::sync::OnceLock::new(),
+        }
+    }
+    pub fn set_decoder_thread(&self, thread: std::thread::Thread) {
+        let _ = self.decoder_thread.set(thread);
+    }
+    pub fn wake_decoder(&self) {
+        if let Some(t) = self.decoder_thread.get() {
+            t.unpark();
+        }
+    }
+    pub fn wake_decoder_if_waiting(&self) {
+        if self.decoder_waiting.swap(false, Ordering::AcqRel) {
+            self.wake_decoder();
         }
     }
     pub fn position(&self) -> f64 {
@@ -200,12 +218,19 @@ impl Engine {
         self.mixer.lock().unwrap().render(out);
     }
 
+    fn send_mixer(&self, cmd: MixerCmd) {
+        let _ = self.mixer_tx.send(cmd);
+        if self.output.sleeping.swap(false, Ordering::AcqRel) {
+            let _ = self.output_tx.send(OutputCmd::Wake);
+        }
+    }
+
     pub fn set_equalizer(&mut self, settings: equalizer::Settings) {
         let settings = settings.sanitized();
         if self.equalizer != settings {
             self.equalizer = settings;
             // The pre-gain's response sweep runs here, off the audio thread.
-            let _ = self.mixer_tx.send(MixerCmd::Equalizer(equalizer::Tuning::new(settings)));
+            self.send_mixer(MixerCmd::Equalizer(equalizer::Tuning::new(settings)));
         }
     }
 
@@ -240,7 +265,8 @@ struct VoiceRef {
 
 impl Drop for VoiceRef {
     fn drop(&mut self) {
-        self.state.cancelled.store(true, Ordering::Relaxed);
+        self.state.cancelled.store(true, Ordering::Release);
+        self.state.wake_decoder();
     }
 }
 
@@ -289,7 +315,7 @@ impl EngineAdapter {
     }
 
     fn send(&self, cmd: MixerCmd) {
-        let _ = self.engine.mixer_tx.send(cmd);
+        self.engine.send_mixer(cmd);
     }
 
     fn spawn(&mut self, url: &str) -> (VoiceRef, Box<MixVoice>) {
@@ -428,9 +454,10 @@ impl AudioAdapter for EngineAdapter {
         active.state.set_position(seconds);
         // The mixer hears of the seek before the decoder can answer it, or
         // it would drop the answer as stale.
-        let (id, epoch, ctl) = (active.state.id, self.seek_epoch, active.ctl.clone());
+        let (id, epoch, ctl, state) = (active.state.id, self.seek_epoch, active.ctl.clone(), active.state.clone());
         self.send(MixerCmd::Seeking { id, epoch });
         let _ = ctl.send(DecoderCmd::Seek { seconds, epoch });
+        state.wake_decoder();
     }
 
     fn set_volume(&mut self, volume: f64) {

@@ -5,7 +5,7 @@
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -26,11 +26,25 @@ pub enum SocketEvent {
 pub(super) struct SocketHandle {
     pub out: Sender<Out>,
     pub stop: Arc<AtomicBool>,
+    pub poller: Option<Arc<polling::Poller>>,
+}
+
+impl SocketHandle {
+    pub fn send(&self, msg: Out) -> bool {
+        let ok = self.out.send(msg).is_ok();
+        if let Some(p) = &self.poller {
+            let _ = p.notify();
+        }
+        ok
+    }
 }
 
 impl Drop for SocketHandle {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, Ordering::Release);
+        if let Some(p) = &self.poller {
+            let _ = p.notify();
+        }
     }
 }
 
@@ -143,76 +157,150 @@ fn connect(url: &str, cookie: Option<&str>) -> Result<Socket, String> {
             Err(e) => return Err(e.to_string()),
         }
     };
-    socket.get_ref().tcp().set_read_timeout(Some(Duration::from_millis(50))).map_err(|e| e.to_string())?;
     Ok(socket)
 }
 
 const RECONNECT_BASE_MS: f64 = 500.0;
 const RECONNECT_MAX_MS: f64 = 15_000.0;
 
-pub(super) fn run_socket(url: String, cookie: Option<String>, out: Receiver<Out>, events: Sender<SocketEvent>, waker: LateWaker, stop: Arc<AtomicBool>) {
+fn is_would_block(err: &tungstenite::Error) -> bool {
+    matches!(err, tungstenite::Error::Io(e) if e.kind() == io::ErrorKind::WouldBlock)
+}
+
+pub(super) fn run_socket(
+    url: String,
+    cookie: Option<String>,
+    out: Receiver<Out>,
+    events: Sender<SocketEvent>,
+    waker: LateWaker,
+    stop: Arc<AtomicBool>,
+    poller: Option<Arc<polling::Poller>>,
+) {
     let notify = |e: SocketEvent| {
         let _ = events.send(e);
         waker.wake();
     };
     let mut attempt = 0i32;
-    while !stop.load(Ordering::Relaxed) {
+    let mut poll_events = polling::Events::new();
+    while !stop.load(Ordering::Acquire) {
         if let Ok(mut socket) = connect(&url, cookie.as_deref()) {
             attempt = 0;
+            let event_driven = poller.as_ref().is_some_and(|p| {
+                let tcp = socket.get_ref().tcp();
+                tcp.set_read_timeout(None).is_ok()
+                    && tcp.set_nonblocking(true).is_ok()
+                    && unsafe { p.add(tcp, polling::Event::readable(1)) }.is_ok()
+            });
+            if !event_driven {
+                let _ = socket.get_ref().tcp().set_read_timeout(Some(Duration::from_millis(50)));
+            }
             notify(SocketEvent::Open);
+            let mut want_write = false;
             'live: loop {
-                if stop.load(Ordering::Relaxed) {
+                if stop.load(Ordering::Acquire) {
                     let _ = socket.close(None);
                     let _ = socket.flush();
                     break 'live;
                 }
                 loop {
                     match out.try_recv() {
-                        Ok(Out::Send(text)) => {
-                            if socket.send(tungstenite::Message::text(text)).is_err() {
-                                break 'live;
+                        Ok(Out::Send(text)) => match socket.write(tungstenite::Message::text(text)) {
+                            Ok(()) => want_write = true,
+                            Err(ref e) if is_would_block(e) => {
+                                want_write = true;
+                                break;
                             }
-                        }
+                            Err(_) => break 'live,
+                        },
                         Ok(Out::Close) | Err(TryRecvError::Disconnected) => {
                             let _ = socket.close(None);
                             let _ = socket.flush();
+                            if event_driven && let Some(p) = &poller {
+                                let _ = p.delete(socket.get_ref().tcp());
+                            }
                             notify(SocketEvent::Closed);
                             return;
                         }
                         Err(TryRecvError::Empty) => break,
                     }
                 }
-                match socket.read() {
-                    Ok(tungstenite::Message::Text(text)) => notify(SocketEvent::Message(text.to_string())),
-                    Ok(tungstenite::Message::Close(_)) => break 'live,
-                    Ok(_) => {}
-                    Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
-                        // Answer pings and send what's queued.
-                        if socket.flush().is_err() {
-                            break 'live;
-                        }
+                if want_write {
+                    match socket.flush() {
+                        Ok(()) => want_write = false,
+                        Err(ref e) if is_would_block(e) => {}
+                        Err(_) => break 'live,
                     }
-                    Err(_) => break 'live,
                 }
+                loop {
+                    match socket.read() {
+                        Ok(tungstenite::Message::Text(text)) => notify(SocketEvent::Message(text.to_string())),
+                        Ok(tungstenite::Message::Close(_)) => break 'live,
+                        Ok(_) => {
+                            // Answer pings / control frames queued by tungstenite.
+                            match socket.flush() {
+                                Ok(()) => want_write = false,
+                                Err(ref e) if is_would_block(e) => want_write = true,
+                                Err(_) => break 'live,
+                            }
+                        }
+                        Err(ref e) if is_would_block(e) => {
+                            match socket.flush() {
+                                Ok(()) => want_write = false,
+                                Err(ref e) if is_would_block(e) => want_write = true,
+                                Err(_) => break 'live,
+                            }
+                            break;
+                        }
+                        Err(_) => break 'live,
+                    }
+                    if !event_driven {
+                        break;
+                    }
+                }
+                if event_driven && let Some(p) = &poller {
+                    // Re-check outbound queue before blocking so a concurrent send can't be missed.
+                    if stop.load(Ordering::Acquire) {
+                        let _ = socket.close(None);
+                        let _ = socket.flush();
+                        break 'live;
+                    }
+                    let interest = if want_write { polling::Event::all(1) } else { polling::Event::readable(1) };
+                    if p.modify(socket.get_ref().tcp(), interest).is_err() {
+                        break 'live;
+                    }
+                    poll_events.clear();
+                    if let Err(e) = p.wait(&mut poll_events, None)
+                        && e.kind() != io::ErrorKind::Interrupted
+                    {
+                        break 'live;
+                    }
+                }
+            }
+            if event_driven && let Some(p) = &poller {
+                let _ = p.delete(socket.get_ref().tcp());
             }
             notify(SocketEvent::Closed);
         }
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Acquire) {
             return;
         }
         // Back off, with jitter; what's sent meanwhile is dropped (REST covers it).
         let delay = RECONNECT_MAX_MS.min(RECONNECT_BASE_MS * 2f64.powi(attempt.min(10))) * (0.75 + fastrand::f64() * 0.5);
         attempt += 1;
         let until = Instant::now() + Duration::from_millis(delay as u64);
-        while Instant::now() < until {
-            if stop.load(Ordering::Relaxed) {
+        loop {
+            if stop.load(Ordering::Acquire) {
                 return;
             }
-            match out.try_recv() {
-                Ok(Out::Close) | Err(TryRecvError::Disconnected) => return,
-                _ => {}
+            let remaining = until.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            match out.recv_timeout(remaining) {
+                Ok(Out::Close) | Err(RecvTimeoutError::Disconnected) => return,
+                Ok(Out::Send(_)) => {}
+                Err(RecvTimeoutError::Timeout) => break,
+            }
         }
     }
 }

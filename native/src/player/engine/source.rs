@@ -83,7 +83,11 @@ impl Http {
     pub fn get_bytes(&self, url: &str, limit: u64) -> Result<(Vec<u8>, String), HttpError> {
         let mut response = self.get(url, None)?;
         let ty = content_type(&response);
-        let mut body = Vec::new();
+        let cap = header(&response, "content-length")
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(|n| n.min(limit).min(64 << 20) as usize)
+            .unwrap_or(0);
+        let mut body = Vec::with_capacity(cap);
         response
             .body_mut()
             .as_reader()

@@ -175,7 +175,13 @@ pub fn resolve(base: &str, uri: &str) -> String {
 
 /// AES-128-CBC with the HLS default IV (the media sequence number) when
 /// the key gives none, and PKCS7 padding removed when it's valid.
+#[cfg(test)]
 pub fn decrypt(data: &[u8], key: &[u8; 16], iv: Option<[u8; 16]>, sequence: u64) -> Result<Vec<u8>, String> {
+    decrypt_in_place(data.to_vec(), key, iv, sequence)
+}
+
+/// In-place AES-128-CBC decryption on an owned segment buffer (zero extra copy).
+pub fn decrypt_in_place(mut data: Vec<u8>, key: &[u8; 16], iv: Option<[u8; 16]>, sequence: u64) -> Result<Vec<u8>, String> {
     use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::NoPadding};
     if !data.len().is_multiple_of(16) {
         return Err(format!("encrypted segment of {} bytes isn't whole blocks", data.len()));
@@ -185,16 +191,18 @@ pub fn decrypt(data: &[u8], key: &[u8; 16], iv: Option<[u8; 16]>, sequence: u64)
         iv[8..].copy_from_slice(&sequence.to_be_bytes());
         iv
     });
-    let mut out = cbc::Decryptor::<aes::Aes128>::new(key.into(), &iv.into())
-        .decrypt_padded_vec_mut::<NoPadding>(data)
-        .map_err(|e| format!("AES: {e}"))?;
-    if let Some(&pad) = out.last() {
+    let len = cbc::Decryptor::<aes::Aes128>::new(key.into(), &iv.into())
+        .decrypt_padded_mut::<NoPadding>(&mut data)
+        .map_err(|e| format!("AES: {e}"))?
+        .len();
+    data.truncate(len);
+    if let Some(&pad) = data.last() {
         let pad = pad as usize;
-        if (1..=16).contains(&pad) && pad <= out.len() && out[out.len() - pad..].iter().all(|&b| b as usize == pad) {
-            out.truncate(out.len() - pad);
+        if (1..=16).contains(&pad) && pad <= data.len() && data[data.len() - pad..].iter().all(|&b| b as usize == pad) {
+            data.truncate(data.len() - pad);
         }
     }
-    Ok(out)
+    Ok(data)
 }
 
 /// A TIDAL stream: its media playlist, its URL, and the keys fetched so far.
@@ -277,7 +285,7 @@ impl HlsStream {
             Some(k) => {
                 let iv = self.playlist.keys[k].iv;
                 let key = self.key(k).map_err(|e| format!("HLS key: {e}"))?;
-                decrypt(&body, &key, iv, sequence).map_err(|e| format!("{what}: {e}"))
+                decrypt_in_place(body, &key, iv, sequence).map_err(|e| format!("{what}: {e}"))
             }
         }?;
         if index.is_none() {

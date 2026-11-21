@@ -2,6 +2,8 @@
 //! Controls cross the existing mixer command queue as a [`Tuning`], whose
 //! pre-gain is worked out off the audio thread. Render allocates nothing;
 //! coefficients and gain approach their targets over 20 ms, once per frame.
+use std::sync::{Mutex, OnceLock};
+
 use serde::{Deserialize, Serialize};
 
 pub const FREQUENCIES: [f64; 10] = [
@@ -69,23 +71,104 @@ impl Settings {
         if s.bands.iter().all(|db| *db <= 0.0) {
             return 0.0;
         }
-        HEADROOM_RATES.iter().map(|rate| s.peak_db(*rate)).fold(0.0, f64::max) as f32
+        type HeadroomCache = OnceLock<Mutex<Option<([u32; 10], f32)>>>;
+        let key = s.bands.map(f32::to_bits);
+        static CACHE: HeadroomCache = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock()
+            && let Some((cached_key, cached_db)) = *guard
+            && cached_key == key
+        {
+            return cached_db;
+        }
+        let grids = headroom_grids();
+        let mut max_ratio = 1.0f64;
+        for (idx, &rate) in HEADROOM_RATES.iter().enumerate() {
+            max_ratio = max_ratio.max(s.peak_ratio(rate, &grids[idx]));
+        }
+        let db = if max_ratio > 1.0 { (10.0 * max_ratio.log10()) as f32 } else { 0.0 };
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((key, db));
+        }
+        db
     }
 
     /// The cascade's loudest gain at `rate`, in dB, over the grid above.
+    #[cfg(test)]
     fn peak_db(&self, rate: u32) -> f64 {
-        const POINTS: usize = 512;
-        let cascade: [Coeff; 10] = std::array::from_fn(|i| peak(rate, FREQUENCIES[i], self.bands[i]));
-        (0..POINTS)
-            .map(|i| 20.0 * 1000.0f64.powf(i as f64 / (POINTS - 1) as f64))
-            .chain(FREQUENCIES)
-            .map(|hz| magnitude_db(&cascade, rate, hz))
-            .fold(0.0, f64::max)
+        let ratio = if let Some(idx) = HEADROOM_RATES.iter().position(|&r| r == rate) {
+            self.peak_ratio(rate, &headroom_grids()[idx])
+        } else {
+            let grid = build_grid(rate);
+            self.peak_ratio(rate, &grid)
+        };
+        if ratio > 1.0 { 10.0 * ratio.log10() } else { 0.0 }
+    }
+
+    /// Maximum squared magnitude ratio |H(e^jw)|^2 across the precomputed grid.
+    fn peak_ratio(&self, rate: u32, grid: &[(f64, f64); HEADROOM_POINTS]) -> f64 {
+        // Precompute the frequency-invariant quadratic terms per active band.
+        let mut active = [(0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64); 10];
+        let mut n_active = 0usize;
+        for (i, &hz) in FREQUENCIES.iter().enumerate() {
+            let c = peak(rate, hz, self.bands[i]);
+            if c.0 == IDENTITY.0 {
+                continue;
+            }
+            let [b0, b1, b2, a1, a2] = c.0;
+            active[n_active] = (
+                b0 * b0 + b1 * b1 + b2 * b2,
+                2.0 * (b0 * b1 + b1 * b2),
+                2.0 * b0 * b2,
+                1.0 + a1 * a1 + a2 * a2,
+                2.0 * (a1 + a1 * a2),
+                2.0 * a2,
+            );
+            n_active += 1;
+        }
+        if n_active == 0 {
+            return 1.0;
+        }
+        let bands = &active[..n_active];
+        let mut max_ratio = 1.0f64;
+        for &(c1, c2) in grid {
+            let mut ratio = 1.0f64;
+            for &(n0, n1, n2, d0, d1, d2) in bands {
+                let num = n0 + n1 * c1 + n2 * c2;
+                let den = d0 + d1 * c1 + d2 * c2;
+                ratio *= num / den;
+            }
+            if ratio > max_ratio {
+                max_ratio = ratio;
+            }
+        }
+        max_ratio
     }
 }
 
 /// The output rates the headroom covers: the equalizer runs at the device's.
 const HEADROOM_RATES: [u32; 4] = [44_100, 48_000, 96_000, 192_000];
+const LOG_POINTS: usize = 512;
+const HEADROOM_POINTS: usize = LOG_POINTS + 10;
+
+fn build_grid(rate: u32) -> [(f64, f64); HEADROOM_POINTS] {
+    let mut out = [(0.0f64, 0.0f64); HEADROOM_POINTS];
+    for (i, slot) in out[..LOG_POINTS].iter_mut().enumerate() {
+        let hz = 20.0 * 1000.0f64.powf(i as f64 / (LOG_POINTS - 1) as f64);
+        let w = std::f64::consts::TAU * hz / rate as f64;
+        *slot = (w.cos(), (2.0 * w).cos());
+    }
+    for (i, &hz) in FREQUENCIES.iter().enumerate() {
+        let w = std::f64::consts::TAU * hz / rate as f64;
+        out[LOG_POINTS + i] = (w.cos(), (2.0 * w).cos());
+    }
+    out
+}
+
+fn headroom_grids() -> &'static [[(f64, f64); HEADROOM_POINTS]; 4] {
+    static GRIDS: OnceLock<[[(f64, f64); HEADROOM_POINTS]; 4]> = OnceLock::new();
+    GRIDS.get_or_init(|| std::array::from_fn(|i| build_grid(HEADROOM_RATES[i])))
+}
 
 /// Settings and the pre-gain they need, worked out on the control side
 /// (`Engine::set_equalizer`) so the audio thread only applies them.
@@ -130,6 +213,7 @@ fn peak(rate: u32, hz: f64, db: f32) -> Coeff {
 }
 
 /// The cascade's gain at `hz`, in dB: each biquad's |H(e^jw)|.
+#[cfg(test)]
 fn magnitude_db(cascade: &[Coeff; 10], rate: u32, hz: f64) -> f64 {
     let w = std::f64::consts::TAU * hz / rate as f64;
     let (c1, c2) = (w.cos(), (2.0 * w).cos());
@@ -170,6 +254,9 @@ pub struct Equalizer {
     tuning: Tuning,
     coeff: [Coeff; 10],
     target: [Coeff; 10],
+    /// Indices of bands whose coefficients are non-identity (or ramping).
+    active: [usize; 10],
+    active_len: usize,
     // Allocated on construction/output reconfiguration, never in process().
     history: Vec<[History; 10]>,
     gain: f64,
@@ -186,12 +273,27 @@ impl Equalizer {
             tuning: Tuning::default(),
             coeff: [IDENTITY; 10],
             target: [IDENTITY; 10],
+            active: [0; 10],
+            active_len: 0,
             history: vec![[History::default(); 10]; channels.max(1)],
             gain: 1.0,
             target_gain: 1.0,
             remaining: 0,
             bypass: true,
         }
+    }
+
+    fn refresh_active(&mut self, include_target: bool) {
+        let mut len = 0;
+        for i in 0..10 {
+            let active = self.coeff[i].0 != IDENTITY.0
+                || (include_target && self.target[i].0 != IDENTITY.0);
+            if active {
+                self.active[len] = i;
+                len += 1;
+            }
+        }
+        self.active_len = len;
     }
 
     pub fn configure(&mut self, tuning: Tuning) {
@@ -206,6 +308,7 @@ impl Equalizer {
         });
         self.target_gain = 10.0f64.powf(tuning.gain_db as f64 / 20.0);
         self.remaining = (self.rate / 50).max(1);
+        self.refresh_active(true);
         self.bypass = false;
     }
 
@@ -223,31 +326,79 @@ impl Equalizer {
         if self.bypass {
             return;
         }
-        for frame in samples.chunks_exact_mut(self.channels) {
-            if self.remaining > 0 {
+        let ch = self.channels;
+        let mut rest = samples;
+        if self.remaining > 0 {
+            let ramp_frames = (rest.len() / ch).min(self.remaining as usize);
+            let (ramp_slice, tail) = rest.split_at_mut(ramp_frames * ch);
+            for frame in ramp_slice.chunks_exact_mut(ch) {
                 let n = self.remaining as f64;
-                for (current, target) in self.coeff.iter_mut().zip(self.target) {
-                    for (c, t) in current.0.iter_mut().zip(target.0) {
+                for &b in &self.active[..self.active_len] {
+                    let target = self.target[b].0;
+                    for (c, t) in self.coeff[b].0.iter_mut().zip(target) {
                         *c += (t - *c) / n;
                     }
                 }
                 self.gain += (self.target_gain - self.gain) / n;
                 self.remaining -= 1;
+                let active = &self.active[..self.active_len];
+                for (sample, history) in frame.iter_mut().zip(&mut self.history) {
+                    let mut x = *sample as f64;
+                    if active.is_empty() {
+                        if !x.is_finite() {
+                            x = 0.0;
+                        }
+                    } else {
+                        for &b in active {
+                            x = history[b].sample(x, self.coeff[b]);
+                        }
+                    }
+                    *sample = (x * self.gain) as f32;
+                }
             }
+            if self.remaining == 0 {
+                // Snap exact target coefficients so newly-flat bands drop out of `active`.
+                self.coeff = self.target;
+                self.gain = self.target_gain;
+                self.refresh_active(false);
+                // Clear history of bands that returned to identity so future ramps start clean.
+                for i in 0..10 {
+                    if self.coeff[i].0 == IDENTITY.0 {
+                        for h in &mut self.history {
+                            h[i] = History::default();
+                        }
+                    }
+                }
+                if self.target_gain == 1.0 && self.active_len == 0 {
+                    self.bypass = true;
+                    self.reset_history();
+                    return;
+                }
+            }
+            rest = tail;
+        }
+        if rest.is_empty() {
+            return;
+        }
+        let active = &self.active[..self.active_len];
+        let gain = self.gain;
+        if active.is_empty() {
+            if gain != 1.0 {
+                for sample in rest.iter_mut() {
+                    let x = *sample as f64;
+                    *sample = if x.is_finite() { (x * gain) as f32 } else { 0.0 };
+                }
+            }
+            return;
+        }
+        for frame in rest.chunks_exact_mut(ch) {
             for (sample, history) in frame.iter_mut().zip(&mut self.history) {
                 let mut x = *sample as f64;
-                for (state, c) in history.iter_mut().zip(self.coeff) {
-                    x = state.sample(x, c);
+                for &b in active {
+                    x = history[b].sample(x, self.coeff[b]);
                 }
-                *sample = (x * self.gain) as f32;
+                *sample = (x * gain) as f32;
             }
-        }
-        if self.remaining == 0
-            && self.target_gain == 1.0
-            && self.target.iter().all(|c| c.0 == IDENTITY.0)
-        {
-            self.bypass = true;
-            self.reset_history();
         }
     }
 }
@@ -462,5 +613,98 @@ mod tests {
                 .unwrap(),
             s.sanitized()
         );
+    }
+
+    #[test]
+    fn fast_headroom_matches_reference_sweep() {
+        fn reference_headroom_db(s: Settings) -> f32 {
+            let s = s.sanitized();
+            if !s.enabled || s.bands.iter().all(|&g| g <= 0.0) {
+                return 0.0;
+            }
+            let mut max_db = 0.0f64;
+            for rate in HEADROOM_RATES {
+                let filters: [Coeff; 10] = std::array::from_fn(|i| peak(rate, FREQUENCIES[i], s.bands[i]));
+                let log_freqs = (0..LOG_POINTS).map(|i| 20.0 * 1000.0f64.powf(i as f64 / (LOG_POINTS - 1) as f64));
+                for hz in log_freqs.chain(FREQUENCIES) {
+                    let db = magnitude_db(&filters, rate, hz);
+                    if db > max_db {
+                        max_db = db;
+                    }
+                }
+            }
+            max_db as f32
+        }
+        let cases: &[[f32; 10]] = &[
+            [0.0; 10],
+            [6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 12.0],
+            [-6.0, -3.0, 0.0, -4.0, -12.0, 0.0, 0.0, -1.0, -2.0, -6.0],
+            [12.0; 10],
+            [6.0, 4.5, 2.0, -1.5, -3.0, 1.0, 3.5, 5.0, 4.0, 2.5],
+            [-12.0, 12.0, -12.0, 12.0, -12.0, 12.0, -12.0, 12.0, -12.0, 12.0],
+            [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0],
+            [8.0, 8.0, 0.0, 0.0, -6.0, -6.0, 0.0, 0.0, 9.0, 9.0],
+        ];
+        for &bands in cases {
+            let s = Settings { enabled: true, bands, preamp_db: 0.0 };
+            let got = s.headroom_db();
+            let expected = reference_headroom_db(s);
+            assert!(
+                (got - expected).abs() < 1e-4,
+                "headroom mismatch for {bands:?}: got {got}, expected {expected}"
+            );
+            // Second call hits the cache and must return the exact same bits.
+            assert_eq!(s.headroom_db().to_bits(), got.to_bits());
+        }
+    }
+
+    #[test]
+    fn active_band_skipping_matches_full_chain() {
+        let mut s = Settings { enabled: true, bands: [0.0; 10], preamp_db: -2.0 };
+        s.bands[1] = 5.0;
+        s.bands[6] = -4.0;
+        let tuning = Tuning::new(s);
+        let mut eq = Equalizer::new(48_000, 2);
+        eq.configure(tuning);
+        let mut input: Vec<f32> = (0..4000)
+            .flat_map(|i| {
+                let l = (0.2 * (std::f64::consts::TAU * 62.0 * i as f64 / 48_000.0).sin()
+                    + 0.15 * (std::f64::consts::TAU * 2000.0 * i as f64 / 48_000.0).sin()) as f32;
+                let r = (0.15 * (std::f64::consts::TAU * 500.0 * i as f64 / 48_000.0).cos()) as f32;
+                [l, r]
+            })
+            .collect();
+        let mut got = input.clone();
+        eq.process(&mut got);
+
+        // Naive reference: run all 10 biquads on every sample with the same ramp.
+        let mut coeff = [IDENTITY; 10];
+        let target: [Coeff; 10] = std::array::from_fn(|i| peak(48_000, FREQUENCIES[i], s.bands[i]));
+        let mut gain = 1.0f64;
+        let target_gain = 10.0f64.powf(tuning.gain_db as f64 / 20.0);
+        let mut rem = 48_000 / 50;
+        let mut hist = [[History::default(); 10]; 2];
+        for frame in input.as_chunks_mut::<2>().0 {
+            if rem > 0 {
+                let n = rem as f64;
+                for i in 0..10 {
+                    for (c, t) in coeff[i].0.iter_mut().zip(target[i].0) {
+                        *c += (t - *c) / n;
+                    }
+                }
+                gain += (target_gain - gain) / n;
+                rem -= 1;
+            }
+            for (sample, h) in frame.iter_mut().zip(&mut hist) {
+                let mut x = *sample as f64;
+                for i in 0..10 {
+                    x = h[i].sample(x, coeff[i]);
+                }
+                *sample = (x * gain) as f32;
+            }
+        }
+        let max_err = got.iter().zip(&input).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        assert!(max_err < 1e-6, "active-band skipping diverged by {max_err}");
     }
 }
