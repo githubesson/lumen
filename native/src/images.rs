@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 use rune::{Image, ImageCache};
@@ -228,10 +228,14 @@ impl<J: Task> Stack<J> {
     }
 }
 
+type InFlight = Arc<(Mutex<Option<Option<Arc<[u8]>>>>, Condvar)>;
+
 struct Shared {
     /// Keyed by size and path, not server: [`Images::set_client`] clears it.
     decoded: Mutex<Lru<Slot>>,
     encoded: Mutex<Lru<Arc<[u8]>>>,
+    /// Coalesces concurrent fetches for the same encoded cover URL across workers.
+    in_flight: Mutex<HashMap<String, InFlight>>,
     /// A cover finished since the app last looked ([`Images::take_arrived`]).
     arrived: AtomicBool,
     /// Moves with each server ([`Images::set_client`]): a job for an
@@ -240,8 +244,57 @@ struct Shared {
     generation: AtomicU64,
 }
 
+impl Shared {
+    /// Singleflight lookup/fetch of encoded bytes for `mem_key`: if another
+    /// worker is already reading disk or hitting the network for the same
+    /// URL, wait for its result instead of issuing a duplicate request.
+    fn fetch_encoded(self: &Arc<Self>, mem_key: &str, load: impl FnOnce() -> Option<Arc<[u8]>>) -> Option<Arc<[u8]>> {
+        if let Some(b) = self.encoded.lock().unwrap().get(mem_key) {
+            return Some(b);
+        }
+        let slot = {
+            let mut inflight = self.in_flight.lock().unwrap();
+            if let Some(existing) = inflight.get(mem_key).cloned() {
+                drop(inflight);
+                let mut guard = existing.0.lock().unwrap();
+                while guard.is_none() {
+                    guard = existing.1.wait(guard).unwrap();
+                }
+                return guard.clone().flatten();
+            }
+            let fresh = Arc::new((Mutex::new(None), Condvar::new()));
+            inflight.insert(mem_key.to_string(), fresh.clone());
+            fresh
+        };
+        struct Guard {
+            shared: Arc<Shared>,
+            key: String,
+            slot: InFlight,
+            result: Option<Option<Arc<[u8]>>>,
+        }
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.shared.in_flight.lock().unwrap().remove(&self.key);
+                let mut done = self.slot.0.lock().unwrap();
+                *done = Some(self.result.take().unwrap_or(None));
+                self.slot.1.notify_all();
+            }
+        }
+        let mut guard = Guard { shared: self.clone(), key: mem_key.to_string(), slot, result: None };
+        // Re-check in case a previous leader populated `encoded` just before we inserted.
+        if let Some(b) = self.encoded.lock().unwrap().get(mem_key) {
+            guard.result = Some(Some(b.clone()));
+            return Some(b);
+        }
+        let res = load();
+        guard.result = Some(res.clone());
+        res
+    }
+}
+
 pub struct Images {
-    cache: Arc<ImageCache>,
+    /// Lazily initialized only if an SVG or fallback format needs Rune's own decoder.
+    cache: Arc<OnceLock<ImageCache>>,
     shared: Arc<Shared>,
     jobs: Arc<Stack>,
     client: Arc<Mutex<Option<Client>>>,
@@ -260,10 +313,11 @@ impl Images {
             std::thread::Builder::new().name("lumen-img-prune".into()).spawn(move || prune(&dir)).ok();
         }
         Images {
-            cache: Arc::new(ImageCache::new(waker.as_waker())),
+            cache: Arc::new(OnceLock::new()),
             shared: Arc::new(Shared {
                 decoded: Mutex::new(Lru::new(DECODED_BUDGET)),
                 encoded: Mutex::new(Lru::new(ENCODED_BUDGET)),
+                in_flight: Mutex::new(HashMap::new()),
                 arrived: AtomicBool::new(false),
                 generation: AtomicU64::new(0),
             }),
@@ -400,7 +454,7 @@ struct Job {
     key: String,
     fit: Fit,
     scale: f32,
-    cache: Arc<ImageCache>,
+    cache: Arc<OnceLock<ImageCache>>,
     shared: Arc<Shared>,
     waker: LateWaker,
     disk: Option<PathBuf>,
@@ -448,31 +502,35 @@ impl Job {
 
     /// The cover's encoded bytes: memory, then disk while fresh, then the
     /// server (a stale disk copy stands in if the server can't answer).
+    /// Concurrent requests for the same URL coalesce on [`Shared::in_flight`].
     fn encoded(&self) -> Option<Arc<[u8]>> {
         let mem_key = format!("{}|{}", self.client.base(), self.url);
-        if let Some(b) = self.shared.encoded.lock().unwrap().get(&mem_key) {
-            return Some(b);
-        }
-        let file = self.disk.as_ref().map(|d| d.join(disk_name(&mem_key)));
-        let stale = file.as_ref().and_then(|f| read_disk(f));
-        if let Some((bytes, expires)) = &stale
-            && *expires > now_secs()
-        {
-            self.shared.encoded.lock().unwrap().put(mem_key, bytes.clone(), bytes.len());
-            return Some(bytes.clone());
-        }
-        match self.client.bytes_reply(&self.url) {
-            Ok(reply) if !reply.body.is_empty() => {
-                let max_age = max_age(reply.cache_control.as_deref());
-                let b: Arc<[u8]> = Arc::from(reply.body);
-                self.shared.encoded.lock().unwrap().put(mem_key, b.clone(), b.len());
-                if let (Some(f), Some(age)) = (&file, max_age) {
-                    write_disk(f, &b, now_secs() + age);
-                }
-                Some(b)
+        self.shared.fetch_encoded(&mem_key, || {
+            let file = self.disk.as_ref().map(|d| d.join(disk_name(&mem_key)));
+            let stale = file.as_ref().and_then(read_disk);
+            if let Some((bytes, expires)) = &stale
+                && *expires > now_secs()
+            {
+                self.shared.encoded.lock().unwrap().put(mem_key.clone(), bytes.clone(), bytes.len());
+                return Some(bytes.clone());
             }
-            _ => stale.map(|(bytes, _)| bytes),
-        }
+            match self.client.bytes_reply(&self.url) {
+                Ok(reply) if !reply.body.is_empty() => {
+                    let max_age = max_age(reply.cache_control.as_deref());
+                    let b: Arc<[u8]> = Arc::from(reply.body);
+                    self.shared.encoded.lock().unwrap().put(mem_key.clone(), b.clone(), b.len());
+                    if let (Some(f), Some(age)) = (&file, max_age) {
+                        write_disk(f, &b, now_secs() + age);
+                    }
+                    Some(b)
+                }
+                _ => stale.map(|(bytes, _)| bytes),
+            }
+        })
+    }
+
+    fn rune_cache(&self) -> &ImageCache {
+        self.cache.get_or_init(|| ImageCache::new(self.waker.as_waker()))
     }
 
     fn decode(&self, bytes: &[u8]) -> (Slot, usize) {
@@ -486,21 +544,23 @@ impl Job {
             };
             let px = (pt * self.scale) as usize;
             // Rune rasterizes it, with mips: a third more than its pixels.
-            return (Self::ready(self.cache.svg(bytes.to_vec(), pt, self.scale)), px * px * 16 / 3);
+            return (Self::ready(self.rune_cache().svg(bytes.to_vec(), pt, self.scale)), px * px * 16 / 3);
         }
         let Ok(img) = image::load_from_memory(bytes) else {
             // A format the decoder here lacks: hand it to Rune's.
-            return (Self::ready(self.cache.load(bytes.to_vec())), 256 * 256 * 16 / 3);
+            return (Self::ready(self.rune_cache().load(bytes.to_vec())), 256 * 256 * 16 / 3);
         };
-        // A cover that's RGBA already (most PNGs) isn't copied.
-        let (out, w, h) = fit_pixels(img.into_rgba8(), self.fit);
+        if img.width() == 0 || img.height() == 0 {
+            return (Slot::Failed, 64);
+        }
+        let (out, w, h) = fit_dynamic(img, self.fit);
         // Decoded at the device pixels it's drawn at, so it draws 1:1 and
         // needs no mips: the pixels as they are (`Pixels::set`), one buffer.
         // `ImageCache::rgba` premultiplied a copy and built a mip chain, a
         // third again as much, for every cover held.
         let n = (w * h * 4) as usize;
         let pixels = rune::Pixels::new();
-        pixels.set(w, h, out.into_raw());
+        pixels.set(w, h, out);
         (Slot::Ready(Picture(pixels)), n)
     }
 
@@ -509,6 +569,84 @@ impl Job {
         match image.wait() {
             Ok(_) => Slot::Ready(Picture(image.pixels().clone())),
             Err(_) => Slot::Failed,
+        }
+    }
+}
+
+fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity((rgb.len() / 3) * 4);
+    for px in rgb.as_chunks::<3>().0 {
+        out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+    }
+    out
+}
+
+fn cover_crop(iw: u32, ih: u32, w: u32, h: u32) -> (u32, u32, u32, u32) {
+    let k = (w as f32 / iw as f32).max(h as f32 / ih as f32);
+    let (cw, ch) = (((w as f32 / k).round() as u32).clamp(1, iw), ((h as f32 / k).round() as u32).clamp(1, ih));
+    let (x, y) = ((iw - cw) / 2, (ih - ch) / 2);
+    (x, y, cw, ch)
+}
+
+fn natural_size(iw: u32, ih: u32) -> (u32, u32) {
+    if iw.max(ih) <= UNSIZED_MAX {
+        return (iw, ih);
+    }
+    let k = UNSIZED_MAX as f32 / iw.max(ih) as f32;
+    (((iw as f32 * k).round() as u32).max(1), ((ih as f32 * k).round() as u32).max(1))
+}
+
+/// Resize/crop a decoded image in its native RGB8 or RGBA8 layout with
+/// `image::imageops::resize` (Lanczos3), expanding RGB8 → RGBA8 only on the
+/// final target pixels (bit-identical to expanding first, with less memory
+/// and work for opaque JPEG/PNG covers).
+fn fit_dynamic(img: image::DynamicImage, fit: Fit) -> (Vec<u8>, u32, u32) {
+    match img {
+        image::DynamicImage::ImageRgb8(rgb) => fit_rgb(rgb, fit),
+        image::DynamicImage::ImageRgba8(rgba) => {
+            let (out, w, h) = fit_pixels(rgba, fit);
+            (out.into_raw(), w, h)
+        }
+        other => {
+            let (out, w, h) = fit_pixels(other.into_rgba8(), fit);
+            (out.into_raw(), w, h)
+        }
+    }
+}
+
+fn fit_rgb(rgb: image::RgbImage, fit: Fit) -> (Vec<u8>, u32, u32) {
+    let (iw, ih) = rgb.dimensions();
+    match fit {
+        Fit::Cover(w, h, _) => {
+            let (x, y, cw, ch) = cover_crop(iw, ih, w, h);
+            let view = image::imageops::crop_imm(&rgb, x, y, cw, ch);
+            let small = if (cw, ch) == (w, h) {
+                view.to_image()
+            } else {
+                image::imageops::resize(&*view, w, h, image::imageops::FilterType::Lanczos3)
+            };
+            (rgb_to_rgba(small.as_raw()), w, h)
+        }
+        Fit::Natural => {
+            let (nw, nh) = natural_size(iw, ih);
+            let out = if (nw, nh) == (iw, ih) {
+                rgb_to_rgba(rgb.as_raw())
+            } else {
+                let small = image::imageops::resize(&rgb, nw, nh, image::imageops::FilterType::Lanczos3);
+                rgb_to_rgba(small.as_raw())
+            };
+            (out, nw, nh)
+        }
+        Fit::Corner(cw, ch) => {
+            let (nw, nh) = natural_size(iw, ih);
+            let (w, h) = (nw.min(cw), nh.min(ch));
+            let cropped = if (nw, nh) == (iw, ih) {
+                image::imageops::crop_imm(&rgb, 0, 0, w, h).to_image()
+            } else {
+                let nat = image::imageops::resize(&rgb, nw, nh, image::imageops::FilterType::Lanczos3);
+                image::imageops::crop_imm(&nat, 0, 0, w, h).to_image()
+            };
+            (rgb_to_rgba(cropped.as_raw()), w, h)
         }
     }
 }
@@ -529,11 +667,10 @@ fn fit_pixels(rgba: image::RgbaImage, fit: Fit) -> (image::RgbaImage, u32, u32) 
 /// The natural size, scaled down to at most [`UNSIZED_MAX`] px a side.
 fn natural(rgba: image::RgbaImage) -> (image::RgbaImage, u32, u32) {
     let (iw, ih) = rgba.dimensions();
-    if iw.max(ih) <= UNSIZED_MAX {
+    let (w, h) = natural_size(iw, ih);
+    if (w, h) == (iw, ih) {
         return (rgba, iw, ih);
     }
-    let k = UNSIZED_MAX as f32 / iw.max(ih) as f32;
-    let (w, h) = (((iw as f32 * k).round() as u32).max(1), ((ih as f32 * k).round() as u32).max(1));
     (image::imageops::resize(&rgba, w, h, image::imageops::FilterType::Lanczos3), w, h)
 }
 
@@ -541,9 +678,7 @@ fn natural(rgba: image::RgbaImage) -> (image::RgbaImage, u32, u32) {
 /// overflow, with a Lanczos filter.
 fn cover_fill(src: &image::RgbaImage, w: u32, h: u32) -> image::RgbaImage {
     let (iw, ih) = src.dimensions();
-    let k = (w as f32 / iw as f32).max(h as f32 / ih as f32);
-    let (cw, ch) = (((w as f32 / k).round() as u32).clamp(1, iw), ((h as f32 / k).round() as u32).clamp(1, ih));
-    let (x, y) = ((iw - cw) / 2, (ih - ch) / 2);
+    let (x, y, cw, ch) = cover_crop(iw, ih, w, h);
     let view = image::imageops::crop_imm(src, x, y, cw, ch);
     if (cw, ch) == (w, h) {
         return view.to_image();
@@ -708,6 +843,58 @@ mod tests {
         let copied = image::imageops::crop_imm(&src, 50, 0, 200, 200).to_image();
         let expected = image::imageops::resize(&copied, 64, 64, image::imageops::FilterType::Lanczos3);
         assert!(cover_fill(&src, 64, 64) == expected, "the same pixels as from a copy");
+    }
+
+    #[test]
+    fn rgb_and_rgba_resize_produce_identical_pixels() {
+        let rgb = image::RgbImage::from_fn(300, 200, |x, y| image::Rgb([(x * 7 % 256) as u8, (y * 13 % 256) as u8, ((x + y) % 256) as u8]));
+        let rgba = image::DynamicImage::ImageRgb8(rgb.clone()).into_rgba8();
+        for fit in [Fit::Cover(64, 64, 64.0), Fit::Cover(200, 200, 200.0), Fit::Natural, Fit::Corner(32, 32)] {
+            let a = fit_dynamic(image::DynamicImage::ImageRgb8(rgb.clone()), fit);
+            let b = fit_dynamic(image::DynamicImage::ImageRgba8(rgba.clone()), fit);
+            assert_eq!(a, b, "RGB8 and RGBA8 paths diverged for {fit:?}");
+        }
+        let big_rgb = image::RgbImage::from_fn(800, 600, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 42]));
+        let big_rgba = image::DynamicImage::ImageRgb8(big_rgb.clone()).into_rgba8();
+        for fit in [Fit::Natural, Fit::Corner(32, 32), Fit::Cover(96, 96, 96.0)] {
+            let a = fit_dynamic(image::DynamicImage::ImageRgb8(big_rgb.clone()), fit);
+            let b = fit_dynamic(image::DynamicImage::ImageRgba8(big_rgba.clone()), fit);
+            assert_eq!(a, b, "large RGB8 and RGBA8 paths diverged for {fit:?}");
+        }
+    }
+
+    #[test]
+    fn singleflight_coalesces_concurrent_fetches() {
+        let shared = Arc::new(Shared {
+            decoded: Mutex::new(Lru::new(DECODED_BUDGET)),
+            encoded: Mutex::new(Lru::new(ENCODED_BUDGET)),
+            in_flight: Mutex::new(HashMap::new()),
+            arrived: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+        });
+        let calls = Arc::new(AtomicU32::new(0));
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let s = shared.clone();
+            let c = calls.clone();
+            let b = barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                b.wait();
+                s.fetch_encoded("http://x|/cover/1", || {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    let data: Arc<[u8]> = Arc::from(b"cover-bytes".as_slice());
+                    s.encoded.lock().unwrap().put("http://x|/cover/1".into(), data.clone(), data.len());
+                    Some(data)
+                })
+            }));
+        }
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "concurrent workers should coalesce into one fetch");
+        for r in results {
+            assert_eq!(r.as_deref(), Some(b"cover-bytes".as_slice()));
+        }
     }
 
     #[test]

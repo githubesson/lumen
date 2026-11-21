@@ -37,6 +37,7 @@ fn main() {
     }
     rune::prewarm_gpu();
     let (w, h) = desktop::window::NORMAL_MIN_SIZE;
+    let config = config::Config::load();
     // `electron/windows.ts`: frameless and transparent, its corners drawn by
     // the app; the window comes on screen with its first frame (Rune cloaks
     // it until then on Windows), so nothing flashes white.
@@ -44,9 +45,10 @@ fn main() {
         transparent: true,
         borderless: true,
         min_size: Some((w as f32, h as f32)),
-        always_on_top: !headless && config::Config::load().always_on_top,
+        always_on_top: !headless && config.always_on_top,
         ..Default::default()
     };
+    app::seed_config(config);
     // Text keeps Rune's default smoothing: DirectWrite on Windows, rasterised
     // as Chromium's Skia does there, so it matches the Electron client; off on
     // Linux, which the reference shots are taken with. `LUMEN_FONT_SMOOTHING`
