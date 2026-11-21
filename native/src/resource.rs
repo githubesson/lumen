@@ -32,7 +32,8 @@ pub struct Res<T> {
     /// began.
     updates: u64,
     updates_at: u64,
-    /// Globally unique revision bumped whenever `data` is stored or mutated.
+    /// Monotonic revision (0 before the first write) bumped whenever `data` is
+    /// written via `settle`, `update`, or `set`.
     data_rev: u64,
 }
 

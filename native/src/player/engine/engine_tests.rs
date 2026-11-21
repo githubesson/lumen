@@ -473,6 +473,10 @@ fn parked_decoder_survives_retired_feed_before_seek_and_wakes_on_pull_and_cancel
     let epoch = r.a.seek_epoch;
     r.a.send(MixerCmd::Seeking { id, epoch });
     r.a.render(&mut []);
+    // Wait for the porter to drop the retired feed, then explicitly wake the
+    // decoder with `tx.is_abandoned() == true` and no command queued yet.
+    std::thread::sleep(Duration::from_millis(25));
+    state.wake_decoder();
     std::thread::sleep(Duration::from_millis(25));
     ctl.send(DecoderCmd::Seek { seconds: 5.0, epoch }).unwrap();
     state.wake_decoder();
