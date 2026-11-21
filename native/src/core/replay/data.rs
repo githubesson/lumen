@@ -99,11 +99,14 @@ mod tests {
         assert!(reqs[0].path.contains("bucket=day") && reqs[1].path.contains("bucket=month"));
 
         let mut cache = ReplayCache::default();
+        assert_eq!(cache.rev(), 0);
         cache.store(&q, &query, data);
+        assert_eq!(cache.rev(), 1);
         assert!(cache.has_monthly(&q) && cache.read(&q).is_some());
         assert_eq!(cache.years(), Some(&[2025][..]));
-        // A later daily answer replaces the monthly one.
+        // A later daily answer replaces the monthly one and advances the revision.
         cache.store(&q, &q.daily, ReplayData::default());
+        assert_eq!(cache.rev(), 2);
         assert!(!cache.has_monthly(&q));
     }
 

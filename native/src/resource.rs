@@ -44,7 +44,8 @@ impl<T> Default for Res<T> {
 
 impl<T> Res<T> {
     /// Monotonic revision bumped whenever `self.data` changes via `settle`,
-    /// `update`, or `set`.
+    /// `update`, or `set`. Callers caching derived values against this revision
+    /// must not mutate the public `data` field directly.
     pub fn revision(&self) -> u64 {
         self.data_rev
     }
@@ -165,5 +166,35 @@ mod tests {
         fresh.begin();
         assert!(!fresh.settle(late, Ok(1), "x"));
         assert_eq!(fresh.data, None);
+    }
+
+    #[test]
+    fn revision_moves_on_data_writes_only() {
+        let mut res = Res::<u32>::default();
+        assert_eq!(res.revision(), 0);
+        // `begin` and `Err` settle leave `data` unchanged and do not bump `revision`.
+        let t1 = res.begin();
+        assert_eq!(res.revision(), 0);
+        assert!(res.settle(t1, Err(ApiError::http(500, "err")), "x"));
+        assert_eq!(res.revision(), 0);
+        // `Ok` settle, `update`, and `set` each produce a strictly new revision.
+        let t2 = res.begin();
+        assert!(res.settle(t2, Ok(10), "x"));
+        let r1 = res.revision();
+        assert!(r1 > 0);
+        res.update(|n| *n += 1);
+        let r2 = res.revision();
+        assert!(r2 > r1);
+        res.set(20);
+        let r3 = res.revision();
+        assert!(r3 > r2);
+        // A stale reply after an update neither replaces `data` nor bumps `revision`.
+        let stale = res.begin();
+        res.update(|n| *n += 5);
+        let r4 = res.revision();
+        assert!(r4 > r3);
+        assert!(res.settle(stale, Ok(999), "x"));
+        assert_eq!(res.data, Some(25));
+        assert_eq!(res.revision(), r4);
     }
 }

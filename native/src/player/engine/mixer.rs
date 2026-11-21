@@ -31,7 +31,7 @@ pub struct Feed {
 /// A source in the mix.
 pub struct MixVoice {
     pub state: Arc<VoiceState>,
-    pub ctl: Sender<DecoderCmd>,
+    ctl: Option<Sender<DecoderCmd>>,
     feed: Option<Feed>,
     /// Frames read from the feed.
     played: u64,
@@ -43,13 +43,15 @@ pub struct MixVoice {
 
 impl Drop for MixVoice {
     fn drop(&mut self) {
+        self.feed = None;
+        self.ctl = None;
         self.state.wake_decoder();
     }
 }
 
 impl MixVoice {
     pub fn new(state: Arc<VoiceState>, ctl: Sender<DecoderCmd>) -> MixVoice {
-        MixVoice { state, ctl, feed: None, played: 0, awaiting: 0, ended: false }
+        MixVoice { state, ctl: Some(ctl), feed: None, played: 0, awaiting: 0, ended: false }
     }
 
     fn id(&self) -> u64 {
@@ -71,6 +73,7 @@ impl MixVoice {
         }
         chunk.commit_all();
         self.played += n as u64;
+        std::sync::atomic::fence(Ordering::SeqCst);
         if self.state.decoder_waiting.load(Ordering::Relaxed) && feed.rx.slots() <= feed.low_water {
             self.state.wake_decoder_if_waiting();
         }
@@ -97,6 +100,7 @@ impl MixVoice {
         }
         chunk.commit_all();
         self.played += n as u64;
+        std::sync::atomic::fence(Ordering::SeqCst);
         if self.state.decoder_waiting.load(Ordering::Relaxed) && feed.rx.slots() <= feed.low_water {
             self.state.wake_decoder_if_waiting();
         }
@@ -313,7 +317,9 @@ impl Mixer {
         for voice in [&mut self.current, &mut self.prepared].into_iter().flatten() {
             let at = voice.position().unwrap_or_else(|| voice.state.position());
             self.outbox.retire_feed(voice.feed.take());
-            let _ = voice.ctl.send(DecoderCmd::Reformat { format, seconds: at });
+            if let Some(ctl) = &voice.ctl {
+                let _ = ctl.send(DecoderCmd::Reformat { format, seconds: at });
+            }
             voice.state.wake_decoder();
         }
     }
@@ -361,7 +367,9 @@ impl Mixer {
                     Some(voice) if feed.epoch < voice.awaiting => Some(feed),
                     Some(voice) if feed.format != format => {
                         // Decoded for an output that's gone: again, for this one.
-                        let _ = voice.ctl.send(DecoderCmd::Reformat { format, seconds: feed.start });
+                        if let Some(ctl) = &voice.ctl {
+                            let _ = ctl.send(DecoderCmd::Reformat { format, seconds: feed.start });
+                        }
                         voice.state.wake_decoder();
                         Some(feed)
                     }

@@ -164,7 +164,7 @@ const RECONNECT_BASE_MS: f64 = 500.0;
 const RECONNECT_MAX_MS: f64 = 15_000.0;
 
 fn is_would_block(err: &tungstenite::Error) -> bool {
-    matches!(err, tungstenite::Error::Io(e) if e.kind() == io::ErrorKind::WouldBlock)
+    matches!(err, tungstenite::Error::Io(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut))
 }
 
 pub(super) fn run_socket(
@@ -192,7 +192,10 @@ pub(super) fn run_socket(
                     && unsafe { p.add(tcp, polling::Event::readable(1)) }.is_ok()
             });
             if !event_driven {
-                let _ = socket.get_ref().tcp().set_read_timeout(Some(Duration::from_millis(50)));
+                let tcp = socket.get_ref().tcp();
+                // Undo nonblocking if `p.add` failed so the 50 ms read timeout blocks instead of spinning.
+                let _ = tcp.set_nonblocking(false);
+                let _ = tcp.set_read_timeout(Some(Duration::from_millis(50)));
             }
             notify(SocketEvent::Open);
             let mut want_write = false;
@@ -302,5 +305,62 @@ pub(super) fn run_socket(
                 Err(RecvTimeoutError::Timeout) => break,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::sync::mpsc::channel;
+
+    fn run_round_trip(use_poller: bool) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (tcp, _) = listener.accept().unwrap();
+            let mut ws = tungstenite::accept(tcp).unwrap();
+            while let Ok(msg) = ws.read() {
+                match msg {
+                    tungstenite::Message::Text(text) => {
+                        let _ = ws.send(tungstenite::Message::text(format!("echo:{text}")));
+                    }
+                    tungstenite::Message::Close(_) => break,
+                    _ => {}
+                }
+            }
+        });
+
+        let (out_tx, out_rx) = channel();
+        let (ev_tx, ev_rx) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let poller = use_poller.then(|| Arc::new(polling::Poller::new().unwrap()));
+        let handle = SocketHandle { out: out_tx, stop: stop.clone(), poller: poller.clone() };
+        let url = format!("ws://{addr}/api/activity/ws?device_id=test");
+        let client = std::thread::spawn(move || {
+            run_socket(url, None, out_rx, ev_tx, LateWaker::default(), stop, poller);
+        });
+
+        assert!(matches!(ev_rx.recv_timeout(Duration::from_secs(5)), Ok(SocketEvent::Open)));
+        assert!(handle.send(Out::Send("hello".into())));
+        assert!(matches!(
+            ev_rx.recv_timeout(Duration::from_secs(5)),
+            Ok(SocketEvent::Message(ref m)) if m == "echo:hello"
+        ));
+        assert!(handle.send(Out::Close));
+        assert!(matches!(ev_rx.recv_timeout(Duration::from_secs(5)), Ok(SocketEvent::Closed)));
+        drop(handle);
+        client.join().unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn event_driven_poller_loop_round_trips_and_closes() {
+        run_round_trip(true);
+    }
+
+    #[test]
+    fn blocking_fallback_loop_round_trips_and_closes() {
+        run_round_trip(false);
     }
 }

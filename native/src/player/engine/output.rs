@@ -106,7 +106,7 @@ fn run(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, waker: LateWaker, rx
                 m.is_playing()
             };
             if !is_playing {
-                shared.sleeping.store(true, Ordering::Release);
+                shared.sleeping.store(true, Ordering::SeqCst);
                 let woke = {
                     let mut m = mixer.lock().unwrap();
                     m.drain_cmds();

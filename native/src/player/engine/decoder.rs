@@ -226,7 +226,7 @@ impl Worker {
     }
 
     fn check(&self) -> Result<Option<DecoderCmd>, Interrupt> {
-        if self.ctx.voice.cancelled.load(Ordering::Relaxed) {
+        if self.ctx.voice.cancelled.load(Ordering::Acquire) {
             return Err(Interrupt::Stop);
         }
         match self.ctx.ctl.try_recv() {
@@ -245,7 +245,13 @@ impl Worker {
             let room = writer.tx.slots() / ch * ch;
             let n = room.min(samples.len() - at);
             if n == 0 {
-                self.ctx.voice.decoder_waiting.store(true, Ordering::Release);
+                // Publish `decoder_waiting` before re-checking commands and ring
+                // room (paired with the SeqCst fence after `commit_all` in the
+                // mixer) so a low-water pull can't miss our park. Do not exit on
+                // `tx.is_abandoned()`: seeks and reformats retire the old feed
+                // before the accompanying `DecoderCmd` arrives.
+                self.ctx.voice.decoder_waiting.store(true, Ordering::Relaxed);
+                std::sync::atomic::fence(Ordering::SeqCst);
                 if let Some(cmd) = self.check()? {
                     self.ctx.voice.decoder_waiting.store(false, Ordering::Relaxed);
                     return Err(Interrupt::Cmd(cmd));
@@ -253,10 +259,6 @@ impl Worker {
                 if writer.tx.slots() >= ch {
                     self.ctx.voice.decoder_waiting.store(false, Ordering::Relaxed);
                     continue;
-                }
-                if writer.tx.is_abandoned() {
-                    self.ctx.voice.decoder_waiting.store(false, Ordering::Relaxed);
-                    return Err(Interrupt::Stop);
                 }
                 std::thread::park();
                 self.ctx.voice.decoder_waiting.store(false, Ordering::Relaxed);

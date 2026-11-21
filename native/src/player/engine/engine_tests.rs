@@ -449,3 +449,93 @@ fn equalizer_shapes_decoded_audio_and_survives_seek_and_next() {
     r.start(&r.server.url("/eq-b")); r.played.clear(); r.render(0.3);
     assert!((r.amplitude(4800..14400) - 0.02512).abs() < 0.001);
 }
+
+#[test]
+fn parked_decoder_survives_retired_feed_before_seek_and_wakes_on_pull_and_cancel() {
+    let mut r = rig();
+    let frames = 48_000 * 6;
+    // 6 s exceeds the 4 s ring buffer so the decoder fills it and parks.
+    r.server.route("/long", wav(48_000, frames, |i| (i as f32 / frames as f32, 0.0)), "audio/wav", true);
+    let url = r.server.url("/long");
+    r.a.load(&url);
+    r.wait("decoder to park on full ring", |r| {
+        r.a.active.as_ref().is_some_and(|v| v.state.decoder_waiting.load(Ordering::Acquire))
+    });
+
+    // Simulate the race where MixerCmd::Seeking retires the old feed and wakes
+    // the decoder before DecoderCmd::Seek reaches it: the decoder must stay
+    // alive, not silently exit on `tx.is_abandoned()`.
+    let (id, ctl, state) = {
+        let active = r.a.active.as_ref().unwrap();
+        (active.state.id, active.ctl.clone(), active.state.clone())
+    };
+    r.a.seek_epoch += 1;
+    let epoch = r.a.seek_epoch;
+    r.a.send(MixerCmd::Seeking { id, epoch });
+    r.a.render(&mut []);
+    std::thread::sleep(Duration::from_millis(25));
+    ctl.send(DecoderCmd::Seek { seconds: 5.0, epoch }).unwrap();
+    state.wake_decoder();
+    r.wait("seek after early feed retirement", |r| r.has(AdapterEvent::Seeked));
+    r.a.play();
+    r.render(0.1);
+    assert!((r.played[0] - 5.0 / 6.0).abs() < 1e-3, "expected audio near 5.0s, got {}", r.played[0]);
+
+    // Low-water pull wakeup: seek back to 0, let the decoder park on a full
+    // ring again, then play past the 4 s ring all the way to Ended.
+    r.a.pause();
+    r.seek(0.0);
+    r.wait("decoder to park again", |r| {
+        r.a.active.as_ref().is_some_and(|v| v.state.decoder_waiting.load(Ordering::Acquire))
+    });
+    r.a.play();
+    r.render(6.2);
+    assert!(r.has(AdapterEvent::Ended), "low-water pulls must wake a parked decoder to EOF");
+
+    // Cancel wakeup: load again, wait for park, and drop via load("").
+    r.a.pause();
+    r.a.load(&url);
+    r.wait("decoder to park before cancel", |r| {
+        r.a.active.as_ref().is_some_and(|v| v.state.decoder_waiting.load(Ordering::Acquire))
+    });
+    let cancelled_ctl = r.a.active.as_ref().unwrap().ctl.clone();
+    r.a.load("");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while cancelled_ctl.send(DecoderCmd::Seek { seconds: 0.0, epoch: 99 }).is_ok() {
+        assert!(Instant::now() < deadline, "parked decoder did not wake and exit after cancel");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", feature = "alsa")))]
+#[test]
+fn output_thread_sleeps_when_paused_and_wakes_on_play() {
+    let mut engine = Engine::start(LateWaker::default(), None);
+    let wait_sleeping = |engine: &Engine, want: bool| {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while engine.output.sleeping.load(Ordering::SeqCst) != want {
+            assert!(Instant::now() < deadline, "timed out waiting for output sleeping={want}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    let wait_event = |engine: &mut Engine, want: EngineEvent| {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            while let Ok(ev) = engine.mixer_events.pop() {
+                if ev == want {
+                    return;
+                }
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for {want:?}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+
+    wait_sleeping(&engine, true);
+    engine.send_mixer(MixerCmd::Play { seq: 1 });
+    wait_event(&mut engine, EngineEvent::Played { seq: 1 });
+    wait_sleeping(&engine, false);
+    engine.send_mixer(MixerCmd::Pause { seq: 2 });
+    wait_event(&mut engine, EngineEvent::Paused { seq: 2 });
+    wait_sleeping(&engine, true);
+}

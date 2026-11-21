@@ -514,9 +514,8 @@ fn plan(app: &App, t: &Theme, m: &Model, width: f32, window_w: f32, views: bool)
         favorites: favorites(app),
         views,
     };
-    let measure_ctx = panels::Ctx { views: false, ..ctx };
     let laid = grid::lay_out(&areas, width, t.gap(), size.columns(), |n, w| {
-        let natural = panels::panel(app, t, &measure_ctx, &m.panels[n], w, None).natural;
+        let natural = panels::panel(app, t, &ctx, &m.panels[n], w, None).natural;
         // A tile while customizing needs room, however little the panel holds.
         if m.editing { natural.max(148.0) } else { natural }
     });

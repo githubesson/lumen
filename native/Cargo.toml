@@ -82,6 +82,12 @@ alsa = ["dep:cpal"]
 # The icon, version info and manifest in lumen.exe (`build.rs`).
 embed-resource = "3"
 
+# Keep Rune's bundled Inter fallback enabled for unit tests (which run without
+# booting the app and registering Geist) while omitting the 1.22 MB TTFs from
+# normal and release builds.
+[dev-dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71", default-features = false, features = ["embedded-fonts"] }
+
 [profile.dev.package."*"]
 debug = false
 opt-level = 2

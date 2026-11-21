@@ -220,7 +220,7 @@ impl Engine {
 
     fn send_mixer(&self, cmd: MixerCmd) {
         let _ = self.mixer_tx.send(cmd);
-        if self.output.sleeping.swap(false, Ordering::AcqRel) {
+        if self.output.sleeping.swap(false, Ordering::SeqCst) {
             let _ = self.output_tx.send(OutputCmd::Wake);
         }
     }

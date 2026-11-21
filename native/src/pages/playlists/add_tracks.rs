@@ -28,8 +28,8 @@ pub struct State {
     pub busy: bool,
     /// The newest search; older answers are dropped.
     seq: u64,
-    /// Bumped whenever `selected` changes so virtual rows refresh checkboxes.
-    sel_rev: u64,
+    /// Bumped whenever `tracks` is replaced or cleared so virtual row keys refresh.
+    tracks_rev: u64,
 }
 
 fn state(app: &App) -> Option<&State> {
@@ -56,9 +56,6 @@ fn query_changed(app: &mut App) {
     let Some(d) = detail_mut(app) else { return };
     d.add.seq += 1;
     let (mount, seq) = (d.mount, d.add.seq);
-    if app.net.is_sync() {
-        return;
-    }
     app.net.after(std::time::Duration::from_millis(150), move |app| {
         if detail(app).is_some_and(|d| d.mount == mount && d.add.seq == seq && d.add.open) {
             fetch(app);
@@ -92,10 +89,12 @@ fn fetch(app: &mut App) {
             match result {
                 Ok((tracks, warning)) => {
                     d.add.tracks = tracks;
+                    d.add.tracks_rev += 1;
                     d.add.error = warning;
                 }
                 Err(e) => {
                     d.add.tracks.clear();
+                    d.add.tracks_rev += 1;
                     d.add.error = Some(error_message(&e, "Search failed."));
                 }
             }
@@ -104,11 +103,10 @@ fn fetch(app: &mut App) {
 }
 
 fn toggle(app: &mut App, id: &str) {
-    if let Some(d) = detail_mut(app) {
-        if !d.add.selected.remove(id) {
-            d.add.selected.insert(id.to_string());
-        }
-        d.add.sel_rev += 1;
+    if let Some(d) = detail_mut(app)
+        && !d.add.selected.remove(id)
+    {
+        d.add.selected.insert(id.to_string());
     }
 }
 
@@ -132,7 +130,6 @@ fn submit(app: &mut App) {
                     // success; it reopens fresh here instead.
                     d.add.busy = false;
                     d.add.selected.clear();
-                    d.add.sel_rev += 1;
                     d.add.open = false;
                     detail::load(app, None);
                 }
@@ -228,18 +225,9 @@ fn track_row(app: &App, t: &Theme, tr: &TrackListItem, existing: &HashSet<String
 
 /// The dialog, while open.
 pub fn view(app: &App, t: &Theme, cx: &mut rune::Cx<App>, window: [f32; 2]) -> Option<El> {
-    let d = detail(app)?;
     let s = state(app).filter(|s| s.open)?;
-    let existing = &d.ids;
     let count = 1 + s.tracks.len();
-    let ver = (
-        s.tracks.len(),
-        s.seq,
-        s.sel_rev,
-        existing.len(),
-        s.tracks.first().map(|t| t.id.as_str()),
-        s.tracks.last().map(|t| t.id.as_str()),
-    );
+    let ver = (s.tracks_rev, s.tracks.len());
     // The panel is at most 80% of the window: its borders, the 57 px header
     // and the 61 px footer leave the rest to the list.
     let max_body = (window[1] * 0.8 - 2.0 - 57.0 - 61.0).max(80.0);

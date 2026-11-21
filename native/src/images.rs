@@ -234,8 +234,8 @@ struct Shared {
     /// Keyed by size and path, not server: [`Images::set_client`] clears it.
     decoded: Mutex<Lru<Slot>>,
     encoded: Mutex<Lru<Arc<[u8]>>>,
-    /// Coalesces concurrent fetches for the same encoded cover URL across workers.
-    in_flight: Mutex<HashMap<String, InFlight>>,
+    /// Coalesces concurrent fetches for the same `(generation, base|url)` across workers.
+    in_flight: Mutex<HashMap<(u64, String), InFlight>>,
     /// A cover finished since the app last looked ([`Images::take_arrived`]).
     arrived: AtomicBool,
     /// Moves with each server ([`Images::set_client`]): a job for an
@@ -245,16 +245,28 @@ struct Shared {
 }
 
 impl Shared {
-    /// Singleflight lookup/fetch of encoded bytes for `mem_key`: if another
-    /// worker is already reading disk or hitting the network for the same
-    /// URL, wait for its result instead of issuing a duplicate request.
-    fn fetch_encoded(self: &Arc<Self>, mem_key: &str, load: impl FnOnce() -> Option<Arc<[u8]>>) -> Option<Arc<[u8]>> {
-        if let Some(b) = self.encoded.lock().unwrap().get(mem_key) {
-            return Some(b);
+    /// Singleflight lookup/fetch of encoded bytes for `(generation, mem_key)`:
+    /// if another worker in the same session generation is already reading disk
+    /// or hitting the network for the same URL, wait for its result instead of
+    /// issuing a duplicate request.
+    fn fetch_encoded(
+        self: &Arc<Self>,
+        mem_key: &str,
+        generation: u64,
+        load: impl FnOnce() -> Option<Arc<[u8]>>,
+    ) -> Option<Arc<[u8]>> {
+        {
+            let mut enc = self.encoded.lock().unwrap();
+            if self.generation.load(Ordering::Acquire) == generation
+                && let Some(b) = enc.get(mem_key)
+            {
+                return Some(b);
+            }
         }
+        let flight_key = (generation, mem_key.to_string());
         let slot = {
             let mut inflight = self.in_flight.lock().unwrap();
-            if let Some(existing) = inflight.get(mem_key).cloned() {
+            if let Some(existing) = inflight.get(&flight_key).cloned() {
                 drop(inflight);
                 let mut guard = existing.0.lock().unwrap();
                 while guard.is_none() {
@@ -263,12 +275,12 @@ impl Shared {
                 return guard.clone().flatten();
             }
             let fresh = Arc::new((Mutex::new(None), Condvar::new()));
-            inflight.insert(mem_key.to_string(), fresh.clone());
+            inflight.insert(flight_key.clone(), fresh.clone());
             fresh
         };
         struct Guard {
             shared: Arc<Shared>,
-            key: String,
+            key: (u64, String),
             slot: InFlight,
             result: Option<Option<Arc<[u8]>>>,
         }
@@ -280,11 +292,16 @@ impl Shared {
                 self.slot.1.notify_all();
             }
         }
-        let mut guard = Guard { shared: self.clone(), key: mem_key.to_string(), slot, result: None };
+        let mut guard = Guard { shared: self.clone(), key: flight_key, slot, result: None };
         // Re-check in case a previous leader populated `encoded` just before we inserted.
-        if let Some(b) = self.encoded.lock().unwrap().get(mem_key) {
-            guard.result = Some(Some(b.clone()));
-            return Some(b);
+        {
+            let mut enc = self.encoded.lock().unwrap();
+            if self.generation.load(Ordering::Acquire) == generation
+                && let Some(b) = enc.get(mem_key)
+            {
+                guard.result = Some(Some(b.clone()));
+                return Some(b);
+            }
         }
         let res = load();
         guard.result = Some(res.clone());
@@ -505,20 +522,28 @@ impl Job {
     /// Concurrent requests for the same URL coalesce on [`Shared::in_flight`].
     fn encoded(&self) -> Option<Arc<[u8]>> {
         let mem_key = format!("{}|{}", self.client.base(), self.url);
-        self.shared.fetch_encoded(&mem_key, || {
+        self.shared.fetch_encoded(&mem_key, self.generation, || {
             let file = self.disk.as_ref().map(|d| d.join(disk_name(&mem_key)));
             let stale = file.as_ref().and_then(read_disk);
             if let Some((bytes, expires)) = &stale
                 && *expires > now_secs()
             {
-                self.shared.encoded.lock().unwrap().put(mem_key.clone(), bytes.clone(), bytes.len());
+                let mut enc = self.shared.encoded.lock().unwrap();
+                if self.current() {
+                    enc.put(mem_key.clone(), bytes.clone(), bytes.len());
+                }
                 return Some(bytes.clone());
             }
             match self.client.bytes_reply(&self.url) {
                 Ok(reply) if !reply.body.is_empty() => {
                     let max_age = max_age(reply.cache_control.as_deref());
                     let b: Arc<[u8]> = Arc::from(reply.body);
-                    self.shared.encoded.lock().unwrap().put(mem_key.clone(), b.clone(), b.len());
+                    {
+                        let mut enc = self.shared.encoded.lock().unwrap();
+                        if self.current() {
+                            enc.put(mem_key.clone(), b.clone(), b.len());
+                        }
+                    }
                     if let (Some(f), Some(age)) = (&file, max_age) {
                         write_disk(f, &b, now_secs() + age);
                     }
@@ -881,7 +906,7 @@ mod tests {
             let b = barrier.clone();
             handles.push(std::thread::spawn(move || {
                 b.wait();
-                s.fetch_encoded("http://x|/cover/1", || {
+                s.fetch_encoded("http://x|/cover/1", 0, || {
                     c.fetch_add(1, Ordering::SeqCst);
                     std::thread::sleep(std::time::Duration::from_millis(30));
                     let data: Arc<[u8]> = Arc::from(b"cover-bytes".as_slice());
@@ -895,6 +920,36 @@ mod tests {
         for r in results {
             assert_eq!(r.as_deref(), Some(b"cover-bytes".as_slice()));
         }
+    }
+
+    #[test]
+    fn singleflight_isolates_across_session_generation_change() {
+        let shared = Arc::new(Shared {
+            decoded: Mutex::new(Lru::new(DECODED_BUDGET)),
+            encoded: Mutex::new(Lru::new(ENCODED_BUDGET)),
+            in_flight: Mutex::new(HashMap::new()),
+            arrived: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+        });
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let s0 = shared.clone();
+        let e0 = entered.clone();
+        let r0 = release.clone();
+        let old_job = std::thread::spawn(move || {
+            s0.fetch_encoded("http://x|/cover/same", 0, || {
+                e0.wait();
+                r0.wait();
+                None
+            })
+        });
+        // Wait until the gen-0 fetch is in flight, then advance the session generation.
+        entered.wait();
+        shared.generation.store(1, Ordering::Release);
+        let new_bytes = shared.fetch_encoded("http://x|/cover/same", 1, || Some(Arc::from(b"new-session".as_slice())));
+        release.wait();
+        assert_eq!(old_job.join().unwrap(), None);
+        assert_eq!(new_bytes.as_deref(), Some(b"new-session".as_slice()));
     }
 
     #[test]
