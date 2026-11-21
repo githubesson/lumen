@@ -32,15 +32,23 @@ pub struct Res<T> {
     /// began.
     updates: u64,
     updates_at: u64,
+    /// Globally unique revision bumped whenever `data` is stored or mutated.
+    data_rev: u64,
 }
 
 impl<T> Default for Res<T> {
     fn default() -> Self {
-        Res { data: None, error: None, loading: false, ticket: 0, updates: 0, updates_at: 0 }
+        Res { data: None, error: None, loading: false, ticket: 0, updates: 0, updates_at: 0, data_rev: 0 }
     }
 }
 
 impl<T> Res<T> {
+    /// Monotonic revision bumped whenever `self.data` changes via `settle`,
+    /// `update`, or `set`.
+    pub fn revision(&self) -> u64 {
+        self.data_rev
+    }
+
     /// A load starts, superseding any still out: the ticket its reply carries.
     pub fn begin(&mut self) -> u64 {
         self.ticket = ticket();
@@ -60,7 +68,10 @@ impl<T> Res<T> {
         self.loading = false;
         if self.updates == self.updates_at {
             match result {
-                Ok(data) => self.data = Some(data),
+                Ok(data) => {
+                    self.data = Some(data);
+                    self.data_rev = self::ticket();
+                }
                 Err(e) => self.error = Some(error_message(&e, fallback)),
             }
         }
@@ -73,6 +84,7 @@ impl<T> Res<T> {
         self.updates += 1;
         if let Some(data) = self.data.as_mut() {
             f(data);
+            self.data_rev = ticket();
         }
     }
 

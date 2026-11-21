@@ -345,7 +345,10 @@ impl Player {
                 // Copied once per snapshot, not every frame.
                 let (queue, index) = remote::remote_queue(d);
                 changed |= set(&mut self.index, (!queue.is_empty()).then(|| index.min(queue.len() - 1)));
-                changed |= set(&mut self.queue, queue);
+                if set(&mut self.queue, queue) {
+                    self.queue_version += 1;
+                    changed = true;
+                }
                 self.remote.updated_ms = d.activity.as_ref().and_then(|a| a.updated_at.as_deref()).and_then(remote::timestamp_ms);
                 self.remote.shown = true;
             }
@@ -366,6 +369,7 @@ impl Player {
         if self.shown_queue_rev != Some(self.local.queue_rev) {
             self.queue = self.local.queue().to_vec();
             self.shown_queue_rev = Some(self.local.queue_rev);
+            self.queue_version += 1;
             changed = true;
         }
         changed |= set(&mut self.index, self.local.current().map(|_| self.local.index().min(self.queue.len().saturating_sub(1))));

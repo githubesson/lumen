@@ -16,9 +16,15 @@ use super::figures::{ReplayQueries, ReplayQuery, replay_series_complete};
 pub struct ReplayCache {
     entries: HashMap<String, ReplayData>,
     years: Option<Vec<i32>>,
+    /// Monotonic revision bumped on every [`ReplayCache::store`].
+    rev: u64,
 }
 
 impl ReplayCache {
+    pub fn rev(&self) -> u64 {
+        self.rev
+    }
+
     pub fn get(&self, key: &str) -> Option<&ReplayData> {
         self.entries.get(key)
     }
@@ -48,6 +54,7 @@ impl ReplayCache {
         }
         self.years = Some(data.available_years.clone());
         self.entries.insert(query.cache_key.clone(), data);
+        self.rev += 1;
     }
 }
 

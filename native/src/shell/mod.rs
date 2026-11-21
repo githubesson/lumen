@@ -14,7 +14,7 @@ use crate::theme::Theme;
 use crate::ui::css_border;
 
 /// Which of `responsive.css`'s width ranges the window is in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Bp {
     /// Over 1100 px.
     Wide,

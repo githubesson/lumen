@@ -1,9 +1,10 @@
 //! `AddTracksDialog.tsx`: search the library (and TIDAL), tick tracks, add
 //! them to the playlist.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 
-use rune::{Cursor, El, KeyEvent, Tx, col, el, row, text};
+use rune::{Cursor, El, GrowthSpec, KeyEvent, Tx, col, el, row, text};
 
 use crate::api::{TrackListItem, TrackSource};
 use crate::app::App;
@@ -27,6 +28,8 @@ pub struct State {
     pub busy: bool,
     /// The newest search; older answers are dropped.
     seq: u64,
+    /// Bumped whenever `selected` changes so virtual rows refresh checkboxes.
+    sel_rev: u64,
 }
 
 fn state(app: &App) -> Option<&State> {
@@ -53,14 +56,13 @@ fn query_changed(app: &mut App) {
     let Some(d) = detail_mut(app) else { return };
     d.add.seq += 1;
     let (mount, seq) = (d.mount, d.add.seq);
-    let sender = app.net.sender();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        sender.send(move |app| {
-            if detail(app).is_some_and(|d| d.mount == mount && d.add.seq == seq && d.add.open) {
-                fetch(app);
-            }
-        });
+    if app.net.is_sync() {
+        return;
+    }
+    app.net.after(std::time::Duration::from_millis(150), move |app| {
+        if detail(app).is_some_and(|d| d.mount == mount && d.add.seq == seq && d.add.open) {
+            fetch(app);
+        }
     });
 }
 
@@ -102,10 +104,11 @@ fn fetch(app: &mut App) {
 }
 
 fn toggle(app: &mut App, id: &str) {
-    if let Some(d) = detail_mut(app)
-        && !d.add.selected.remove(id)
-    {
-        d.add.selected.insert(id.to_string());
+    if let Some(d) = detail_mut(app) {
+        if !d.add.selected.remove(id) {
+            d.add.selected.insert(id.to_string());
+        }
+        d.add.sel_rev += 1;
     }
 }
 
@@ -129,6 +132,7 @@ fn submit(app: &mut App) {
                     // success; it reopens fresh here instead.
                     d.add.busy = false;
                     d.add.selected.clear();
+                    d.add.sel_rev += 1;
                     d.add.open = false;
                     detail::load(app, None);
                 }
@@ -227,27 +231,59 @@ pub fn view(app: &App, t: &Theme, cx: &mut rune::Cx<App>, window: [f32; 2]) -> O
     let d = detail(app)?;
     let s = state(app).filter(|s| s.open)?;
     let existing = &d.ids;
-    let search = search_input(t, "add-tracks-search", &app.pages.playlists.fields.add_query, "Search local + TIDAL", Some(320.0), |f| {
-        f.label("Search tracks")
-            .on_edit(|a: &mut App| &mut a.pages.playlists.fields.add_query)
-            .on_input_change(|a: &mut App, _| query_changed(a))
-            .on_input_key(|a: &mut App, ev: &KeyEvent, _tx: &mut Tx| {
-                if ev.key == rune::Key::Escape {
-                    close(a);
-                    return true;
-                }
-                false
-            })
-    });
-    let mut list = col().w_full().mt(12.0);
-    for tr in &s.tracks {
-        list = list.child(track_row(app, t, tr, existing, s.selected.contains(&tr.id)));
-    }
+    let count = 1 + s.tracks.len();
+    let ver = (
+        s.tracks.len(),
+        s.seq,
+        s.sel_rev,
+        existing.len(),
+        s.tracks.first().map(|t| t.id.as_str()),
+        s.tracks.last().map(|t| t.id.as_str()),
+    );
     // The panel is at most 80% of the window: its borders, the 57 px header
     // and the 61 px footer leave the rest to the list.
     let max_body = (window[1] * 0.8 - 2.0 - 57.0 - 61.0).max(80.0);
     let overflows = cx.layout_size("add-tracks-body").is_some_and(|b| b[1] > max_body + 0.5);
-    let content = col().key("add-tracks-body").w_full().padding(18.0).child(search).child(list);
+    let content = col()
+        .key("add-tracks-body")
+        .w_full()
+        .padding(18.0)
+        .growth(GrowthSpec { edge: rune::edge::NO_MASK, ..GrowthSpec::default() })
+        .virtual_rows(
+            count,
+            54.7,
+            |app: &App, i| -> Cow<'_, str> {
+                if i == 0 {
+                    return Cow::Borrowed("add-tracks-search-row");
+                }
+                match state(app).and_then(|s| s.tracks.get(i - 1)) {
+                    Some(tr) => Cow::Owned(format!("add-track-{}", tr.id)),
+                    None => Cow::Owned(format!("add-track-missing-{i}")),
+                }
+            },
+            |app: &App, i| {
+                let t = app.theme();
+                if i == 0 {
+                    let search = search_input(&t, "add-tracks-search", &app.pages.playlists.fields.add_query, "Search local + TIDAL", Some(320.0), |f| {
+                        f.label("Search tracks")
+                            .on_edit(|a: &mut App| &mut a.pages.playlists.fields.add_query)
+                            .on_input_change(|a: &mut App, _| query_changed(a))
+                            .on_input_key(|a: &mut App, ev: &KeyEvent, _tx: &mut Tx| {
+                                if ev.key == rune::Key::Escape {
+                                    close(a);
+                                    return true;
+                                }
+                                false
+                            })
+                    });
+                    return el().w_full().pb(12.0).child(search);
+                }
+                let Some(d) = detail(app) else { return el() };
+                let Some(tr) = d.add.tracks.get(i - 1) else { return el() };
+                track_row(app, &t, tr, &d.ids, d.add.selected.contains(&tr.id))
+            },
+        )
+        .virtual_rows_version(ver);
     let body = scroll_area_fit(t, "add-tracks-scroll", content, overflows, Some(max_body));
     let mut start = row().grow(1.0).gap(8.0).items_center().child(
         text(format!("{} selected", s.selected.len())).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground),

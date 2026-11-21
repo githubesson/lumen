@@ -12,18 +12,18 @@ mod placeholder;
 #[cfg(test)]
 mod tests;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use rune::{Cursor, Cx, El, col, el, row, text};
 
-use crate::api::stats::{ReplayData, generate_replay_playlist, get_replay_image};
+use crate::api::stats::{ReplayActivityBucket, ReplayBucket, ReplayData, ReplayGenreSlice, generate_replay_playlist, get_replay_image};
 use crate::api::{TrackListItem, error_message};
 use crate::app::App;
 use crate::core::dates::{self, DAY_MS, MONTHS_SHORT};
 use crate::core::replay::data::{ReplayCache, fetch_replay};
 use crate::core::replay::figures::{
-    CalendarUnit, ReplayCalendar, ReplayQueries, replay_calendar, replay_day_span, replay_image_filename, replay_image_request,
-    replay_playlist_request, replay_queries,
+    CalendarUnit, ReplayCalendar, ReplayQueries, activity_series, genre_shares, replay_calendar, replay_day_span, replay_image_filename,
+    replay_image_request, replay_playlist_request, replay_queries,
 };
 use crate::core::replay::period::{
     Period, build_period_options, canonical_period_key, current_year, parse_period_key, period_key, period_label, period_title,
@@ -34,6 +34,17 @@ use crate::theme::Theme;
 use crate::ui::blocks::play_list_button;
 use crate::ui::kit::error_banner;
 use crate::ui::{Btn, exact, font, icons as i, tnum, with_lh};
+
+/// Cached calendar, range label, activity series and top-5 genres derived
+/// from one [`ReplayData`] snapshot, avoiding per-frame recomputation.
+pub(super) struct Derived {
+    key: (u64, Period, i64, ReplayBucket),
+    pub calendar: Option<ReplayCalendar>,
+    pub range_label: Option<String>,
+    pub series_bucket: ReplayBucket,
+    pub series: Vec<ReplayActivityBucket>,
+    pub genres: Vec<(ReplayGenreSlice, f64)>,
+}
 
 /// What the page keeps between visits.
 pub struct State {
@@ -70,6 +81,8 @@ pub struct State {
     more_at: Cell<[f32; 2]>,
     /// A thread is watching for midnight.
     timer: bool,
+    /// Cached derived calendar, series and genres for the current period's data.
+    derived: RefCell<Option<Derived>>,
 }
 
 impl Default for State {
@@ -91,6 +104,7 @@ impl Default for State {
             last_h: Cell::new(0.0),
             more_at: Cell::new([0.0; 2]),
             timer: false,
+            derived: RefCell::new(None),
         }
     }
 }
@@ -197,30 +211,27 @@ fn load(app: &mut App) {
 }
 
 /// Rolling periods move at midnight: a page left open past it asks for the
-/// new day's window. Checked every half minute against the wall clock, so a
-/// laptop waking from sleep catches up too.
+/// new day's window. Re-arms on the shared timer thread only while Replay is
+/// open, checking every 30 s against the wall clock so a laptop waking from
+/// sleep catches up promptly without keeping a dedicated background thread.
 fn watch_midnight(app: &mut App) {
     if app.pages.replay.timer || app.net.is_sync() {
         return;
     }
     app.pages.replay.timer = true;
     let day = app.pages.replay.day;
-    let sender = app.net.sender();
-    let spawned = std::thread::Builder::new().name("replay-midnight".into()).spawn(move || {
-        while local_day(dates::now_ms()) == day {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-        }
-        sender.send(|app: &mut App| {
-            app.pages.replay.timer = false;
-            if app.location().is("/replay") {
-                let loc = app.location().clone();
-                enter(app, &loc);
-            }
-        });
-    });
-    if spawned.is_err() {
+    app.net.after(std::time::Duration::from_secs(30), move |app| {
         app.pages.replay.timer = false;
-    }
+        if !app.location().is("/replay") {
+            return;
+        }
+        if local_day(dates::now_ms()) != day {
+            let loc = app.location().clone();
+            enter(app, &loc);
+        } else {
+            watch_midnight(app);
+        }
+    });
 }
 
 /// A pill: the period goes in the URL, replacing the entry (`setPeriod`).
@@ -340,12 +351,39 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let data = s.data();
     let [window_w, _] = crate::shell::window_size(cx);
     let panel = panel_width(app, t, cx, window_w);
-    let calendar = data.and_then(|d| replay_calendar(&d.activity, d.bucket, &request.range, now));
+    let chart_bucket = request.range.bucket.unwrap_or(ReplayBucket::Month);
+    let today = local_day(now);
+    let derived_guard = match data {
+        Some(d) => {
+            let key = (s.cache.rev(), s.period, today, chart_bucket);
+            let hit = s.derived.borrow().as_ref().is_some_and(|c| c.key == key);
+            if !hit {
+                let calendar = replay_calendar(&d.activity, d.bucket, &request.range, now);
+                let range_label = range_label(calendar.as_ref(), request, now);
+                let (series_bucket, series) = match &calendar {
+                    Some(c) => activity_series(c, chart_bucket),
+                    None => (d.bucket, d.activity.clone()),
+                };
+                let genres: Vec<_> = genre_shares(&d.top_genres).into_iter().take(5).collect();
+                *s.derived.borrow_mut() = Some(Derived { key, calendar, range_label, series_bucket, series, genres });
+            }
+            Some(s.derived.borrow())
+        }
+        None => {
+            *s.derived.borrow_mut() = None;
+            None
+        }
+    };
+    let derived = derived_guard.as_ref().and_then(|g| g.as_ref());
     let no_tracks = data.is_none() || s.queue.is_empty();
 
     let head = head(t, s, now, no_tracks, Bp::of(window_w) == Bp::Narrow);
     let mut under = row().w_full().flex_wrap().items_center().gaps(8.0, 12.0).child(pills(app, t));
-    if let Some(label) = range_label(calendar.as_ref(), request, now) {
+    let label = match derived {
+        Some(c) => c.range_label.clone(),
+        None => range_label(None, request, now),
+    };
+    if let Some(label) = label {
         under = under.child(exact(text(label).font(tnum(font(12.0, 400.0))).color(t.c.muted_foreground), 17.4));
     }
     let mut page = col().key("replay").w_full().padding(t.pad()).gap(16.0).child(head).child(under);
@@ -355,21 +393,20 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
 
     // No answer for this period and no error means its request is in flight.
     let loading = data.is_none() && s.error.is_none();
-    let chart_bucket = request.range.bucket.unwrap_or(crate::api::stats::ReplayBucket::Month);
     let mut results = el().key("replay-results").w_full();
     if loading {
         // All time may come back by month: until it says, the days tile
         // names nothing.
         let unit_known = request.monthly.is_none();
         results = results.min_h(s.last_h.get()).child(placeholder::view(t, chart_bucket, unit_known, panel));
-    } else if let Some(d) = data {
+    } else if let (Some(d), Some(derived)) = (data, derived) {
         if let Some([_, h]) = cx.layout_size("replay-results") {
             s.last_h.set(h);
         }
         results = if d.summary.total_plays == 0 {
             results.child(empty(t))
         } else {
-            results.child(bento::view(app, t, cx, d, calendar.as_ref(), chart_bucket, panel))
+            results.child(bento::view(app, t, cx, d, derived, panel))
         };
     }
     page.child(results)

@@ -148,6 +148,10 @@ pub struct State {
     /// dialog and the loads that follow a reply read them).
     pub board_width: Cell<f32>,
     pub window_w: Cell<f32>,
+    /// Cached parsed arrangement for `app.tweaks.home_board`.
+    arrangement_cache: RefCell<Option<(Option<serde_json::Value>, HomeArrangement)>>,
+    /// Cached `albums::home_albums` result for `self.tracks`.
+    albums_cache: RefCell<Option<(u64, Vec<albums::HomeAlbum>)>>,
     pub edit: editing::Edit,
 }
 
@@ -316,7 +320,17 @@ impl Model {
 pub fn model(app: &App) -> Model {
     let st = &app.pages.home;
     let favorites = favorites(app);
-    let arrangement = read_arrangement(app.tweaks.home_board.as_ref());
+    let arrangement = {
+        let mut cache = st.arrangement_cache.borrow_mut();
+        match cache.as_ref() {
+            Some((raw, parsed)) if *raw == app.tweaks.home_board => parsed.clone(),
+            _ => {
+                let parsed = read_arrangement(app.tweaks.home_board.as_ref());
+                *cache = Some((app.tweaks.home_board.clone(), parsed.clone()));
+                parsed
+            }
+        }
+    };
     let enabled: Vec<HomePanel> = arrangement.panels.iter().filter(|p| !p.hidden).cloned().collect();
     let editing = app.location().has(CUSTOMIZE_PARAM);
     let lists = Source::list(&app.playlists);
@@ -342,7 +356,18 @@ pub fn model(app: &App) -> Model {
 
     let (recent_src, tracks_src) = (Source::list(&st.recent), Source::list(&st.tracks));
     let (recent, tracks) = (recent_src.rows(), tracks_src.rows());
-    let album_list = albums::home_albums(tracks);
+    let album_list = {
+        let rev = st.tracks.revision();
+        let mut cache = st.albums_cache.borrow_mut();
+        match cache.as_ref() {
+            Some((cached_rev, cached)) if *cached_rev == rev => cached.clone(),
+            _ => {
+                let computed = albums::home_albums(tracks);
+                *cache = Some((rev, computed.clone()));
+                computed
+            }
+        }
+    };
     // Wait for recently played before picking the hero, so a library track
     // doesn't take the slot and then get swapped out when it lands.
     let hero = if recent_src.answered() { recent.first().or(tracks.first()).cloned() } else { None };
@@ -489,8 +514,9 @@ fn plan(app: &App, t: &Theme, m: &Model, width: f32, window_w: f32, views: bool)
         favorites: favorites(app),
         views,
     };
+    let measure_ctx = panels::Ctx { views: false, ..ctx };
     let laid = grid::lay_out(&areas, width, t.gap(), size.columns(), |n, w| {
-        let natural = panels::panel(app, t, &ctx, &m.panels[n], w, None).natural;
+        let natural = panels::panel(app, t, &measure_ctx, &m.panels[n], w, None).natural;
         // A tile while customizing needs room, however little the panel holds.
         if m.editing { natural.max(148.0) } else { natural }
     });

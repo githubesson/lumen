@@ -2,7 +2,9 @@
 //! the playing track's band and the "Up next" list under it, shared with the
 //! mini player's queue panel. A click on a row jumps playback there.
 
-use rune::{Align, Color, Cursor, Cx, El, Side, col, el, row, text};
+use std::borrow::Cow;
+
+use rune::{Align, Color, Cursor, Cx, El, GrowthSpec, Side, col, el, row, text};
 
 use super::adapters::{self, MenuContext};
 use super::{Popover, close_btn, pop_box, pop_layer, position_pill};
@@ -87,23 +89,58 @@ pub fn list(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, close_on_jump: 
         parts.push(now_playing_band(app, t, scope, cur, index, menus));
     }
     let upcoming = p.queue.get(index + 1..).unwrap_or(&[]);
-    let mut rows = col().w_full().px(4.0).pb(4.0);
-    if upcoming.is_empty() {
-        rows = rows.child(
+    let rows = if upcoming.is_empty() {
+        col().w_full().px(4.0).pb(4.0).child(
             el().px(8.0).pt(8.0).pb(4.0).child(el().h(17.4).child(text("Nothing queued after this.").font(font(12.0, 400.0)).color(t.c.muted_foreground))),
-        );
+        )
     } else {
-        let total = p.queue_progress().upcoming;
-        rows = rows.child(
-            el().px(8.0)
-                .pt(8.0)
-                .pb(4.0)
-                .child(text(format!("Up next · {total}")).font(with_lh(font(12.0, 500.0), 16.0)).color(t.c.muted_foreground)),
+        let count = 1 + upcoming.len();
+        let scope_key = scope.to_string();
+        let scope_build = scope.to_string();
+        let ver = (
+            p.queue_rev(),
+            index,
+            upcoming.len(),
+            upcoming.first().map(|t| t.id.as_str()),
+            upcoming.last().map(|t| t.id.as_str()),
+            menus,
+            close_on_jump,
         );
-        for (n, track) in upcoming.iter().enumerate() {
-            rows = rows.child(queue_row(app, t, scope, track, index + 1 + n, close_on_jump, menus));
-        }
-    }
+        col()
+            .w_full()
+            .px(4.0)
+            .pb(4.0)
+            .growth(GrowthSpec { edge: rune::edge::NO_MASK, ..GrowthSpec::default() })
+            .virtual_rows(
+                count,
+                40.0,
+                move |app: &App, i| -> Cow<'_, str> {
+                    if i == 0 {
+                        Cow::Owned(format!("{scope_key}-up-next"))
+                    } else {
+                        let base = app.player.index.unwrap_or(0);
+                        Cow::Owned(format!("{scope_key}-row-{}", base + i))
+                    }
+                },
+                move |app: &App, i| {
+                    let t = app.theme();
+                    let p = &app.player;
+                    if i == 0 {
+                        let total = p.queue_progress().upcoming;
+                        return el()
+                            .px(8.0)
+                            .pt(8.0)
+                            .pb(4.0)
+                            .child(text(format!("Up next · {total}")).font(with_lh(font(12.0, 500.0), 16.0)).color(t.c.muted_foreground));
+                    }
+                    let q_idx = p.index.unwrap_or(0) + i;
+                    let Some(track) = p.queue.get(q_idx) else { return el() };
+                    let menus = p.target_device().is_none();
+                    queue_row(app, &t, &scope_build, track, q_idx, close_on_jump, menus)
+                },
+            )
+            .virtual_rows_version(ver)
+    };
     parts.push(super::auto_scroll(t, cx, &format!("{scope}-list"), rows).shrink().min_h(0.0));
     parts
 }

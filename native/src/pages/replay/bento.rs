@@ -15,7 +15,7 @@ use crate::app::App;
 use crate::core::dates::{self, MONTHS_LONG, MONTHS_SHORT};
 use crate::core::entity_target::{replay_album_target, track_album_target};
 use crate::core::replay::figures::{
-    CalendarUnit, ReplayCalendar, activity_peak, activity_series, genre_shares, plays_per_unit,
+    CalendarUnit, ReplayCalendar, activity_peak, plays_per_unit,
     replay_album_subtitle, replay_track_artists, top_artist_action, top_artist_tracks,
 };
 use crate::core::replay::period::{ListeningTimeStyle, format_listening_time};
@@ -324,14 +324,12 @@ pub(super) fn panel(t: &Theme, key: &str, areas: &Areas, columns: usize, width: 
 }
 
 /// `ReplayBento`: the period's tiles, for a period with plays.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn view(
     app: &App,
     t: &Theme,
     cx: &mut Cx<App>,
     d: &ReplayData,
-    calendar: Option<&ReplayCalendar>,
-    chart_bucket: ReplayBucket,
+    derived: &super::Derived,
     panel_w: f32,
 ) -> El {
     let s = &app.pages.replay;
@@ -341,11 +339,10 @@ pub(super) fn view(
     // "Play top tracks" and "Generate playlist" go past the eight shown, so
     // the rest are one click away too, in the full table.
     let more = d.top_tracks.len() > SHOWN_TRACKS;
-    let (series_bucket, series) = match calendar {
-        Some(c) => activity_series(c, chart_bucket),
-        None => (d.bucket, d.activity.clone()),
-    };
-    let genres: Vec<_> = genre_shares(&d.top_genres).into_iter().take(5).collect();
+    let calendar = derived.calendar.as_ref();
+    let series_bucket = derived.series_bucket;
+    let series = &derived.series;
+    let genres = &derived.genres;
     let tiles = BentoTiles {
         feat: top.is_some(),
         list: !others.is_empty(),

@@ -310,9 +310,16 @@ pub fn load(app: &mut App, then: Option<Then>) {
     let (id, mount, seq) = (d.id.clone(), d.mount, d.load_gen);
     app.net.run(
         move || {
-            let p = crate::api::playlists::get_playlist(&client, &id);
-            let t = crate::api::playlists::list_playlist_tracks_if_changed(&client, &id, None);
-            let first = early.then(|| crate::api::playlists::list_collaborators(&client, &id).ok());
+            let (p, t, first) = std::thread::scope(|s| {
+                let p = s.spawn(|| crate::api::playlists::get_playlist(&client, &id));
+                let t = s.spawn(|| crate::api::playlists::list_playlist_tracks_if_changed(&client, &id, None));
+                let c = early.then(|| s.spawn(|| crate::api::playlists::list_collaborators(&client, &id).ok()));
+                (
+                    p.join().expect("playlist fetch panicked"),
+                    t.join().expect("playlist tracks fetch panicked"),
+                    c.map(|h| h.join().expect("collaborators fetch panicked")),
+                )
+            });
             // None: that request failed, so keep what's shown.
             let collabs = match &p {
                 Ok(p) if shows_collaborators(p) => first.unwrap_or_else(|| crate::api::playlists::list_collaborators(&client, &id).ok()),
@@ -428,11 +435,10 @@ pub(super) fn arm_poll(app: &mut App) {
     d.poll += 1;
     let (mount, token) = (d.mount, d.poll);
     let Some(ms) = delay else { return };
-    let sender = app.net.sender();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(ms));
-        sender.send(move |app| refresh(app, mount, token));
-    });
+    if app.net.is_sync() {
+        return;
+    }
+    app.net.after(std::time::Duration::from_millis(ms), move |app| refresh(app, mount, token));
 }
 
 fn refresh(app: &mut App, mount: u64, token: u64) {

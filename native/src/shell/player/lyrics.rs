@@ -337,7 +337,11 @@ pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str) -> El {
                     std::cmp::Ordering::Greater => LineState::Upcoming,
                 };
                 let word = if state == LineState::Active { s.word } else { None };
-                lines = lines.child(synced_line(t, &format!("{scope}-line-{n}"), &line.text, line.section, state, word, wrap_w));
+                let key = format!("{scope}-line-{n}");
+                let ver = (t.key(), line.text.as_str(), line.section, state, word, wrap_w.map(f32::to_bits));
+                lines = lines.child(rune::memo(key, ver, || {
+                    synced_line(t, &line.text, line.section, state, word, wrap_w)
+                }));
             }
             scroller(cx, scope, lines)
         }
@@ -345,12 +349,15 @@ pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str) -> El {
             let wrap_w = text_width(cx, scope);
             let mut lines = col().w_full().px(18.0).pt(36.0).pb(window_h * 0.24);
             for (n, line) in plain.iter().enumerate() {
-                let el = if line.section {
-                    section_text(t, &line.text, wrap_w)
-                } else {
-                    css_lines(text(line.text.clone()).font(line_style(400.0)).color(t.c.muted_foreground).wrap(), &line.text, line_style(400.0), wrap_w).mb(18.0)
-                };
-                lines = lines.child(el.key(format!("{scope}-line-{n}")));
+                let key = format!("{scope}-line-{n}");
+                let ver = (t.key(), line.text.as_str(), line.section, wrap_w.map(f32::to_bits));
+                lines = lines.child(rune::memo(key, ver, || {
+                    if line.section {
+                        section_text(t, &line.text, wrap_w)
+                    } else {
+                        css_lines(text(line.text.clone()).font(line_style(400.0)).color(t.c.muted_foreground).wrap(), &line.text, line_style(400.0), wrap_w).mb(18.0)
+                    }
+                }));
             }
             scroller(cx, scope, lines)
         }
@@ -358,7 +365,7 @@ pub fn content(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str) -> El {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum LineState {
     Active,
     Past,
@@ -392,7 +399,7 @@ fn css_lines(e: El, s: &str, style: rune::TextStyle, wrap_w: Option<f32>) -> El 
 /// A synced line in its tier: past lines small and faint, upcoming ones
 /// faint, the active one whole and a touch larger (15/14), its words lit up
 /// to the one being sung.
-fn synced_line(t: &Theme, key: &str, s: &str, section: bool, state: LineState, word: Option<usize>, wrap_w: Option<f32>) -> El {
+fn synced_line(t: &Theme, s: &str, section: bool, state: LineState, word: Option<usize>, wrap_w: Option<f32>) -> El {
     let base = color_mix(t.c.muted_foreground, 0.75, Color::TRANSPARENT);
     let mut e = if section {
         section_text(t, s, wrap_w)
@@ -412,7 +419,7 @@ fn synced_line(t: &Theme, key: &str, s: &str, section: bool, state: LineState, w
     } else {
         css_lines(text(s).font(line_style(400.0)).color(base).wrap(), s, line_style(400.0), wrap_w).mb(18.0)
     };
-    e = e.key(key).origin(0.0, 0.5);
+    e = e.origin(0.0, 0.5);
     match state {
         LineState::Active => e.scale(1.0714),
         LineState::Past => e.opacity(0.28).scale(0.985).blur(0.35),

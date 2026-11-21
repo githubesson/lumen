@@ -143,6 +143,8 @@ pub struct Player {
     last_levels: (f64, bool),
     last_publish: Option<PublishKey>,
     shown_queue_rev: Option<u64>,
+    /// Bumped whenever `queue` (local or remote) changes.
+    queue_version: u64,
     /// Bumped when something without a field of its own changed (devices,
     /// the connection, output devices, the remote-control notice).
     generation: u64,
@@ -229,6 +231,7 @@ impl Player {
             last_levels: (0.8, false),
             last_publish: None,
             shown_queue_rev: None,
+            queue_version: 0,
             generation: 0,
         };
         p.last_levels = (p.local.volume(), p.local.muted());
@@ -245,6 +248,11 @@ impl Player {
 
     pub fn has_track(&self) -> bool {
         self.current().is_some()
+    }
+
+    /// Monotonic revision bumped whenever `self.queue` changes.
+    pub fn queue_rev(&self) -> u64 {
+        self.queue_version
     }
 
     /// Where playback is in its queue, in absolute numbers for a remote window.

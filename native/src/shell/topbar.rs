@@ -197,86 +197,104 @@ pub fn window_controls(t: &Theme) -> El {
 
 pub fn view(app: &App, t: &Theme, window_w: f32, bp: super::Bp) -> El {
     let narrow = bp == super::Bp::Narrow;
-    let compact = t.layout == Layout::Compact;
-    let on_home = app.location().is("/");
-    let customizing = on_home && app.location().has("customize");
-    let dark = t.dark();
-
-    let mut bar = ui::css_border_bottom(row(), 1.0, t.c.border)
-        .key("topbar")
-        .h(48.0)
-        .px(if narrow { 8.0 } else { t.pad() })
-        .pb(1.0)
-        .gap(8.0)
-        .items_center()
-        .window_drag();
-    if narrow {
-        let open = app.ui.mobile_nav_open;
-        let label = if open { "Close navigation" } else { "Open navigation" };
-        bar = bar
-            .child(
-                iconbtn(t, "sidebar-toggle-mobile", if open { &i::X } else { &i::MENU }, 16.0, BtnState::default())
-                    .label(label)
-                    .tip("sidebar-toggle-mobile", label)
-                    .expanded(open)
-                    .on_press(|app: &mut App| app.ui.mobile_nav_open = !app.ui.mobile_nav_open),
-            )
-            .child(breadcrumbs(app, t).grow(1.0))
-            .child(search_icon(t));
-    } else {
-        bar = bar
-            .child(
-                iconbtn(t, "sidebar-toggle", if compact { &i::PANEL_LEFT_OPEN } else { &i::PANEL_LEFT_CLOSE }, 16.0, BtnState::default())
-                    .label(if compact { "Expand sidebar" } else { "Collapse sidebar" })
-                    .tip("sidebar-toggle", if compact { "Expand sidebar" } else { "Collapse sidebar" })
-                    .on_press_tx(|app: &mut App, tx| {
-                        // `.app`'s `grid-template-columns` transition.
-                        tx.motion_curve(crate::ui::motion::shell(280.0));
-                        app.toggle_sidebar();
-                    }),
-            )
-            .child(breadcrumbs(app, t))
-            .child(el().grow(1.0).h(1.0))
-            .child(search(t, window_w));
-    }
-    if on_home {
-        bar = bar.child(
-            iconbtn(t, "customize-home", &i::LAYOUT_DASHBOARD, 16.0, BtnState { active: customizing, disabled: false })
-                .label("Customize Home")
-                .tip("customize-home", if customizing { "Done customizing" } else { "Customize Home" })
-                .on_press(move |app: &mut App| {
-                    let to = if customizing { "/" } else { "/?customize" };
-                    app.navigate_replace(Location::parse(to));
-                }),
-        );
-    }
-    bar = bar.child(
-        iconbtn(t, "toggle-lyrics", &i::MIC_VOCAL, 16.0, BtnState { active: app.ui.lyrics_open, disabled: false })
-            .label("Toggle lyrics panel")
-            .tip("toggle-lyrics", "Lyrics")
-            .on_press(|app: &mut App| app.ui.lyrics_open = !app.ui.lyrics_open),
+    let loc = app.location();
+    let playlist_name = loc
+        .path
+        .starts_with("/playlists/")
+        .then(|| loc.segment(1))
+        .flatten()
+        .and_then(|id| app.playlists.data.as_ref()?.iter().find(|x| x.id == id).map(|x| x.name.as_str()));
+    let ver = (
+        t.key(),
+        bp,
+        if narrow { 0 } else { window_w.to_bits() },
+        loc.href(),
+        playlist_name,
+        narrow && app.ui.mobile_nav_open,
+        app.ui.lyrics_open,
+        app.ui.settings_open,
     );
-    if narrow {
-        // `.topbar-secondary` hides on narrow windows.
-        return bar.child(window_controls(t));
-    }
-    bar.child(
-        iconbtn(t, "add-music", &i::UPLOAD, 16.0, BtnState::default())
-            .label("Add music")
-            .tip("add-music", "Add music")
-            .on_press(crate::overlays::upload::open),
-    )
-    .child(
-        iconbtn(t, "toggle-theme", if dark { &i::SUN } else { &i::MOON }, 16.0, BtnState::default())
-            .label("Toggle theme")
-            .tip("toggle-theme", if dark { "Switch to light mode" } else { "Switch to dark mode" })
-            .on_press(|app: &mut App| app.toggle_theme()),
-    )
-    .child(
-        iconbtn(t, "open-settings", &i::SLIDERS_HORIZONTAL, 16.0, BtnState { active: app.ui.settings_open, disabled: false })
-            .label("Settings")
-            .tip("open-settings", "Settings")
-            .on_press(crate::overlays::settings::toggle),
-    )
-    .child(window_controls(t))
+    rune::memo("topbar", ver, || {
+        let compact = t.layout == Layout::Compact;
+        let on_home = loc.is("/");
+        let customizing = on_home && loc.has("customize");
+        let dark = t.dark();
+
+        let mut bar = ui::css_border_bottom(row(), 1.0, t.c.border)
+            .h(48.0)
+            .px(if narrow { 8.0 } else { t.pad() })
+            .pb(1.0)
+            .gap(8.0)
+            .items_center()
+            .window_drag();
+        if narrow {
+            let open = app.ui.mobile_nav_open;
+            let label = if open { "Close navigation" } else { "Open navigation" };
+            bar = bar
+                .child(
+                    iconbtn(t, "sidebar-toggle-mobile", if open { &i::X } else { &i::MENU }, 16.0, BtnState::default())
+                        .label(label)
+                        .tip("sidebar-toggle-mobile", label)
+                        .expanded(open)
+                        .on_press(|app: &mut App| app.ui.mobile_nav_open = !app.ui.mobile_nav_open),
+                )
+                .child(breadcrumbs(app, t).grow(1.0))
+                .child(search_icon(t));
+        } else {
+            bar = bar
+                .child(
+                    iconbtn(t, "sidebar-toggle", if compact { &i::PANEL_LEFT_OPEN } else { &i::PANEL_LEFT_CLOSE }, 16.0, BtnState::default())
+                        .label(if compact { "Expand sidebar" } else { "Collapse sidebar" })
+                        .tip("sidebar-toggle", if compact { "Expand sidebar" } else { "Collapse sidebar" })
+                        .on_press_tx(|app: &mut App, tx| {
+                            // `.app`'s `grid-template-columns` transition.
+                            tx.motion_curve(crate::ui::motion::shell(280.0));
+                            app.toggle_sidebar();
+                        }),
+                )
+                .child(breadcrumbs(app, t))
+                .child(el().grow(1.0).h(1.0))
+                .child(search(t, window_w));
+        }
+        if on_home {
+            bar = bar.child(
+                iconbtn(t, "customize-home", &i::LAYOUT_DASHBOARD, 16.0, BtnState { active: customizing, disabled: false })
+                    .label("Customize Home")
+                    .tip("customize-home", if customizing { "Done customizing" } else { "Customize Home" })
+                    .on_press(move |app: &mut App| {
+                        let to = if customizing { "/" } else { "/?customize" };
+                        app.navigate_replace(Location::parse(to));
+                    }),
+            );
+        }
+        bar = bar.child(
+            iconbtn(t, "toggle-lyrics", &i::MIC_VOCAL, 16.0, BtnState { active: app.ui.lyrics_open, disabled: false })
+                .label("Toggle lyrics panel")
+                .tip("toggle-lyrics", "Lyrics")
+                .on_press(|app: &mut App| app.ui.lyrics_open = !app.ui.lyrics_open),
+        );
+        if narrow {
+            // `.topbar-secondary` hides on narrow windows.
+            return bar.child(window_controls(t));
+        }
+        bar.child(
+            iconbtn(t, "add-music", &i::UPLOAD, 16.0, BtnState::default())
+                .label("Add music")
+                .tip("add-music", "Add music")
+                .on_press(crate::overlays::upload::open),
+        )
+        .child(
+            iconbtn(t, "toggle-theme", if dark { &i::SUN } else { &i::MOON }, 16.0, BtnState::default())
+                .label("Toggle theme")
+                .tip("toggle-theme", if dark { "Switch to light mode" } else { "Switch to dark mode" })
+                .on_press(|app: &mut App| app.toggle_theme()),
+        )
+        .child(
+            iconbtn(t, "open-settings", &i::SLIDERS_HORIZONTAL, 16.0, BtnState { active: app.ui.settings_open, disabled: false })
+                .label("Settings")
+                .tip("open-settings", "Settings")
+                .on_press(crate::overlays::settings::toggle),
+        )
+        .child(window_controls(t))
+    })
 }
