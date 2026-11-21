@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The app bundle's Info.plist; package.sh fills in @VERSION@ (major.minor.patch). -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<!-- Rune names the app menu's items after the executable ("Quit Lumen"). -->
+	<key>CFBundleExecutable</key>
+	<string>Lumen</string>
+	<!-- The Electron app's id plus ".native": the two apps sit side by side. -->
+	<key>CFBundleIdentifier</key>
+	<string>com.lumen.music-library.native</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Lumen</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<!-- macOS 26 draws the light/dark/tinted icon from Assets.car; older ones use icon.icns. -->
+	<key>CFBundleIconName</key>
+	<string>icon</string>
+	<key>CFBundleIconFile</key>
+	<string>icon</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.music</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<!-- Without it macOS runs the app at 1x and scales it up on Retina screens. -->
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<!-- The reason the Local Network prompt shows for a server on the LAN. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Lumen connects to your Lumen server, which can be on your local network.</string>
+</dict>
+</plist>

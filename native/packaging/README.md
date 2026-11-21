@@ -37,6 +37,40 @@ Until it replaces the Electron app, the installer puts the app in
 `%LOCALAPPDATA%\Programs\Lumen Native` beside the Electron one; both read the
 same settings in `%APPDATA%\Lumen`.
 
+## macOS
+
+```sh
+# On a Mac, with rustup's cargo (Homebrew's ignores rust-toolchain.toml)
+cargo build --profile dist --locked
+
+packaging/macos/package.sh target/dist/lumen <version> out/package
+```
+
+`package.sh` writes `Lumen Native.app` and `Lumen-Native-V-<arch>-mac.zip`
+(arm64, x64 or universal). The bundle carries the Electron app's icons
+(`icon.icns`, and `Assets.car` for macOS 26's light, dark and tinted
+variants), `macos/Info.plist` (Retina, the Local Network prompt's reason, the
+id `com.lumen.music-library.native` so it sits beside the Electron app) and an
+ad hoc signature. It needs the Xcode command line tools.
+
+For one app that runs on both Apple silicon and Intel:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo build --profile dist --locked --target aarch64-apple-darwin
+cargo build --profile dist --locked --target x86_64-apple-darwin
+lipo -create -output target/lumen-universal \
+  target/aarch64-apple-darwin/dist/lumen target/x86_64-apple-darwin/dist/lumen
+packaging/macos/package.sh target/lumen-universal <version> out/package
+```
+
+The app isn't signed with a Developer ID or notarized: it opens on the Mac
+that built it, but a downloaded copy is quarantined and Gatekeeper calls it
+damaged until `xattr -dr com.apple.quarantine "Lumen Native.app"`. Both apps
+read the same settings in `~/Library/Application Support/Lumen`. On macOS
+there are no media keys or Now Playing entry yet (`player/media_session.rs`),
+and the updater only knows the Windows installer.
+
 ## Releases and updates
 
 The in-app updater (`src/desktop/updater.rs`) looks at the repository's GitHub
