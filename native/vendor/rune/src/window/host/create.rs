@@ -35,6 +35,8 @@ impl Host {
     #[cfg_attr(not(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))), allow(unused_variables))]
     pub(in crate::window) fn try_create(&mut self, event_loop: &ActiveEventLoop, token: Option<String>, focus: bool) -> Result<(), String> {
         // A released window reopens at the height its content reached while it was gone.
+        // Lumen patch: clear any stale Wayland overdue-frame state from a prior window instance.
+        self.redraw_watch.answered();
         crate::marks::mark("window.create");
         let built = self.shown && self.build_for_show();
         let size = self.args.size.unwrap_or(self.geometry.size);

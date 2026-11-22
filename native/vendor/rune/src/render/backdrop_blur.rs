@@ -493,26 +493,26 @@ impl Renderer {
         let edge = |v: f32, o: f32, max: u32| (v - o).clamp(0.0, max as f32) as u32;
         let (x0, y0) = (edge(r[0].max(c[0]).floor(), origin[0], size[0]), edge(r[1].max(c[1]).floor(), origin[1], size[1]));
         let (x1, y1) = (edge((r[0] + r[2]).min(c[2]).ceil(), origin[0], size[0]), edge((r[1] + r[3]).min(c[3]).ceil(), origin[1], size[1]));
+        // Lumen patch: skip the backdrop copy and blur pyramid when the active scissor/damage bound
+        // misses this blur completely (`render::partial`).
+        let scope = pass.scissor();
+        let [sx, sy, sw, sh] = scope.unwrap_or([0, 0, size[0], size[1]]);
+        let (x0, y0, x1, y1) = (x0.max(sx), y0.max(sy), x1.min(sx + sw), y1.min(sy + sh));
         if x1 <= x0 || y1 <= y0 { return; }
         let split = pass.split(self, format, origin, size, target.is_some(), Some(record.region), |encoder, backdrop| {
             blur.encode(encoder, backdrop.format, record);
         });
         if split.is_none() { return; }
-        let scope = pass.scissor();
-        let [sx, sy, sw, sh] = scope.unwrap_or([0, 0, size[0], size[1]]);
-        let (x0, y0, x1, y1) = (x0.max(sx), y0.max(sy), x1.min(sx + sw), y1.min(sy + sh));
-        if x1 > x0 && y1 > y0 {
-            let bind = match target {
-                Some(index) => &self.layers.targets[index].as_ref().unwrap().base,
-                None => &self.bind_group,
-            };
-            pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
-            pass.set_pipeline(composite);
-            pass.set_bind_group(0, bind, &[]);
-            pass.set_bind_group(1, &pyramid.result, &[(record.slot * SLOTS) as u32 * SLOT as u32]);
-            pass.set_vertex_buffer(0, self.instances.slice(..));
-            pass.draw(0..4, at..at + 1);
-        }
+        let bind = match target {
+            Some(index) => &self.layers.targets[index].as_ref().unwrap().base,
+            None => &self.bind_group,
+        };
+        pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
+        pass.set_pipeline(composite);
+        pass.set_bind_group(0, bind, &[]);
+        pass.set_bind_group(1, &pyramid.result, &[(record.slot * SLOTS) as u32 * SLOT as u32]);
+        pass.set_vertex_buffer(0, self.instances.slice(..));
+        pass.draw(0..4, at..at + 1);
         pass.set_scissor(scope, size);
     }
 }

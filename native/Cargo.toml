@@ -12,9 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 # Rune is pre-release: pin a rev of `dev` (never rewritten).
-# Disable `embedded-fonts` (Lumen supplies Geist), `ogg-audio` (Lumen decodes audio itself),
-# `segmenter-dictionaries` (Windows uses `icu.dll`), and `keys-overlay`; keep `tooling` on
-# so release builds retain `--snap`/`--tree`/`--script` for CI and `tools/sweep.mjs`.
+# Disable default `embedded-fonts` (Lumen supplies Geist) and `ogg-audio` (Lumen decodes audio
+# itself), and leave opt-in `segmenter-dictionaries` (Windows uses `icu.dll`) and `keys-overlay`
+# off; keep `tooling` on so release builds retain `--snap`/`--tree`/`--script` for CI and `tools/sweep.mjs`.
 rune = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa", default-features = false, features = ["accessibility", "dbus", "metal-backend", "svg", "native-file-dialog", "tooling"] }
 rune-motion = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }
 serde = { version = "1", features = ["derive"] }

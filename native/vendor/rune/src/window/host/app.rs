@@ -71,8 +71,9 @@ impl dyn WindowApp + '_ {
         self.driver(|rt, app| clock.advance_core(rt, app, at, compositing))
     }
 
-    pub(in crate::window) fn covered_wake(&mut self) {
-        self.driver(|rt, app| { rt.covered_wake(app); });
+    // Lumen patch: return whether `covered_wake` marked state stale (for `redraw_watch` stalled path).
+    pub(in crate::window) fn covered_wake(&mut self) -> bool {
+        self.driver(|rt, app| rt.covered_wake(app))
     }
 
     pub(in crate::window) fn hidden_wake(&mut self) -> bool {

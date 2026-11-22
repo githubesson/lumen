@@ -242,7 +242,17 @@ impl Host {
             if hidden && !(launcher && self.hidden_launcher_renders()) {
                 // Hidden or windowless: poll and due timers run, and the view waits for the
                 // frame that shows the window. A launcher's cached frame follows, paced.
-                let changed = self.app.hidden_wake();
+                // Lumen patch: a shown window whose Wayland frame stalled uses `covered_wake`
+                // (preserving accessibility tree updates) and advances `timer_frame`'s stall
+                // anchor so `TimerFrame::wait` never returns a past deadline.
+                let changed = if stalled && self.shown_win().is_some() {
+                    if let Some(w) = &mut self.win && w.timer_frame.stalled(now) {
+                        w.timer_frame.stalled_again(now);
+                    }
+                    self.app.covered_wake()
+                } else {
+                    self.app.hidden_wake()
+                };
                 // Lumen patch: loops wait for the frame too, or their wake polls every interval.
                 if stalled { self.app.rt_mut().drop_loop_wake(); }
                 self.clipboard.flush_core(self.app.rt_mut());

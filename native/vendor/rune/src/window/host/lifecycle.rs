@@ -420,6 +420,8 @@ impl Host {
     }
 
     pub(in crate::window) fn hide(&mut self, event_loop: &ActiveEventLoop) {
+        // Lumen patch: a hidden or destroyed window has no pending compositor frame (`redraw_watch`).
+        self.redraw_watch.answered();
         self.rest_step(RestEvent::Unseen);
         self.stop_showing();
         self.wind_down();
@@ -484,6 +486,8 @@ impl Host {
     /// that releases its GPU when closed. The next `open` makes a window, a device and a surface
     /// (an app that sees `AppHandle::window_error` and the window gone can ask for one).
     pub(in crate::window) fn release(&mut self) {
+        // Lumen patch: clear any pending Wayland frame watch when releasing the window (`redraw_watch`).
+        self.redraw_watch.answered();
         self.win = None;
         self.native_handle.native.ready.store(false, Ordering::Release);
         self.native_handle.native.number.store(0, Ordering::Release);

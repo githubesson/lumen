@@ -19,16 +19,18 @@ Docs: upstream's `crates/rune/README.md` (also in the cargo checkout,
 
 ### What was copied, and what was left out
 
-Copied from `crates/rune`: `Cargo.toml`, `build.rs`, `src/`, and the precompiled DX12 shaders
-(`shaders/dxbc/*.dxbc`); `LICENSE` from the repo root. Everything `build.rs` or an
-`include_bytes!`/`include_str!` outside a test module reads is kept (the `.metallib`s, `.wgsl`s,
-cursor `.png`s, and `.dxbc`s). `assets/` is omitted: bundled fallback fonts moved into `rune-text`
-and are gated natively by `embedded-fonts`.
+Copied from `crates/rune`: `Cargo.toml`, `build.rs`, `src/`, and `shaders/` (including the 20
+precompiled DX12 shaders under `shaders/dxbc/`); `LICENSE` from the repo root. Everything
+`build.rs` or an `include_bytes!`/`include_str!` outside a test module reads is kept (the
+`.metallib`s, `.wgsl`s, cursor `.png`s, and `.dxbc`s). `assets/` is omitted: upstream's TTFs
+still sit in `crates/rune/assets/` in the git checkout, where `rune-text` reads them by relative
+path when `embedded-fonts` is enabled (tests only here), so the vendored `rune` crate does not
+need a second copy.
 
-Left out, as the build doesn't need them: `README.md`, `examples/`, `tests/`, `assets/`,
-`artifacts/`, and the in-source tests (every `src/**/tests/` directory, `*_tests.rs`, `tests.rs`
-and the `*_data/` fixtures they read). Each of those modules is declared under `#[cfg(test)]`, so
-nothing else changes; `cargo test` in `native/` doesn't run Rune's own tests.
+Left out, as the build doesn't need them: `README.md`, `examples/`, `tests/`, `assets/`, and the
+in-source tests (every `src/**/tests/` directory, `*_tests.rs`, `tests.rs` and the `*_data/`
+fixtures they read). Each of those modules is declared under `#[cfg(test)]`, so nothing else
+changes; `cargo test` in `native/` doesn't run Rune's own tests.
 
 `Cargo.toml` changes (needed to build outside Rune's workspace):
 
@@ -108,7 +110,9 @@ Hooks in upstream files:
 
 - `src/runtime/paint.rs`: `pub(super) mod round_clip`.
 - `src/runtime/paint/build/layers.rs`: `settle_rounds` replaces the central-strip `strip_round_mask`
-  calls before the backdrop blur.
+  helper before the backdrop blur (for elements with `backdrop_blur > 0.0`, settling only the
+  inherited mask before `push_backdrop_blur` and then settling `own_round` afterward so the blur
+  never loses an ancestor arc it still needs).
 
 #### Cross-platform partial window redraws (with transparent-window clear & Windows `Present1`)
 
@@ -120,22 +124,28 @@ macOS.
 
 `src/render/partial.rs` (new) gives each window on every platform a canvas texture that keeps the
 last frame's pixels. Each frame compares its instances with the last frame's (reusing the previous
-frame's cached `Analysis`, and skipping analysis and copying on byte-identical frames with no
-dirty image atlas rows). The screen areas of what was added, removed or changed (using upstream's
-WGSL-derived `Instance::damage_quad_bounds`), a changed layer marker's whole scope, and images
-whose atlas rows were rewritten are gathered into up to 8 rectangles. Each rectangle is cleared
-with a dedicated `BlendState` = replace shader (correctly clearing transparent pixels) and redrawn
-under a scissor with every instance in order. `ActivePass` keeps every nested scissor inside it
-(including across owned backdrop-blur splits), and the canvas is then copied into the drawable. On
-Windows, `Partial::draw` also feeds its dirty rectangles into `prepared.present_rect` so DX12
-presents via `Present1` dirty rects (tracking `configure::generation` in `Partial`'s key so a fresh
-or rebound swap chain always presents whole first).
+frame's cached `Analysis`, and skipping analysis, redraw, and `prev` copying on byte-identical
+frames with no dirty image atlas rows, while still copying the retained canvas to the drawable).
+The screen areas of what was added, removed or changed (using upstream's WGSL-derived
+`Instance::damage_quad_bounds`), a changed layer marker's whole scope, and images whose atlas rows
+were rewritten are gathered and merged into up to 8 rectangles; blur reach is checked iteratively
+against the merged rectangles so merging or hulling can never expand a rectangle over an unreached
+backdrop blur. Each rectangle is cleared with a dedicated `BlendState` = replace shader (correctly
+clearing transparent pixels) and redrawn under a scissor with every instance in order. `ActivePass`
+keeps every nested scissor inside it (including across owned backdrop-blur splits), and the canvas
+is then copied into the drawable. On Windows, `render_window_frame` maps `Partial::draw`'s result
+into `prepared.present_rect` so DX12 presents via `Present1` dirty rects (tracking
+`configure::generation` in `Partial`'s key so a fresh or rebound swap chain always presents whole
+first).
 
 An instance inside layers reaches the screen through each one: blurred layers spread damage by
 their blur's reach and turned layers turn it, so damage inside them stays local. A backdrop blur
-that damage reaches joins the damage and redraws as one rectangle on an owned pass. Only what
-can't be bounded draws whole: compositors, native surfaces/materials, effect slots, cached
-subtrees, new/resized/reconfigured canvases, glyph atlas resets, and damage over 85% of the window.
+that any merged damage rectangle reaches joins the damage and redraws as one rectangle on an owned
+pass; a blur missed by the active scissor skips its backdrop copy and blur pyramid early. Only what
+can't be bounded draws whole: compositors, GPU springs, native surfaces/materials, effect slots,
+cached subtrees, new/resized/reconfigured canvases, changed key parameters (size, format, clear
+colour, sRGB blending, scale, glyph atlas resets, swap-chain generation), and damage over 85% of
+the window.
 
 `RUNE_PARTIAL=off` draws every frame whole; `verify` also draws each partial frame whole and
 reports any differing pixel; `stats` prints per-second partial-redraw statistics.
@@ -143,6 +153,8 @@ reports any differing pixel; `stats` prints per-second partial-redraw statistics
 Hooks in upstream files:
 
 - `src/render.rs`: `pub(crate) mod partial`.
+- `src/render/backdrop_blur.rs`: check `pass.scissor()` before `pass.split(...)` so blurs outside
+  the active damage bound skip the backdrop copy and pyramid passes.
 - `src/render/instance.rs`: expose `Instance::damage_quad_bounds` on all platforms (not only Windows).
 - `src/render/pass.rs`: `OpenPass::bound`, `ActivePass::bounded`; `set_scissor`, `scissor` and the
   pass a backdrop split re-opens stay inside the damage bound.
@@ -151,8 +163,8 @@ Hooks in upstream files:
   invalidated on `Host::rebind_alpha`.
 - `src/window/host/render.rs`: capture `image_dirty` before `upload_images`; non-compositor frames
   draw through `Partial::draw` (bypassing upstream's Windows `l.native.damage` to avoid a second
-  retained canvas, and wiring `Partial`'s rects to Windows `Present1`); compositor frames
-  invalidate the canvas.
+  retained canvas, and mapping `Partial::draw`'s result into `prepared.present_rect` for Windows
+  `Present1`); compositor frames invalidate the canvas.
 
 #### Return activates a focused element link
 
@@ -172,27 +184,32 @@ workspace, hidden or minimised) without reporting it occluded, so winit never de
 asked for. Upstream's `TimerFrame::stalled` now handles due timers on covered Wayland surfaces,
 but `AppHandle::wake` (used by MPRIS and media keys) still asks for a frame without polling until
 that frame arrives. `src/window/redraw_watch.rs` (new) notes when a frame asked for a wake or
-timer goes unanswered; once it is 250 ms overdue, the host polls without it, once at that deadline
-and then at each wake and due timer, as for a hidden window, while still asking for the frame.
-Each of those polls also drops the runtime's loop wake (`RuntimeCore::drop_loop_wake`), so an
-on-screen loop (e.g. a spinner) doesn't poll at ~60 Hz while hidden. The first frame that arrives
-clears the watch. Only Wayland arms the watch.
+timer goes unanswered; once it is 250 ms overdue, the host polls without it (using `covered_wake`
+on a shown window so accessibility tree updates continue, and advancing `TimerFrame::stalled_again`
+when due), once at that deadline and then at each wake and due timer, while still asking for the
+frame. Each of those polls also drops the runtime's loop wake (`RuntimeCore::drop_loop_wake`), so
+an on-screen loop (e.g. a spinner) doesn't poll at ~60 Hz while hidden. The first frame that
+arrives, or hiding/releasing/recreating the window, clears the watch. Only Wayland arms the watch.
 
 Hooks in upstream files:
 
 - `src/window.rs`: `mod redraw_watch`.
 - `src/window/host.rs`: `Host::redraw_watch`.
-- `src/window/host/any_host.rs`: `new_events_in_turn` runs the overdue frame's poll and takes the
-  hidden path while overdue (dropping the loop wake), and timer frames arm the watch;
-  `wake_deadline` wakes for it.
+- `src/window/host/app.rs`: `covered_wake` returns `bool` (`stale`).
+- `src/window/host/any_host.rs`: `new_events_in_turn` runs the overdue frame's poll (taking
+  `covered_wake` + `timer_frame.stalled_again` for a shown stalled window and dropping the loop
+  wake), and timer frames arm the watch; `wake_deadline` wakes for it.
 - `src/runtime/motion/timer_wake.rs`: `RuntimeCore::drop_loop_wake`.
 - `src/window/host/lifecycle.rs`: `poll_hidden` polls a shown window whose frame is overdue
-  (dropping the loop wake); `drain`'s `WakeWork::Paint` arms the watch.
+  (dropping the loop wake); `drain`'s `WakeWork::Paint` arms the watch; `hide` and `release` clear
+  it.
+- `src/window/host/create.rs`: `try_create` clears any prior watch state.
 - `src/window/host/events.rs`: `RedrawRequested` clears it.
 
 #### Empty blurred-layer elision in `end_layer`
 
-`src/render/instance.rs` (`end_layer`): elides empty non-cached layer scopes
-(`primitives + videos == 0 && scope.params[3] == 0.0`) even when `blur > 0.0` (e.g. off-screen
-blurred lyrics lines) or blend/turn/cutout/clip is set, since an empty layer composites
-transparent black.
+`src/render/instance.rs` (`end_layer`): upstream already elides empty non-cached layer scopes that
+carry a turn or cutout; this patch extends empty non-cached elision
+(`primitives + videos == 0 && scope.params[3] == 0.0`) to layers with `blur > 0.0` (e.g.
+off-screen blurred lyrics lines), additive blend, or rounded/faded clips, since an empty layer
+composites transparent black.

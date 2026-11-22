@@ -107,7 +107,7 @@ fn union(a: &mut Option<Edges>, b: Edges) {
     });
 }
 
-fn meets(a: Edges, b: Edges) -> bool {
+fn meets_u32(a: [u32; 4], b: [u32; 4]) -> bool {
     a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
@@ -286,33 +286,40 @@ fn change_with(prev: &[Instance], pa: &Analysis, cur: &[Instance], ca: &Analysis
     if damage.is_empty() {
         return Change::Same;
     }
-    // A backdrop blur that damage reaches redraws all it samples, in one rectangle: its
-    // sample is taken mid-pass from what the pass has drawn so far.
-    let blurs: Vec<Edges> = pa.blurs.iter().chain(&ca.blurs).copied().collect();
-    let mut taken = vec![false; blurs.len()];
-    loop {
-        let reached: Vec<usize> = (0..blurs.len()).filter(|&b| !taken[b] && damage.iter().any(|&d| meets(d, blurs[b]))).collect();
-        if reached.is_empty() { break; }
-        for b in reached {
-            taken[b] = true;
-            damage.push(blurs[b]);
-        }
-    }
-    if taken.contains(&true) {
-        let mut all = None;
-        for d in damage.drain(..) { union(&mut all, d); }
-        damage.extend(all);
-    }
     let (w, h) = (viewport.0 as f32, viewport.1 as f32);
-    let rects: Vec<[u32; 4]> = damage.iter()
-        .map(|d| [d[0].floor().max(0.0), d[1].floor().max(0.0), d[2].ceil().min(w), d[3].ceil().min(h)])
-        .filter(|r| r[2] > r[0] && r[3] > r[1])
-        .map(|r| r.map(|v| v as u32))
-        .collect();
+    let clamp = |d: &Edges| -> Option<[u32; 4]> {
+        let r = [d[0].floor().max(0.0), d[1].floor().max(0.0), d[2].ceil().min(w), d[3].ceil().min(h)];
+        (r[2] > r[0] && r[3] > r[1]).then(|| r.map(|v| v as u32))
+    };
+    let mut rects: Vec<[u32; 4]> = damage.iter().filter_map(clamp).collect();
     if rects.is_empty() {
         return Change::Same;
     }
-    let rects = merge(rects);
+    // A backdrop blur that any final (merged) damage rectangle reaches redraws all it samples,
+    // in one rectangle: its sample is taken mid-pass from what the pass has drawn so far, and
+    // a multi-rect borrowed pass cannot split for a blur. Loop until merging/hulling reaches no
+    // further blurs so neither `merge` nor folding can expand a rect over an unreached blur.
+    let blurs: Vec<[u32; 4]> = pa.blurs.iter().chain(&ca.blurs).filter_map(clamp).collect();
+    let mut taken = vec![false; blurs.len()];
+    loop {
+        rects = merge(rects);
+        let reached: Vec<usize> = (0..blurs.len())
+            .filter(|&b| !taken[b] && rects.iter().any(|r| meets_u32(*r, blurs[b])))
+            .collect();
+        if reached.is_empty() {
+            break;
+        }
+        let mut all = rects[0];
+        for r in rects.iter().skip(1) {
+            all = hull(&all, r);
+        }
+        for b in reached {
+            taken[b] = true;
+            all = hull(&all, &blurs[b]);
+        }
+        rects.clear();
+        rects.push(all);
+    }
     if rects.iter().map(area).sum::<f32>() > FULL_SHARE * w * h {
         return Change::Whole(Whole::Area);
     }
@@ -720,5 +727,22 @@ mod tests {
         let list = vec![img];
         assert_eq!(change(&list, &list, &[(1, 0, 100)], (1000, 800)), Change::Same);
         assert_eq!(change(&list, &list, &[(1, 220, 230)], (1000, 800)), Change::Rects(vec![[7, 7, 53, 53]]));
+    }
+
+    #[test]
+    fn merged_hull_reaching_a_backdrop_blur_folds_blur_into_single_rect() {
+        // Two thin rects straddling a backdrop blur: neither touches the blur directly,
+        // but their merged hull (waste under MERGE_SLACK) crosses the blur's sampling region.
+        let mut blur = rect(200.0, 200.0, 20.0, 20.0);
+        blur.params = [2.0, KIND_BACKDROP_BLUR, 0.0, 1.0];
+        let a = vec![rect(150.0, 205.0, 10.0, 10.0), rect(260.0, 205.0, 10.0, 10.0), blur];
+        let mut b = a.clone();
+        b[0].fill[0] = 0.5;
+        b[1].fill[0] = 0.5;
+        let Change::Rects(rects) = change(&a, &b, &[], (1000, 800)) else { panic!() };
+        assert_eq!(rects.len(), 1, "merged hull over a blur must draw as one owned-pass rect: {rects:?}");
+        // Must include the blur's sampling reach (~20 px around [200..220]).
+        let [x0, y0, x1, y1] = rects[0];
+        assert!(x0 <= 148 && x1 >= 272 && y0 <= 180 && y1 >= 240, "{rects:?}");
     }
 }

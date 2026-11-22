@@ -151,7 +151,7 @@ interactions (hover states, menus, dialogs) in both the reference and the port.
 ## Rune
 
 Docs: `~/src/rune/crates/rune/README.md` (core) and `crates/rune-kit/README.md`; the pinned rev
-is checked out under `~/.cargo/git/checkouts/rune-*/59f0326/`, and Rune itself builds from
+is checked out under `~/.cargo/git/checkouts/rune-*/4c72ab5/`, and Rune itself builds from
 `vendor/rune` with our patches (`vendor/README.md`). Read the source when the README is thin.
 Rune is pre-release; work around gaps in this crate rather than patching Rune, unless a gap
 costs real performance (each patch is one more thing to carry on every bump).
@@ -159,12 +159,10 @@ costs real performance (each patch is one more thing to carry on every bump).
 ## Building for Windows
 
 `tools/wine-snap.sh <scene>` renders a scene with the Windows `lumen.exe` under Wine (virtual
-X display, Vulkan on lavapipe, d3d12 off: Wine's HLSL compiler lacks the shader-model 5.1
-resource arrays Rune's blur layers use, which Windows' own FXC has). It draws text unsmoothed
-(`LUMEN_FONT_SMOOTHING=off`) rather than with the Windows default, DirectWrite, because Wine's
-DirectWrite ignores variable fonts' weight axis (every Geist weight would draw at 400). Layout
-then matches the Linux build; text edges differ slightly, as Rune's Windows glyph path keys
-coverage by luminance bucket (2026-11-07: home 1.5 % of pixels past 32/255).
+X display, D3D12 over Wine's vkd3d on the host's lavapipe Vulkan ICD; Windows builds use D3D12
+alone with precompiled DXBC shaders for uber, layer blur, backdrop blur and alpha). Text uses
+Rune's Windows default (`WindfoilChromium`), so Wine snapshots exercise the same GPU outline
+text path as Windows without relying on Wine's DirectWrite variable-font handling.
 
 `cargo build --release --target x86_64-pc-windows-gnu` cross-compiles from Linux (mingw).
 CI builds the MSVC target on Windows runners (`.github/workflows/native.yml`); packaging,
