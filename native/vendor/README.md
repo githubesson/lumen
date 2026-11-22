@@ -54,7 +54,8 @@ changes; `cargo test` in `native/` doesn't run Rune's own tests.
    `vendor/rune/Cargo.toml` for standalone building, and set the rev in `vendor/rune/Cargo.toml`
    and `native/Cargo.toml` (`rune`, `rune-motion`, `[dev-dependencies] rune`, and
    `[patch.crates-io]`). Keep `rust-toolchain.toml` in step with Rune's.
-3. Check: `cargo build`, `cargo test`, `cargo build --release --target x86_64-pc-windows-gnu`,
+3. Check: `git status --ignored native/vendor` (make sure root `.gitignore` didn't hide a new
+   upstream path), `cargo build`, `cargo test`, `cargo build --release --target x86_64-pc-windows-gnu`,
    `RUNE_PARTIAL=verify` in a live window, and reference scenes' `--snap` renders against the
    previous build and Chromium references (`tools/sweep.mjs`); explain each change from upstream's
    changelog (`changelog/unreleased/`).

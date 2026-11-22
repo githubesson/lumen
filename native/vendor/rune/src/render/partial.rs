@@ -396,9 +396,17 @@ impl Partial {
             self.prev_analysis = None;
             return None;
         }
-        if self.canvas.as_ref().is_none_or(|c| c.size != size || c.format != format) {
-            self.canvas = Some(Canvas::new(device, format, size));
-            self.key = None;
+        match self.canvas.as_mut() {
+            Some(c) if c.format == format => {
+                if c.size != size {
+                    c.resize(device, size);
+                    self.key = None;
+                }
+            }
+            _ => {
+                self.canvas = Some(Canvas::new(device, format, size));
+                self.key = None;
+            }
         }
         let key = Key {
             size, format, clear: f.clear.map(f32::to_bits), srgb: f.srgb, scale: f.scale.to_bits(), glyph_resets: f.glyph_resets, swap: f.swap,
@@ -449,7 +457,7 @@ impl Partial {
 }
 
 impl Canvas {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32)) -> Canvas {
+    fn make_texture(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("partial canvas"),
             size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
@@ -461,6 +469,18 @@ impl Canvas {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
+        (texture, view)
+    }
+
+    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
+        let (texture, view) = Self::make_texture(device, self.format, size);
+        self.texture = texture;
+        self.view = view;
+        self.size = size;
+    }
+
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32)) -> Canvas {
+        let (texture, view) = Self::make_texture(device, format, size);
         let fullscreen = "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
             let p = array(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
             return vec4(p[i], 0.0, 1.0);
@@ -553,8 +573,8 @@ impl Canvas {
     /// `RUNE_PARTIAL=verify`: draws the frame whole into a scratch texture and reports where it
     /// differs from the canvas.
     fn verify(&self, device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer, encoder: &mut wgpu::CommandEncoder, clear: [f32; 4], rect: &[[u32; 4]]) {
-        let whole = Canvas::new(device, self.format, self.size);
-        renderer.draw(encoder, &whole.view, clear);
+        let (whole_texture, whole_view) = Self::make_texture(device, self.format, self.size);
+        renderer.draw(encoder, &whole_view, clear);
         let bpp = self.format.block_copy_size(None).unwrap_or(4);
         let row = (self.size.0 * bpp).div_ceil(256) * 256;
         let read = |tex: &wgpu::Texture, enc: &mut wgpu::CommandEncoder| {
@@ -566,7 +586,7 @@ impl Canvas {
             }, wgpu::Extent3d { width: self.size.0, height: self.size.1, depth_or_array_layers: 1 });
             buf
         };
-        let (a, b) = (read(&self.texture, encoder), read(&whole.texture, encoder));
+        let (a, b) = (read(&self.texture, encoder), read(&whole_texture, encoder));
         // The frame's encoder submits later; read after a submission of this one's work.
         let taken = std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
         renderer.submit(queue, taken);
@@ -600,7 +620,9 @@ impl Renderer {
     /// Draws the prepared frame into `view` only inside `rects` (`[x0, y0, x1, y1]`), keeping
     /// what it holds elsewhere: in each, under its scissor, `clear` resets it and every instance
     /// draws in order. A backdrop blur splits the pass to sample what it drew so far, which
-    /// needs the pass owned, so a frame with one draws a single rectangle (`change` makes one).
+    /// needs the pass owned; `change` folds damage into a single rectangle whenever any merged
+    /// rectangle reaches a blur, and multi-rect passes otherwise rely on `backdrop_blur::encode`
+    /// returning early when the active scissor misses the blur.
     pub(crate) fn draw_damaged(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, rects: &[[u32; 4]], size: [u32; 2],
         clear: &mut dyn FnMut(&mut wgpu::RenderPass<'_>)) {
         self.encode_layers_timed(encoder, None, &mut |_, _| {});
@@ -684,7 +706,7 @@ mod tests {
         let a: Vec<_> = (0..50).map(|k| rect(k as f32 * 10.0, 0.0, 8.0, 8.0)).collect();
         let mut b = a.clone();
         b.insert(25, rect(500.0, 300.0, 20.0, 20.0));
-        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[497, 297, 523, 323]]));
+        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[498, 298, 522, 322]]));
         assert_eq!(change(&a, &a, &[], (1000, 800)), Change::Same);
     }
 
@@ -694,7 +716,7 @@ mod tests {
         let a = vec![marker, rect(100.0, 100.0, 50.0, 50.0), rect(160.0, 100.0, 10.0, 10.0), Instance::end_layer()];
         marker.fill[3] = 0.5;
         let b = vec![marker, a[1], a[2], a[3]];
-        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[97, 97, 173, 153]]));
+        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[98, 98, 172, 152]]));
     }
 
     #[test]
@@ -703,7 +725,7 @@ mod tests {
         let mut b = a.clone();
         b[0].fill[0] = 0.5;
         b[1].fill[0] = 0.5;
-        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[7, 7, 33, 33], [897, 697, 933, 713]]));
+        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[8, 8, 32, 32], [898, 698, 932, 712]]));
     }
 
     #[test]
@@ -726,7 +748,7 @@ mod tests {
         img.uv = [0.0, 200.0, 40.0, 40.0];
         let list = vec![img];
         assert_eq!(change(&list, &list, &[(1, 0, 100)], (1000, 800)), Change::Same);
-        assert_eq!(change(&list, &list, &[(1, 220, 230)], (1000, 800)), Change::Rects(vec![[7, 7, 53, 53]]));
+        assert_eq!(change(&list, &list, &[(1, 220, 230)], (1000, 800)), Change::Rects(vec![[8, 8, 52, 52]]));
     }
 
     #[test]
