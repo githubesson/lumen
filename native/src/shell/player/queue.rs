@@ -111,6 +111,7 @@ pub fn list(app: &App, t: &Theme, cx: &mut Cx<App>, scope: &str, close_on_jump: 
             .px(4.0)
             .pb(4.0)
             .growth(GrowthSpec { edge: rune::edge::NO_MASK, ..GrowthSpec::default() })
+            .instant_changes()
             .virtual_rows(
                 count,
                 40.0,

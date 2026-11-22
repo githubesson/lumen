@@ -38,7 +38,7 @@ use crate::ui::{Btn, exact, font, icons as i, tnum, with_lh};
 /// Cached calendar, range label, activity series and top-5 genres derived
 /// from one [`ReplayData`] snapshot, avoiding per-frame recomputation.
 pub(super) struct Derived {
-    key: (u64, Period, i64, ReplayBucket),
+    key: (u64, Period, i64, i64, ReplayBucket),
     pub calendar: Option<ReplayCalendar>,
     pub range_label: Option<String>,
     pub series_bucket: ReplayBucket,
@@ -353,9 +353,10 @@ pub fn view(app: &App, t: &Theme, cx: &mut Cx<App>) -> El {
     let panel = panel_width(app, t, cx, window_w);
     let chart_bucket = request.range.bucket.unwrap_or(ReplayBucket::Month);
     let today = local_day(now);
+    let utc_day = now.div_euclid(DAY_MS);
     let derived_guard = match data {
         Some(d) => {
-            let key = (s.cache.rev(), s.period, today, chart_bucket);
+            let key = (s.cache.rev(), s.period, today, utc_day, chart_bucket);
             let hit = s.derived.borrow().as_ref().is_some_and(|c| c.key == key);
             if !hit {
                 let calendar = replay_calendar(&d.activity, d.bucket, &request.range, now);

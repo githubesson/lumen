@@ -516,7 +516,11 @@ fn snapshot(state: &State, now: f64) -> String {
 /// server's cover paths redirect), 10 s, 10 MB, raster types only (an SVG
 /// opened straight from this origin could run script).
 pub fn fetch_cover(source: &str) -> Option<Cover> {
-    let agent: ureq::Agent = crate::net::agent_config().max_redirects(0).timeout_global(Some(COVER_TIMEOUT)).build().into();
+    let agent: ureq::Agent = crate::net::agent_config()
+        .max_redirects(0)
+        .timeout_global(Some(COVER_TIMEOUT))
+        .build()
+        .into();
     let mut response = agent.get(source).call().ok()?;
     let content_type = response
         .headers()
