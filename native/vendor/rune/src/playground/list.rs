@@ -7,7 +7,7 @@ use super::*;
 /// The filter field's row: the field and the gap under it.
 const FIELD: f32 = 32.0;
 
-impl<S: 'static> Live<S> {
+impl LiveCore {
     pub(super) fn sidebar(&self, t: Theme, dark: bool, accent: Color, inset: f32, sidebar_w: f32, height: f32) -> El {
         let back = row().key("playground-back").h(CONTROL).pl(4.0).pr(8.0).gap(2.0).center_y().radius(radius::SM)
             .hover(t.hover).press(t.press)
@@ -21,7 +21,7 @@ impl<S: 'static> Live<S> {
         let header = row().w(sidebar_w).h(HEADER).pl(8.0).center_y().child(back);
         let drag = (band > 0.0).then(|| el().w(sidebar_w).h(band).window_drag());
         // The list's selection takes the accent while the list has the keyboard.
-        let on_fill = if self.region == Region::List { focused(accent) } else { selected(t, dark) };
+        let on_fill = if self.region() == Region::List { focused(accent) } else { selected(t, dark) };
         // A scroll measures its first child, so the rows go in one content column.
         let mut list = col().key("playground-rows").w_full();
         let rows = self.rows();

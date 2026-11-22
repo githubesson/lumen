@@ -93,7 +93,7 @@ impl KeyIndex {
                 self.next_key[i] = self.keys.insert(hash(key), i as u32).unwrap_or(NONE);
             }
             let Some(text) = n.text.as_ref() else { continue };
-            for key in text.highlights.iter().filter_map(|h| h.key.as_deref()) {
+            for key in text.cold.highlights.iter().filter_map(|h| h.key.as_deref()) {
                 let first = self.marks.entry(hash(key)).or_insert(NONE);
                 if *first != NONE && self.mark_chain[*first as usize].0 == i as u32 { continue; }
                 self.mark_chain.push((i as u32, *first));
@@ -139,15 +139,16 @@ pub(super) fn scan_first(nodes: &[Node], selector: &str) -> Option<usize> {
         && crate::flight::selects(selector, &n.path, n.key.as_deref()))
 }
 
-impl<S: 'static> Runtime<S> {
+impl RuntimeCore {
     /// The kept index, when `nodes` are the current nodes it describes.
+    #[inline]
     pub(super) fn key_index_for(&self, nodes: &[Node]) -> Option<&KeyIndex> {
-        self.key_index.get(nodes, self.commit_gen)
+        self.tree.key_index_for(nodes, self.commit.commit_gen())
     }
 
     /// `self.nodes` changed without a commit: kept per-node answers no longer hold.
+    #[inline]
     pub(super) fn nodes_replaced(&mut self) {
-        self.key_index.forget();
-        self.exit_mask.forget();
+        self.tree.nodes_replaced();
     }
 }

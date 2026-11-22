@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use crate::time::Instant;
 
+use crate::machine::Effects;
 use crate::window::Missed;
 
 /// Counts of one surface's frame work.
@@ -140,18 +141,55 @@ pub(crate) struct SurfaceMeter {
     pacing: Pacing,
     /// A timer or event came since the last redraw.
     waited: bool,
-    /// Seconds in a row over `SPIN_RATE`.
-    hot: u32,
-    warned: bool,
+    spin: Spin,
     shared: Arc<Mutex<SurfaceStats>>,
+}
+
+/// Whether the surface is spinning, by whole one-second windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Spin {
+    /// The last window was under `SPIN_RATE`, or none has rolled.
+    Calm,
+    /// `seconds` windows in a row over `SPIN_RATE`, fewer than `SPIN_SECONDS`.
+    Hot { seconds: u32 },
+    /// The meter said so; it never says so again.
+    Warned,
+}
+
+/// A one-second window rolled over, `spinning` when its rates were over `SPIN_RATE`.
+#[derive(Clone, Copy, Debug)]
+struct Rolled {
+    spinning: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpinEffect {
+    /// Say the surface has spun for `seconds`.
+    Warn { seconds: u32 },
+}
+
+fn step(spin: &mut Spin, event: Rolled) -> Effects<SpinEffect> {
+    let seconds = match *spin {
+        Spin::Warned => return Effects::none(),
+        Spin::Calm => 0,
+        Spin::Hot { seconds } => seconds,
+    };
+    // A long quiet window averages low, which also ends a hot streak.
+    let seconds = if event.spinning { seconds + 1 } else { 0 };
+    if seconds >= SPIN_SECONDS {
+        *spin = Spin::Warned;
+        return Effects::one(SpinEffect::Warn { seconds });
+    }
+    *spin = if seconds == 0 { Spin::Calm } else { Spin::Hot { seconds } };
+    Effects::none()
 }
 
 impl SurfaceMeter {
     pub(crate) fn new(name: &str, shared: Arc<Mutex<SurfaceStats>>) -> Self {
         shared.lock().unwrap().name = name.to_owned();
         Self {
-            totals: SurfaceCounts::default(), base: SurfaceCounts::default(), started: Instant::now(), pacing: Pacing::Idle,
-            waited: false, hot: 0, warned: false, shared,
+            totals: SurfaceCounts::default(), base: SurfaceCounts::default(), started: crate::time::now(), pacing: Pacing::Idle,
+            waited: false, spin: Spin::Calm, shared,
         }
     }
 
@@ -165,7 +203,7 @@ impl SurfaceMeter {
         self.totals.redraws += 1;
         if !paced && !self.waited { self.totals.unpaced += 1; }
         self.waited = false;
-        self.tick(Instant::now());
+        self.tick(crate::time::now());
     }
 
     /// An event the surface's host handled, which may ask for the next redraw.
@@ -173,13 +211,13 @@ impl SurfaceMeter {
 
     pub(crate) fn presented(&mut self) {
         self.totals.presents += 1;
-        self.tick(Instant::now());
+        self.tick(crate::time::now());
     }
 
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn skipped(&mut self) {
         self.totals.skipped += 1;
-        self.tick(Instant::now());
+        self.tick(crate::time::now());
     }
 
     pub(crate) fn failed(&mut self, missed: Missed) {
@@ -188,7 +226,7 @@ impl SurfaceMeter {
             Missed::Timeout => self.totals.timeouts += 1,
             Missed::Outdated | Missed::Unconfigured => self.totals.outdated += 1,
         }
-        self.tick(Instant::now());
+        self.tick(crate::time::now());
     }
 
     /// An event-loop turn, `woke` by a deadline or poll rather than an event. A deadline that
@@ -197,7 +235,7 @@ impl SurfaceMeter {
         self.totals.turns += 1;
         if woke { self.totals.wakes += 1; }
         self.waited |= waited;
-        self.tick(Instant::now());
+        self.tick(crate::time::now());
     }
 
     pub(crate) fn set_pacing(&mut self, pacing: Pacing) {
@@ -209,23 +247,26 @@ impl SurfaceMeter {
     /// warning, if this roll is it.
     fn tick(&mut self, now: Instant) -> Option<String> {
         let elapsed = now.saturating_duration_since(self.started);
-        let summary = {
+        let (summary, effects) = {
             let mut stats = self.shared.lock().unwrap();
             stats.totals = self.totals;
             if elapsed < WINDOW { return None; }
             stats.per_second = self.totals.since(&self.base).per(elapsed.as_secs_f64());
             stats.published = Some(now);
-            // A long quiet window averages low, which also ends a hot streak.
             let rates = stats.per_second;
-            self.hot = if rates.failed() > SPIN_RATE || rates.unpaced > SPIN_RATE { self.hot + 1 } else { 0 };
-            stats.summary()
+            let effects = step(&mut self.spin, Rolled { spinning: rates.failed() > SPIN_RATE || rates.unpaced > SPIN_RATE });
+            (stats.summary(), effects)
         };
         self.base = self.totals;
         self.started = now;
-        if self.hot < SPIN_SECONDS || std::mem::replace(&mut self.warned, true) { return None; }
-        let warning = format!("rune: surface has spun for {} s, a bug in Rune: {summary}", self.hot);
-        eprintln!("{warning}");
-        Some(warning)
+        let mut warned = None;
+        for effect in effects {
+            let SpinEffect::Warn { seconds } = effect;
+            let warning = format!("rune: surface has spun for {seconds} s, a bug in Rune: {summary}");
+            eprintln!("{warning}");
+            warned = Some(warning);
+        }
+        warned
     }
 }
 
@@ -237,121 +278,13 @@ pub(crate) fn slept(cause: winit::event::StartCause) -> bool {
 
 /// The published stats, with rates zeroed once they are stale.
 pub(crate) fn read(shared: &Mutex<SurfaceStats>) -> SurfaceStats {
-    shared.lock().unwrap().clone().aged(Instant::now())
+    shared.lock().unwrap().clone().aged(crate::time::now())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "surface_stats_tests.rs"]
+mod tests;
 
-    fn meter() -> (SurfaceMeter, Instant) {
-        let meter = SurfaceMeter::new("main", Arc::default());
-        let start = meter.started;
-        (meter, start)
-    }
-
-    #[test]
-    fn rates_are_per_second_over_the_last_window_and_go_stale() {
-        let (mut meter, start) = meter();
-        for _ in 0..120 { meter.redraw(true); meter.presented(); }
-        for _ in 0..3 { meter.failed(Missed::Timeout); }
-        meter.skipped();
-        meter.turn(false, false);
-        meter.turn(true, false);
-        meter.set_pacing(Pacing::DisplayLink);
-        assert_eq!(meter.shared.lock().unwrap().per_second, SurfaceCounts::default(), "rates wait for a whole second");
-        assert!(meter.tick(start + Duration::from_millis(1000)).is_none());
-        let stats = meter.shared.lock().unwrap().clone();
-        assert_eq!(stats.name, "main");
-        assert_eq!((stats.per_second.redraws, stats.per_second.unpaced, stats.per_second.presents), (120, 0, 120));
-        assert_eq!((stats.per_second.timeouts, stats.per_second.failed(), stats.per_second.skipped), (3, 3, 1));
-        assert_eq!((stats.per_second.turns, stats.per_second.wakes), (2, 1));
-        assert_eq!(stats.pacing, Pacing::DisplayLink);
-        assert_eq!(stats.totals.presents, 120);
-
-        // Half the work over the next two seconds: rates are per second, totals keep counting.
-        for _ in 0..60 { meter.redraw(false); meter.presented(); }
-        meter.tick(start + Duration::from_millis(3000));
-        let stats = meter.shared.lock().unwrap().clone();
-        assert_eq!((stats.per_second.redraws, stats.per_second.unpaced, stats.per_second.presents), (30, 30, 30));
-        assert_eq!((stats.totals.redraws, stats.totals.presents), (180, 180));
-        assert_eq!(meter.totals(), stats.totals);
-
-        let fresh = stats.clone().aged(start + Duration::from_millis(4000));
-        assert_eq!(fresh.per_second.presents, 30);
-        let stale = stats.aged(start + Duration::from_millis(5500));
-        assert_eq!(stale.per_second, SurfaceCounts::default(), "a surface quiet for two seconds reports no rate");
-        assert_eq!(stale.totals.presents, 180);
-    }
-
-    #[test]
-    fn totals_and_pacing_publish_at_once() {
-        // A window that draws for less than a second, then rests, still reports what it drew.
-        let (mut meter, _) = meter();
-        meter.set_pacing(Pacing::DisplayLink);
-        assert_eq!(read(&meter.shared).pacing, Pacing::DisplayLink, "pacing set after the frame's counts still lands");
-        for _ in 0..3 { meter.redraw(true); meter.presented(); }
-        meter.set_pacing(Pacing::Idle);
-        let stats = read(&meter.shared);
-        assert_eq!((stats.totals.redraws, stats.totals.presents), (3, 3));
-        assert_eq!(stats.pacing, Pacing::Idle);
-        assert_eq!(stats.per_second, SurfaceCounts::default());
-        assert!(stats.summary().contains("totals 3 presents"), "{}", stats.summary());
-    }
-
-    #[test]
-    fn only_redraws_that_waited_for_nothing_are_unpaced() {
-        let (mut meter, _) = meter();
-        meter.redraw(true);
-        assert_eq!(meter.totals().unpaced, 0, "a display tick or vsync paces it");
-        meter.waited();
-        meter.redraw(false);
-        assert_eq!(meter.totals().unpaced, 0, "an event asked for it");
-        meter.turn(true, true);
-        meter.redraw(false);
-        assert_eq!(meter.totals().unpaced, 0, "a timer that was still ahead paced it");
-        meter.turn(true, false);
-        meter.redraw(false);
-        assert_eq!(meter.totals().unpaced, 1, "an overdue deadline or poll waited for nothing");
-        meter.waited();
-        meter.redraw(true);
-        meter.redraw(false);
-        assert_eq!(meter.totals().unpaced, 2, "each wait paces one redraw");
-    }
-
-    #[test]
-    fn the_guard_warns_once_after_two_seconds_of_spinning() {
-        let (mut meter, start) = meter();
-        let at = |ms| start + Duration::from_millis(ms);
-        let spin = |meter: &mut SurfaceMeter, n| for _ in 0..n { meter.redraw(true); meter.failed(Missed::Occluded); };
-        meter.set_pacing(Pacing::Failed(-6661));
-        spin(&mut meter, 5000);
-        assert!(meter.tick(at(1000)).is_none(), "one hot second isn't a spin");
-        spin(&mut meter, 5000);
-        let warning = meter.tick(at(2000)).expect("two hot seconds are");
-        assert!(warning.contains("main") && warning.contains("5000 failed acquires/s") && warning.contains("occluded 5000"), "{warning}");
-        assert!(warning.contains("display link failed (-6661)"), "{warning}");
-        spin(&mut meter, 5000);
-        assert!(meter.tick(at(3000)).is_none(), "it warns once");
-
-        // Unpaced redraws spin too; a calm second in between resets the streak.
-        let (mut meter, start) = super::tests::meter();
-        let at = |ms| start + Duration::from_millis(ms);
-        let unpaced = |meter: &mut SurfaceMeter, n| for _ in 0..n { meter.redraw(false); meter.presented(); };
-        unpaced(&mut meter, 1000);
-        assert!(meter.tick(at(1000)).is_none());
-        unpaced(&mut meter, 60);
-        assert!(meter.tick(at(2000)).is_none(), "a 60 Hz second resets the streak");
-        unpaced(&mut meter, 1000);
-        assert!(meter.tick(at(3000)).is_none());
-        unpaced(&mut meter, 1000);
-        assert!(meter.tick(at(4000)).is_some_and(|w| w.contains("1000 redraws/s (1000 unpaced)")));
-
-        // A display's own rate, even 360 Hz, never trips it.
-        let (mut meter, start) = super::tests::meter();
-        for second in 1..=5 {
-            unpaced(&mut meter, 360);
-            assert!(meter.tick(start + Duration::from_secs(second)).is_none());
-        }
-    }
-}
+#[cfg(test)]
+#[path = "surface_stats_walk_tests.rs"]
+mod walk_tests;

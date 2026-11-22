@@ -13,7 +13,7 @@
 //! rectangle itself. Only an arc that crosses the rectangle elsewhere still needs the layer.
 //! Rounded rectangles are convex, so clearing a corner's arc is a disk-in-disk test.
 
-use super::turn::intersect;
+use crate::runtime::intersect;
 
 /// How far, in device pixels, a painted corner must stay inside an arc before the arc's
 /// antialiased edge can't reach it: `clip_alpha` (`clip.wgsl`) covers `0.5 - sd`.
@@ -23,7 +23,7 @@ const SAME: f32 = 1e-3;
 
 /// A rounded mask: the rectangle (`[x0, y0, x1, y1]`) and its corner radii (top left, top right,
 /// bottom right, bottom left; negative for continuous corners).
-pub(super) type Round = ([f32; 4], [f32; 4]);
+pub(in crate::runtime::paint) type Round = ([f32; 4], [f32; 4]);
 
 /// Corner `j` of `rect` and the direction into the rectangle from it.
 fn corner(rect: [f32; 4], j: usize) -> ([f32; 2], [f32; 2]) {
@@ -81,7 +81,7 @@ fn farthest(vx: f32, vy: f32, ro: f32) -> f32 {
 /// drops, or becomes the clip rectangle with the radii of the corners it shares; one that
 /// doesn't settle is left for the layers that draw it. `open_cache`: a cache layer applies
 /// `own_round` itself.
-pub(super) fn settle_rounds(clip: &mut [f32; 4], rounded: &mut Option<Round>, own_round: &mut Option<Round>, open_cache: bool) {
+pub(in crate::runtime::paint) fn settle_rounds(clip: &mut [f32; 4], rounded: &mut Option<Round>, own_round: &mut Option<Round>, open_cache: bool) {
     // The element's own clip first: it and its subtree paint inside it.
     let (mut area, mut own) = (*clip, [0.0; 4]);
     if !open_cache && let Some((mask, radii)) = *own_round {

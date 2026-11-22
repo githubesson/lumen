@@ -1,0 +1,181 @@
+//! The pointer's shape over an element.
+
+pub(crate) mod image;
+pub(crate) mod os;
+
+/// The pointer's shape over an element (CSS `cursor`). Elements without one inherit their
+/// nearest ancestor's; text fields default to [`Cursor::Text`], everything else to the arrow.
+///
+/// A macOS overlay is rarely the key window, so it sets its cursor directly while the pointer
+/// is over its hit area. macOS honours that only while the overlay's app is frontmost, unless
+/// `rune` is built with the `macos-background-cursor` feature. That feature uses a private
+/// WindowServer property (`SetsCursorInBackground`), so App Store review may reject the app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Cursor {
+    #[default]
+    Default,
+    Pointer,
+    Text,
+    Grab,
+    Grabbing,
+    NotAllowed,
+    Move,
+    ResizeColumn,
+    ResizeRow,
+    /// A precise-selection cross (CSS `crosshair`), for picking a point or dragging out a rect.
+    Crosshair,
+    /// A thick white plus (CSS `cell`), over a spreadsheet's cells. Windows has no such system
+    /// cursor, so there it draws Chromium's.
+    Cell,
+    /// The system's magnifier with a plus (CSS `zoom-in`), at the size of every other system
+    /// cursor: over a picture that opens larger.
+    ZoomIn,
+    /// The magnifier with a minus (CSS `zoom-out`).
+    ZoomOut,
+    /// No OS cursor (CSS `none`), for views that draw their own. It shows again as soon as the
+    /// pointer leaves the element or the window, the element goes away, or the host loses the
+    /// pointer: a window losing focus, an overlay hiding.
+    Hidden,
+    /// An app's own image (CSS `url()`), such as a pencil over a canvas. The OS draws it, so
+    /// it keeps up with the pointer and shows right to the window's edge. It comes and goes
+    /// like any other cursor. If its PNG doesn't decode, the arrow shows instead, and that's
+    /// logged once.
+    Image(CursorImage),
+}
+
+/// The picture for [`Cursor::Image`]: a PNG drawn at 2x, so a 64×64 px PNG makes a
+/// 32×32 pt cursor, and its hot spot (the point that clicks) in points from the top-left,
+/// clamped into the image.
+///
+/// ```ignore
+/// const PENCIL: CursorImage = CursorImage::png(include_bytes!("pencil.png"), [2.0, 30.0]);
+/// canvas.cursor(Cursor::Image(PENCIL))
+/// ```
+///
+/// Two images are the same cursor when they have the same bytes and hot spot. Comparing one
+/// image with itself checks only the address, so it costs nothing per frame; a `const` may be
+/// copied to another address at each use, which then compares the bytes. Each image is
+/// decoded once and its OS cursor kept, up to 32 of them; a side may be up to 256 px.
+#[derive(Clone, Copy)]
+pub struct CursorImage {
+    bytes: &'static [u8],
+    hot: [f32; 2],
+    /// Resampled to the OS cursor's scale pixel for pixel, for a 1-bit cursor drawn on a grid.
+    crisp: bool,
+}
+
+/// [`Cursor::Cell`] where the OS has none: Chromium's Windows `cell` cursor, each pixel of its
+/// 32 px bitmap doubled.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) const CELL: CursorImage = CursorImage { bytes: include_bytes!("cursor/cell.png"), hot: [7.0, 7.0], crisp: true };
+
+/// The pan cursor a middle-click autoscroll shows (`runtime/input/autoscroll.rs`): Chromium's
+/// Windows `pan_*` cursors, each pixel of their 32 px bitmaps doubled, which Blink picks the way
+/// this does: while it scrolls, an arrow the way it goes; at rest, a mark of the axes
+/// (horizontal, vertical) it can scroll on.
+pub(crate) fn pan(axes: (bool, bool), velocity: (f32, f32)) -> CursorImage {
+    let pan = |bytes: &'static [u8]| CursorImage { bytes, hot: [16.0, 16.0], crisp: true };
+    let (east, west, south, north) = (velocity.0 > 0.0, velocity.0 < 0.0, velocity.1 > 0.0, velocity.1 < 0.0);
+    match (north, south, east, west) {
+        (true, _, true, _) => pan(include_bytes!("cursor/pan_north_east.png")),
+        (true, _, _, true) => pan(include_bytes!("cursor/pan_north_west.png")),
+        (true, ..) => pan(include_bytes!("cursor/pan_north.png")),
+        (_, true, true, _) => pan(include_bytes!("cursor/pan_south_east.png")),
+        (_, true, _, true) => pan(include_bytes!("cursor/pan_south_west.png")),
+        (_, true, ..) => pan(include_bytes!("cursor/pan_south.png")),
+        (_, _, true, _) => pan(include_bytes!("cursor/pan_east.png")),
+        (_, _, _, true) => pan(include_bytes!("cursor/pan_west.png")),
+        _ => match axes {
+            (true, false) => pan(include_bytes!("cursor/pan_middle_horizontal.png")),
+            (false, true) => pan(include_bytes!("cursor/pan_middle_vertical.png")),
+            _ => pan(include_bytes!("cursor/pan_middle.png")),
+        },
+    }
+}
+
+impl CursorImage {
+    /// A PNG drawn at 2x, with its hot spot in points from the top-left.
+    pub const fn png(bytes: &'static [u8], hot: [f32; 2]) -> Self {
+        CursorImage { bytes, hot, crisp: false }
+    }
+
+    pub(crate) fn bytes(&self) -> &'static [u8] {
+        self.bytes
+    }
+
+    pub(crate) fn hot(&self) -> [f32; 2] {
+        self.hot
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn crisp(&self) -> bool {
+        self.crisp
+    }
+
+}
+
+impl PartialEq for CursorImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.hot.map(f32::to_bits) == other.hot.map(f32::to_bits)
+            && self.crisp == other.crisp
+            && (std::ptr::eq(self.bytes, other.bytes) || self.bytes == other.bytes)
+    }
+}
+
+impl Eq for CursorImage {}
+
+impl std::hash::Hash for CursorImage {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.bytes.len(), self.hot.map(f32::to_bits)).hash(state);
+    }
+}
+
+impl std::fmt::Debug for CursorImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CursorImage").field("png_bytes", &self.bytes.len()).field("hot", &self.hot).finish()
+    }
+}
+
+/// Which AppKit cursor backs each [`Cursor`] variant, kept cross-platform so adding a new
+/// [`Cursor`] variant fails to compile until its macOS mapping is explicit.
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MacCursor {
+    Arrow,
+    PointingHand,
+    IBeam,
+    OpenHand,
+    ClosedHand,
+    NotAllowed,
+    ResizeLeftRight,
+    ResizeUpDown,
+    Crosshair,
+    ZoomIn,
+    ZoomOut,
+    Transparent,
+    MoveImage,
+    CellImage,
+    Custom(CursorImage),
+}
+
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub(crate) fn mac_cursor(cursor: Cursor) -> MacCursor {
+    match cursor {
+        Cursor::Default => MacCursor::Arrow,
+        Cursor::Pointer => MacCursor::PointingHand,
+        Cursor::Text => MacCursor::IBeam,
+        Cursor::Grab => MacCursor::OpenHand,
+        Cursor::Grabbing => MacCursor::ClosedHand,
+        Cursor::NotAllowed => MacCursor::NotAllowed,
+        Cursor::ResizeColumn => MacCursor::ResizeLeftRight,
+        Cursor::ResizeRow => MacCursor::ResizeUpDown,
+        Cursor::Crosshair => MacCursor::Crosshair,
+        Cursor::ZoomIn => MacCursor::ZoomIn,
+        Cursor::ZoomOut => MacCursor::ZoomOut,
+        Cursor::Hidden => MacCursor::Transparent,
+        Cursor::Move => MacCursor::MoveImage,
+        Cursor::Cell => MacCursor::CellImage,
+        Cursor::Image(image) => MacCursor::Custom(image),
+    }
+}

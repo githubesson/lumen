@@ -65,6 +65,13 @@ pub const RULES: &[Rule] = &[
     Rule { kind: "twice", threshold: 0.0, means: "two siblings share one key (Rune's `#dup`), so one thing shows twice, as an optimistic copy beside the server's" },
 ];
 
+/// Isolate controls draw no words: appending inside an isolate still grows the same text.
+fn starts_with_words(text: &str, prefix: &str) -> bool {
+    let visible = |c: &char| !matches!(c, '\u{2066}'..='\u{2069}');
+    let mut text = text.chars().filter(visible);
+    prefix.chars().filter(visible).all(|c| text.next() == Some(c))
+}
+
 /// Whether `old` → `new` is a number changing in otherwise the same words.
 fn ticks(old: &str, new: &str) -> bool {
     let shape = |t: &str| {
@@ -491,7 +498,7 @@ pub fn check(rec: &Recording) -> Vec<Finding> {
             let clipped = |j: usize| area(&on_window(&fs[j].1.vis, size)) + 1.0 < area(&fs[j].1.rect);
             let quiet = |j: usize| fs[j].1.flags & (LIVE | VIRTUAL) != 0 || !seen(&fs[j].1, size) || fs[j].1.op < rule("faint");
             // The box of words still arriving (a streaming link's) takes each new word at once.
-            let grew = |k: usize| t.words.iter().position(|w| w.0 == k).is_some_and(|p| p > 0 && t.words[p].1.starts_with(t.words[p - 1].1.as_str()));
+            let grew = |k: usize| t.words.iter().position(|w| w.0 == k).is_some_and(|p| p > 0 && starts_with_words(&t.words[p].1, &t.words[p - 1].1));
             for j in 1..fs.len() {
                 let Some(step) = d[j - 1] else { continue };
                 let k = fs[j].0;
@@ -504,7 +511,10 @@ pub fn check(rec: &Recording) -> Vec<Finding> {
                 let name = short(&t.path);
                 let riders = |entering| if clipped(j) || clipped(j - 1) { carried(i, k, axis, step, entering) } else { 0 };
                 if step.abs() >= rule("jump") && before.abs() < 0.5 && after.abs() < 0.5 {
-                    if scrolling && input_between(k - 1, k) || riding(i, k, axis, step) || pushed(i, k, axis, step) || grew(k) { continue; }
+                    // An input's scroll cut moves a row with the content it scrolls in. A virtual
+                    // list's stack can move by less, as rows above it unmount into its space.
+                    let cut = axis < 2 && input_between(k - 1, k) && (own_edge(&fs[j].1, axis) - own_edge(&fs[j - 1].1, axis)).abs() < 0.25;
+                    if scrolling && input_between(k - 1, k) || cut || riding(i, k, axis, step) || pushed(i, k, axis, step) || grew(k) { continue; }
                     let riders = riders(true);
                     if vd(j).abs() < rule("jump") && riders == 0 { continue; }
                     let appeared = born(t) == Some(fs[j - 1].0) && fs[j - 1].0 > rec.start;
@@ -607,7 +617,7 @@ pub fn check(rec: &Recording) -> Vec<Finding> {
         for w in t.words.windows(2) {
             let ((_, old), (k, new)) = (&w[0], &w[1]);
             let (Some(a), Some(b)) = (t.at(k.wrapping_sub(1)), t.at(*k)) else { continue };
-            if *k <= rec.start || parents.contains(&i) || new.starts_with(old.as_str()) || old.starts_with(new.as_str()) || !rec.counts_roll && ticks(old, new) { continue; }
+            if *k <= rec.start || parents.contains(&i) || starts_with_words(new, old) || starts_with_words(old, new) || !rec.counts_roll && ticks(old, new) { continue; }
             if (a.flags | b.flags) & (LIVE | EXITING | VIRTUAL) != 0 || a.op.min(b.op) < rule("text-swap") || !seen(b, size) { continue; }
             geo.push((i, Finding { kind: "text-swap", element: short(&t.path), frame: *k, detail: format!("\"{old}\" → \"{new}\" in one frame") }));
         }

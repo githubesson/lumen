@@ -22,17 +22,17 @@ impl El {
     /// start a new one. Focusable controls inside don't take focus either. The press still
     /// reaches `on_press` and the other handlers.
     pub fn keeps_text_selection(mut self) -> Self {
-        self.focus.preserve_on_press.selection = true;
+        self.cold_mut().focus.preserve_on_press.selection = true;
         self
     }
 }
 
-impl<S: 'static> Runtime<S> {
+impl RuntimeCore {
     /// What a press on node `i` leaves as it is, from it and its ancestors.
     fn on_press_keeps(&self, i: usize) -> OnPress {
-        std::iter::successors(Some(i), |&p| self.nodes[p].parent)
+        std::iter::successors(Some(i), |&p| self.tree.nodes[p].parent)
             .take_while(|&p| self.allowed(p))
-            .map(|p| self.nodes[p].focus.preserve_on_press)
+            .map(|p| self.tree.nodes[p].focus.preserve_on_press)
             .fold(OnPress::default(), |a, b| OnPress { focus: a.focus || b.focus, selection: a.selection || b.selection })
     }
 
@@ -59,7 +59,7 @@ impl<S: 'static> Runtime<S> {
         let Some(h) = self.selection_holder_end() else { return false };
         match self.focus_holder_end(h) {
             Some(f) if f != h => self.tree_order(f) < self.tree_order(h),
-            Some(_) => self.text_sel.focus < self.text_sel.anchor,
+            Some(_) => self.edit.selectable.phase.selection().is_some_and(|s| s.focus < s.anchor),
             None => false,
         }
     }

@@ -8,57 +8,49 @@ compile_error!("web does not support Rune's hot or native-file-dialog features; 
 
 mod a11y;
 mod app;
-mod cold;
-mod cursor;
-mod desktop;
 mod flight;
 mod frame;
-mod gpu;
 mod input;
-mod latest;
 mod native_menu;
 mod open_url;
 mod overlay;
-mod pixels;
 mod platform;
 mod popup_menu;
-mod recorder;
+mod quit;
 mod shortcuts;
 mod states;
 mod system_material;
-mod titlebar;
-mod video;
 mod window;
 
 pub mod clipboard;
-pub mod color;
 pub mod compose;
-pub mod dirs;
 pub mod drag_out;
-pub mod edit;
 pub mod el;
 pub mod file_dialog;
-pub mod growth;
 #[cfg(feature = "hot")]
 pub mod hot;
-pub mod image;
-pub mod live;
+pub mod jump_list;
+pub mod labels;
 pub mod memo;
 pub mod motion_gate;
-pub mod native_surface;
 pub mod playground;
-pub mod prefs;
 pub mod render;
 pub mod rewind;
 pub mod runtime;
-pub mod shape;
+pub mod taskbar;
 pub mod text;
-pub mod theme;
-pub mod time;
-pub mod tok;
 pub mod tooling;
 pub mod tray;
-pub mod windows;
+
+pub(crate) use input::cursor;
+pub(crate) use quit::relaunch;
+pub(crate) use rune_core::cold;
+pub(crate) use rune_gpu as gpu;
+pub(crate) use rune_image::pixels;
+pub(crate) use rune_media::recorder;
+pub(crate) use rune_media::video;
+pub(crate) use tooling::virtual_desktop as desktop;
+pub(crate) use window::titlebar;
 
 /// AccessKit's types, for [`Runtime::accessibility_tree`] and [`Runtime::accessibility_action`].
 pub use a11y::AccessibilityLink;
@@ -80,6 +72,7 @@ pub use drag_out::DragItem;
 pub use drag_out::DragOperation;
 pub use drag_out::DragOutcome;
 pub use edit::Block;
+pub use edit::Clause;
 pub use edit::Ime;
 pub use edit::Key;
 pub use edit::KeyEvent;
@@ -97,8 +90,10 @@ pub use el::Anchor;
 pub use el::Cursor;
 pub use el::CursorImage;
 pub use el::Cycle;
+pub use el::Direction;
 pub use el::Drag;
 pub use el::El;
+pub use el::GridRow;
 pub use el::GrowthSpec;
 pub use el::InlineIcon;
 pub use el::LiveRegion;
@@ -110,6 +105,7 @@ pub use el::PointerPress;
 pub use el::RadialRadius;
 pub use el::ScrollFade;
 pub use el::ScrollSpec;
+pub use el::SelectionStyle;
 pub use el::Shadow;
 pub use el::Shell;
 pub use el::Side;
@@ -121,11 +117,14 @@ pub use el::col;
 pub use el::edit_access;
 pub use el::effect;
 pub use el::el;
+pub use el::grid;
+pub use el::hairline;
 pub use el::icon;
 pub use el::layout_watch::ScrollPos;
 pub use el::motion::MotionIntent;
 pub use el::rich;
 pub use el::row;
+pub use el::rule;
 pub use el::spacer;
 pub use el::text;
 pub use el::text_input;
@@ -175,16 +174,25 @@ pub use input::chord::KeyPlatform;
 pub use input::chord::Keybind;
 pub use input::physical_input::PhysicalInput;
 pub use input::time::last_input;
+pub use jump_list::JumpItem;
+pub use jump_list::JumpList;
+pub use jump_list::set_jump_list;
+pub use labels::Label;
+pub use labels::set_labels;
 pub use latest::Latest;
 pub use live::Live;
 pub use live::LiveText;
 pub use live::Tween;
 pub use memo::memo;
+pub use memo::region;
+pub use memo::region_with;
 pub use native_menu::MenuError;
 pub use native_menu::MenuItem;
 pub use native_surface::NativeSurface;
 pub use native_surface::SurfaceFit;
 pub use open_url::OpenUrlError;
+pub use open_url::instance::release_instance;
+pub use open_url::instance::single_instance;
 pub use overlay::Availability;
 pub use overlay::OverlayHandle;
 pub use overlay::OverlaySpec;
@@ -205,6 +213,8 @@ pub use pixels::Pixels;
 pub use platform::accent::SystemAccent;
 pub use platform::accent::system_accent;
 pub use platform::app_icon::set_app_icon;
+#[cfg(target_os = "windows")]
+pub use platform::app_icon::set_app_icon_resource;
 #[cfg(target_vendor = "apple")]
 pub use platform::embed;
 #[cfg(target_os = "macos")]
@@ -213,6 +223,7 @@ pub use platform::macos::appearance as macos_appearance;
 #[cfg(target_os = "macos")]
 #[doc(hidden)]
 pub use platform::macos::panel_bridge as macos_panel_bridge;
+pub use platform::preferences::SystemContrast;
 pub use platform::scroll_bars::ScrollBars;
 #[doc(hidden)]
 pub use platform::scroll_bars::current_runtime_id;
@@ -221,6 +232,10 @@ pub use platform::scroll_bars::system_scroller_jumps;
 pub use platform::scroll_bars::system_scroller_overlay;
 #[cfg(target_arch = "wasm32")]
 pub use platform::web;
+/// Windows: raises this process's threads whose name passes the filter to a priority floor, walking
+/// only this process's threads.
+#[cfg(target_os = "windows")]
+pub use platform::win32::raise_threads;
 pub use playground::Play;
 pub use playground::Playground;
 pub use playground::Stage;
@@ -231,6 +246,11 @@ pub use popup_menu::PopupItem;
 pub use popup_menu::PopupMenu;
 pub use popup_menu::PopupMenuError;
 pub use popup_menu::popup_menu_supported;
+#[cfg(not(target_arch = "wasm32"))]
+pub use quit::exit_deadline;
+pub use quit::fast_exit;
+pub use quit::orderly_exit;
+pub use quit::quitting;
 pub use recorder::FakeMicrophone;
 pub use recorder::Level;
 pub use recorder::MicPermission;
@@ -245,6 +265,24 @@ pub use render::prewarm_gpu;
 pub use render::prewarm_gpu_on;
 pub use render::warm_gpu;
 pub use render::warm_gpu_with;
+pub use rune_core::color;
+pub use rune_core::dirs;
+pub use rune_core::env;
+pub use rune_core::growth;
+pub use rune_core::latest;
+pub use rune_core::live;
+pub use rune_core::machine;
+pub use rune_core::marks;
+pub use rune_core::prefs;
+pub use rune_core::shape;
+pub use rune_core::task;
+pub use rune_core::theme;
+pub use rune_core::time;
+pub use rune_core::tok;
+pub use rune_core::tracked;
+pub use rune_edit as edit;
+pub use rune_image as image;
+pub use rune_media::native_surface;
 pub use rune_motion::Anim;
 pub use rune_motion::AnimExt;
 pub use rune_motion::Beat;
@@ -273,6 +311,7 @@ pub use rune_motion::Transition;
 pub use rune_motion::Travel;
 pub use rune_motion::Vec2;
 pub use rune_motion::Velocity;
+pub use rune_spell as spell;
 pub use runtime::Cx;
 pub use runtime::ElementInfo;
 pub use runtime::Env;
@@ -284,6 +323,7 @@ pub use runtime::Pose;
 pub use runtime::Runtime;
 pub use runtime::SelectedText;
 pub use runtime::SelectionChange;
+pub use runtime::TextMark;
 pub use runtime::TextSelection;
 pub use runtime::TitlebarAction;
 pub use runtime::TouchPhase;
@@ -301,10 +341,13 @@ pub use shortcuts::ShortcutId;
 pub use shortcuts::modifier_keycaps;
 pub use system_material::MAX_NATIVE_MATERIALS;
 pub use system_material::SystemMaterial;
+pub use taskbar::Taskbar;
+pub use taskbar::TaskbarProgress;
 pub use text::FontSmoothing;
 pub use text::Icon;
 pub use text::Link;
 pub use text::LinkPaint;
+pub use text::SmoothingSupport;
 pub use text::Span;
 pub use text::TextCase;
 pub use text::TextHighlight;
@@ -327,6 +370,9 @@ pub use tooling::run_with;
 pub use tooling::set_app_id;
 pub use tooling::try_run_windows_with;
 pub use tooling::try_run_windows_with_args;
+pub use tracked::Reads;
+pub use tracked::Tracked;
+pub use tracked::tracked_reads;
 pub use tray::Tray;
 pub use tray::TrayError;
 pub use tray::TrayEvent;
@@ -339,13 +385,16 @@ pub use video::Player;
 pub use video::PlayerState;
 pub use video::Video;
 pub use window::WindowHandle;
+pub use window::spec as windows;
 pub use windows::AnyWindowSpec;
 pub use windows::ConfiguredWindowOptions;
 pub use windows::Display;
 pub use windows::MacWindowOptions;
 pub use windows::RunOptions;
 pub use windows::WindowOptions;
+pub use windows::WindowPlacement;
 pub use windows::WindowSpec;
+pub use windows::open_window;
 pub use winit::raw_window_handle;
 
 /// The logical clock a scene fn (`AppSpec::scenes`) builds its state against. `--scene` starts
@@ -368,8 +417,11 @@ pub fn scene_clock() -> SceneClock {
 
 /// Runs `f` (a scene fn or `init`) with `clock` as the scene clock.
 pub(crate) fn with_scene_clock<T>(clock: SceneClock, f: impl FnOnce() -> T) -> T {
-    let before = SCENE_CLOCK.replace(clock);
-    let out = f();
-    SCENE_CLOCK.set(before);
-    out
+    struct Restore(SceneClock);
+    impl Drop for Restore {
+        fn drop(&mut self) { SCENE_CLOCK.set(self.0); }
+    }
+
+    let _restore = Restore(SCENE_CLOCK.replace(clock));
+    f()
 }

@@ -4,51 +4,64 @@
 use super::*;
 
 /// One flag per node of the commit it was filled for: the node or an ancestor is exiting.
-#[derive(Default)]
-pub(super) struct ExitMask {
-    exiting: Vec<bool>,
-    /// The commit the flags describe; they answer only while it and the node count hold.
-    commit: Option<u64>,
+pub(in crate::runtime) enum Mask {
+    /// The last frame's flags, kept only for their buffer: they answer nothing.
+    Forgotten { exiting: Vec<bool> },
+    /// The flags of commit `commit`, one per node: they answer only while that commit and the
+    /// node count hold.
+    Fresh { exiting: Vec<bool>, commit: u64 },
 }
 
-impl ExitMask {
-    pub(super) fn forget(&mut self) {
-        self.commit = None;
+impl Default for Mask {
+    fn default() -> Self { Mask::Forgotten { exiting: Vec::new() } }
+}
+
+impl Mask {
+    /// The flags, wherever they came from: the buffer a fill builds into.
+    fn into_flags(self) -> Vec<bool> {
+        match self {
+            Mask::Forgotten { exiting } | Mask::Fresh { exiting, .. } => exiting,
+        }
+    }
+
+    pub(in crate::runtime) fn forget(&mut self) {
+        *self = Mask::Forgotten { exiting: std::mem::take(self).into_flags() };
     }
 
     fn get(&self, i: usize, len: usize, commit: u64) -> Option<bool> {
-        (self.commit == Some(commit) && self.exiting.len() == len).then(|| self.exiting[i])
+        match self {
+            Mask::Fresh { exiting, commit: c } if *c == commit && exiting.len() == len => Some(exiting[i]),
+            Mask::Forgotten { .. } | Mask::Fresh { .. } => None,
+        }
     }
 }
 
-impl<S: 'static> Runtime<S> {
+impl RuntimeCore {
     /// Fills the mask for this frame's paint and reports. Call [`Self::end_exit_mask`] once
     /// they're done, so nothing reads it after a phase changes.
-    pub(super) fn begin_exit_mask(&mut self) {
-        let mut mask = std::mem::take(&mut self.exit_mask);
-        mask.commit = None;
-        mask.exiting.clear();
-        mask.exiting.reserve(self.nodes.len());
-        for i in 0..self.nodes.len() {
-            let n = &self.nodes[i];
-            let up = n.parent.is_some_and(|p| if p < i { mask.exiting[p] } else { self.subtree_exiting(p) });
-            mask.exiting.push(up || self.is_exiting(n.id));
+    pub(in crate::runtime) fn begin_exit_mask(&mut self) {
+        let mut exiting = std::mem::take(&mut self.tree.exit_mask).into_flags();
+        exiting.clear();
+        exiting.reserve(self.tree.nodes.len());
+        for i in 0..self.tree.nodes.len() {
+            let n = &self.tree.nodes[i];
+            let up = n.parent.is_some_and(|p| if p < i { exiting[p] } else { self.subtree_exiting(p) });
+            exiting.push(up || self.is_exiting(n.id));
         }
-        mask.commit = Some(self.commit_gen);
-        self.exit_mask = mask;
+        self.tree.exit_mask = Mask::Fresh { exiting, commit: self.commit.commit_gen() };
     }
 
-    pub(super) fn end_exit_mask(&mut self) {
-        self.exit_mask.forget();
+    pub(in crate::runtime) fn end_exit_mask(&mut self) {
+        self.tree.exit_mask.forget();
     }
 
-    pub(super) fn subtree_exiting(&self, mut i: usize) -> bool {
-        if let Some(exiting) = self.exit_mask.get(i, self.nodes.len(), self.commit_gen) {
+    pub(crate) fn subtree_exiting(&self, mut i: usize) -> bool {
+        if let Some(exiting) = self.tree.exit_mask.get(i, self.tree.nodes.len(), self.commit.commit_gen()) {
             return exiting;
         }
         loop {
-            if self.is_exiting(self.nodes[i].id) { return true; }
-            let Some(parent) = self.nodes[i].parent else { return false };
+            if self.is_exiting(self.tree.nodes[i].id) { return true; }
+            let Some(parent) = self.tree.nodes[i].parent else { return false };
             i = parent;
         }
     }

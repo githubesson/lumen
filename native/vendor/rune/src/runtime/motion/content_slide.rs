@@ -8,77 +8,108 @@ use super::*;
 
 /// The contents of a growth stack's rows sliding with them, drawn outside the scene.
 #[derive(Clone, Debug, Default)]
-pub(super) struct ContentSlides(Vec<Slide>);
+pub(in crate::runtime) struct ContentSlides(Vec<Slide>);
 
 #[derive(Clone, Copy, Debug)]
 struct Slide {
     node: NodeId,
     row: NodeId,
-    /// How far down from its layout it shows, and how fast that changes (points, per second).
-    dy: f32,
-    v: f32,
-    /// The row's presented height when `dy` was last measured, while it follows the growth.
-    at: Option<f32>,
+    phase: SlidePhase,
+}
+
+/// Where a slide is: how far down from its layout it shows, and how fast that changes
+/// (points, per second).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SlidePhase {
+    /// Shrinking with the growth left to open; `at` is the row's presented height when `dy`
+    /// was last measured, and `v` how fast it last moved, which a spring takes over.
+    Following { dy: f32, v: f32, at: f32 },
+    /// Springing to its layout on the row's growth spring, once the growth stopped opening
+    /// toward it. It never follows again.
+    Settling { dy: f32, v: f32 },
+}
+
+impl SlidePhase {
+    fn dy(self) -> f32 {
+        match self { SlidePhase::Following { dy, .. } | SlidePhase::Settling { dy, .. } => dy }
+    }
+
+    /// The phase after row growth `g` took `steps`.
+    fn step(self, g: &GrowTrack, spring: Spring, steps: impl Into<crate::growth::Substeps>) -> SlidePhase {
+        let steps = steps.into();
+        let dt: f32 = steps.sum();
+        let (mut dy, mut v) = match self {
+            SlidePhase::Following { dy, v, at } => {
+                let (was, left) = (g.target - at, g.target - g.h);
+                if was * dy < 0.0 && was.abs() > 1.0 / 64.0 {
+                    let next = dy * (left / was).clamp(0.0, 1.0);
+                    let v = if dt > 0.0 { (next - dy) / dt } else { v };
+                    return SlidePhase::Following { dy: next, v, at: g.h };
+                }
+                (dy, v)
+            }
+            SlidePhase::Settling { dy, v } => (dy, v),
+        };
+        for step in steps {
+            (dy, v) = spring.sample(dy, v, 0.0, step);
+        }
+        SlidePhase::Settling { dy, v }
+    }
+
+    /// Whether it still shows off its layout, or still moves toward it.
+    fn live(self) -> bool {
+        match self {
+            SlidePhase::Following { dy, .. } => dy.abs() > 1.0 / 128.0,
+            SlidePhase::Settling { dy, v } => dy.abs() > 1.0 / 128.0 || v.abs() > 0.5,
+        }
+    }
 }
 
 impl ContentSlides {
     /// Each sliding node and how far down from its layout it shows.
-    pub(super) fn shifts(&self) -> impl Iterator<Item = (NodeId, f32)> + '_ {
-        self.0.iter().map(|s| (s.node, s.dy))
+    pub(in crate::runtime) fn shifts(&self) -> impl Iterator<Item = (NodeId, f32)> + '_ {
+        self.0.iter().map(|s| (s.node, s.phase.dy()))
     }
 
     /// Slides `node`, drawn `dy` points down from its layout plus any slide it still had, with
     /// row `row`'s growth `g`, if that growth opens toward its layout. Otherwise it stops
     /// following and the whole amount is returned, for the caller to slide some other way.
     fn follow(&mut self, node: NodeId, row: NodeId, g: &GrowTrack, dy: f32) -> f32 {
-        let dy = dy + self.0.iter().position(|s| s.node == node).map_or(0.0, |k| self.0.swap_remove(k).dy);
+        let dy = dy + self.0.iter().position(|s| s.node == node).map_or(0.0, |k| self.0.swap_remove(k).phase.dy());
         let left = g.target - g.h;
         if left * dy < 0.0 && left.abs() > 1.0 / 64.0 {
-            self.0.push(Slide { node, row, dy, v: 0.0, at: Some(g.h) });
+            self.0.push(Slide { node, row, phase: SlidePhase::Following { dy, v: 0.0, at: g.h } });
             return 0.0;
         }
         dy
     }
 
     /// Lands row `row`'s slides at once (its growth landed at once).
-    pub(super) fn land(&mut self, row: NodeId) {
+    pub(in crate::runtime) fn land(&mut self, row: NodeId) {
         self.0.retain(|s| s.row != row);
     }
 
-    /// Steps row `row`'s slides after its growth `g` stepped `steps` substeps. Whether any still
+    /// Steps row `row`'s slides after its growth `g` took `steps`. Whether any still
     /// moves.
-    pub(super) fn step(&mut self, row: NodeId, g: &GrowTrack, spring: Spring, steps: usize) -> bool {
-        let dt = steps as f32 * SUBSTEP;
+    pub(in crate::runtime) fn step(&mut self, row: NodeId, g: &GrowTrack, spring: Spring, steps: crate::growth::Substeps) -> bool {
         for s in self.0.iter_mut().filter(|s| s.row == row) {
-            if let Some(at) = s.at {
-                let (was, left) = (g.target - at, g.target - g.h);
-                if was * s.dy < 0.0 && was.abs() > 1.0 / 64.0 {
-                    let dy = s.dy * (left / was).clamp(0.0, 1.0);
-                    if dt > 0.0 { s.v = (dy - s.dy) / dt; }
-                    (s.dy, s.at) = (dy, Some(g.h));
-                    continue;
-                }
-                s.at = None;
-            }
-            for _ in 0..steps {
-                (s.dy, s.v) = spring.sample(s.dy, s.v, 0.0, SUBSTEP);
-            }
+            s.phase = s.phase.step(g, spring, steps);
         }
-        self.0.retain(|s| s.dy.abs() > 1.0 / 128.0 || (s.at.is_none() && s.v.abs() > 0.5));
+        self.0.retain(|s| s.phase.live());
         self.0.iter().any(|s| s.row == row)
     }
 
     /// Drops the slides of rows that left the stack.
-    pub(super) fn keep(&mut self, rows: &[NodeId]) {
+    pub(in crate::runtime) fn keep(&mut self, rows: &[NodeId]) {
         self.0.retain(|s| rows.contains(&s.row));
     }
 }
 
-impl<S: 'static> Runtime<S> {
+impl tracks::MotionState {
     /// Before node `id`, a child of `parent` whose contents' top moved `dy` points down in its
     /// growth row (drawn less new), takes that slide: with the row's growth where it opens
     /// toward them. How far it still has to slide from where it was drawn.
-    pub(super) fn slide_with_row(&mut self, nodes: &[Node], parent: usize, id: NodeId, dy: f32) -> f32 {
+    pub(in crate::runtime) fn slide_with_row(&mut self, nodes: &[Node], parent: usize, id: NodeId, dy: f32) -> f32 {
         let Some(row) = std::iter::successors(Some(parent), |&p| nodes[p].parent)
             .find(|&r| nodes[r].parent.is_some_and(|c| nodes[c].growth.is_some()))
         else { return dy };
@@ -87,3 +118,7 @@ impl<S: 'static> Runtime<S> {
         stack.slides.follow(id, nodes[row].id, g, dy)
     }
 }
+
+#[cfg(test)]
+#[path = "content_slide_tests.rs"]
+mod tests;

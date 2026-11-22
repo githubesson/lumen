@@ -23,42 +23,52 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1:
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
 
+use super::layer_shell_machine::{keyboard, readiness, touch};
 use crate::el::Align;
 use crate::overlay::{Placement, ScreenEdge};
 use crate::runtime::Waker;
 use crate::{OverlayInput, OverlayOptions, OverlayPlacement};
 
 pub(crate) enum Input {
-    Move(f32, f32), Leave, Button(bool), Secondary(bool), Key(crate::KeyEvent), KeyUp(crate::KeyEvent),
+    Move(f32, f32), Leave, Button(bool), Secondary(bool), Focus(bool), Key(crate::KeyEvent), KeyUp(crate::KeyEvent),
     Physical(crate::PhysicalInput, Option<crate::KeyEvent>),
+}
+
+/// Whether the pointer is over the surface: the serial of its enter, which setting a cursor
+/// needs, and the cursor the surface set since (none: the one it arrived with).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Over {
+    #[default]
+    Outside,
+    Inside { serial: u32, cursor: Option<crate::el::Cursor> },
+}
+
+impl Over {
+    fn inside(self) -> bool { matches!(self, Over::Inside { .. }) }
 }
 
 #[derive(Default)]
 struct State {
-    /// The size the compositor asked for in its latest configure (0 means ours).
-    configured: Option<(u32, u32)>,
-    scale: Option<i32>,
-    closed: bool,
+    /// How far the compositor has got with the surface: its first configure is what makes it
+    /// drawable, and closing it is final.
+    readiness: readiness::State,
     input: Vec<Input>,
     surface: Option<WlSurface>,
-    pointer_inside: bool,
-    /// The serial of the latest button event over the surface, until `dispatch` records it.
-    keyboard_focus: bool,
+    over: Over,
+    keyboard_focus: keyboard::FocusState,
     want_pointer: bool,
     want_keys: bool,
     capabilities: Option<wl_seat::Capability>,
     pointer: Option<WlPointer>,
     /// A finger on the surface acts as the primary button, so a tap is a click.
     touch: Option<WlTouch>,
-    touch_id: Option<i32>,
+    finger: touch::State,
     /// `wp_cursor_shape_manager_v1` when the compositor has it, and its device for `pointer`.
     shapes: Option<WpCursorShapeManagerV1>,
     shape: Option<WpCursorShapeDeviceV1>,
-    /// The serial of the pointer's enter while it is over the surface, and the cursor set since.
-    entered: Option<u32>,
-    shown: Option<crate::el::Cursor>,
     keyboard: Option<WlKeyboard>,
     xkb: Option<xkbcommon::xkb::State>,
+    mod_state: Option<keyboard::ModState>,
 }
 
 impl Dispatch<WlOutput, ()> for State {
@@ -73,6 +83,13 @@ impl Dispatch<WlSeat, ()> for State {
     }
 }
 impl State {
+    fn step_keyboard_focus(&mut self, event: keyboard::FocusEvent) {
+        for effect in keyboard::step(&mut self.keyboard_focus, event) {
+            let keyboard::FocusEffect::Focus(focused) = effect;
+            self.input.push(Input::Focus(focused));
+        }
+    }
+
     fn update_seat(&mut self, seat: &WlSeat, qh: &QueueHandle<Self>) {
         let caps = self.capabilities.unwrap_or_else(wl_seat::Capability::empty);
         let pointer = self.want_pointer && caps.contains(wl_seat::Capability::Pointer);
@@ -88,30 +105,35 @@ impl State {
         if !pointer && let Some(p) = self.pointer.take() {
             if let Some(shape) = self.shape.take() { shape.destroy(); }
             if p.version() >= 3 { p.release(); }
-            self.pointer_inside = false;
-            self.entered = None;
+            self.over = Over::Outside;
         }
-        if !touch && let Some(t) = self.touch.take() { if t.version() >= 3 { t.release(); } self.touch_id = None; }
-        if !keyboard && let Some(k) = self.keyboard.take() { if k.version() >= 3 { k.release(); } self.xkb = None; self.keyboard_focus = false; }
+        if !touch && let Some(t) = self.touch.take() {
+            if t.version() >= 3 { t.release(); }
+            touch::step(&mut self.finger, touch::Event::Gone);
+        }
+        if !keyboard && let Some(k) = self.keyboard.take() {
+            if k.version() >= 3 { k.release(); }
+            self.xkb = None;
+            self.mod_state = None;
+            self.step_keyboard_focus(keyboard::FocusEvent::KeyboardGone);
+        }
     }
 }
 impl Dispatch<WlPointer, ()> for State {
     fn event(state: &mut Self, _: &WlPointer, event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
             wl_pointer::Event::Enter { serial, surface, surface_x, surface_y } => {
-                state.pointer_inside = state.surface.as_ref() == Some(&surface);
                 // Until the surface sets a cursor, the pointer keeps the one it arrived with.
-                state.entered = state.pointer_inside.then_some(serial);
-                state.shown = None;
-                if state.pointer_inside { state.input.push(Input::Move(surface_x as f32, surface_y as f32)); }
+                let inside = state.surface.as_ref() == Some(&surface);
+                state.over = if inside { Over::Inside { serial, cursor: None } } else { Over::Outside };
+                if inside { state.input.push(Input::Move(surface_x as f32, surface_y as f32)); }
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } if state.pointer_inside => state.input.push(Input::Move(surface_x as f32, surface_y as f32)),
+            wl_pointer::Event::Motion { surface_x, surface_y, .. } if state.over.inside() => state.input.push(Input::Move(surface_x as f32, surface_y as f32)),
             wl_pointer::Event::Leave { surface, .. } if state.surface.as_ref() == Some(&surface) => {
-                state.pointer_inside = false;
-                state.entered = None;
+                state.over = Over::Outside;
                 state.input.push(Input::Leave);
             }
-            wl_pointer::Event::Button { button: 0x110, state: wayland_client::WEnum::Value(button), .. } if state.pointer_inside => {
+            wl_pointer::Event::Button { button: 0x110, state: wayland_client::WEnum::Value(button), .. } if state.over.inside() => {
                 let pressed = button == wl_pointer::ButtonState::Pressed;
                 state.input.push(Input::Button(pressed));
                 if pressed && let Some(xkb) = &state.xkb {
@@ -119,7 +141,7 @@ impl Dispatch<WlPointer, ()> for State {
                 }
             }
             // BTN_RIGHT: the secondary gesture, as a window's right button is.
-            wl_pointer::Event::Button { button: 0x111, state: wayland_client::WEnum::Value(button), .. } if state.pointer_inside => {
+            wl_pointer::Event::Button { button: 0x111, state: wayland_client::WEnum::Value(button), .. } if state.over.inside() => {
                 state.input.push(Input::Secondary(button == wl_pointer::ButtonState::Pressed));
             }
             _ => {}
@@ -128,25 +150,21 @@ impl Dispatch<WlPointer, ()> for State {
 }
 impl Dispatch<WlTouch, ()> for State {
     fn event(state: &mut Self, _: &WlTouch, event: wl_touch::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        match event {
-            wl_touch::Event::Down { surface, id, x, y, .. } if state.touch_id.is_none() && state.surface.as_ref() == Some(&surface) => {
-                state.touch_id = Some(id);
-                state.input.push(Input::Move(x as f32, y as f32));
-                state.input.push(Input::Button(true));
-            }
-            wl_touch::Event::Motion { id, x, y, .. } if state.touch_id == Some(id) => state.input.push(Input::Move(x as f32, y as f32)),
-            wl_touch::Event::Up { id, .. } if state.touch_id == Some(id) => {
-                state.touch_id = None;
-                state.input.push(Input::Button(false));
-                state.input.push(Input::Leave);
-            }
-            // The compositor took the touch (a system gesture): leave before releasing so it isn't a click.
-            wl_touch::Event::Cancel if state.touch_id.is_some() => {
-                state.touch_id = None;
-                state.input.push(Input::Leave);
-                state.input.push(Input::Button(false));
-            }
-            _ => {}
+        use touch::Event as Touch;
+        let event = match event {
+            wl_touch::Event::Down { surface, id, x, y, .. } if state.surface.as_ref() == Some(&surface) => Touch::Down { id, x: x as f32, y: y as f32 },
+            wl_touch::Event::Motion { id, x, y, .. } => Touch::Motion { id, x: x as f32, y: y as f32 },
+            wl_touch::Event::Up { id, .. } => Touch::Up { id },
+            wl_touch::Event::Cancel => Touch::Cancel,
+            _ => return,
+        };
+        for effect in touch::step(&mut state.finger, event) {
+            state.input.push(match effect {
+                touch::Effect::Move(x, y) => Input::Move(x, y),
+                touch::Effect::Press => Input::Button(true),
+                touch::Effect::Release => Input::Button(false),
+                touch::Effect::Leave => Input::Leave,
+            });
         }
     }
 }
@@ -154,32 +172,49 @@ impl Dispatch<WlKeyboard, ()> for State {
     fn event(state: &mut Self, _: &WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         use xkbcommon::xkb;
         match event {
-            wl_keyboard::Event::Enter { surface, .. } => state.keyboard_focus = state.surface.as_ref() == Some(&surface),
+            wl_keyboard::Event::Enter { surface, .. } => {
+                let focus_event = if state.surface.as_ref() == Some(&surface) {
+                    keyboard::FocusEvent::EnterOurs
+                } else {
+                    keyboard::FocusEvent::EnterOther
+                };
+                state.step_keyboard_focus(focus_event);
+            }
             wl_keyboard::Event::Leave { surface, .. } if state.surface.as_ref() == Some(&surface) => {
-                state.keyboard_focus = false;
-                state.input.push(Input::Physical(crate::PhysicalInput::FocusLost, None));
+                state.step_keyboard_focus(keyboard::FocusEvent::LeaveOurs);
             }
             wl_keyboard::Event::Keymap { format: wayland_client::WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
                 use std::io::Read;
                 let mut map = String::new();
                 if size <= 16 * 1024 * 1024 && std::fs::File::from(fd).take(u64::from(size)).read_to_string(&mut map).is_ok() {
                     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-                    state.xkb = xkb::Keymap::new_from_string(&context, map.trim_end_matches('\0').to_owned(), xkb::KEYMAP_FORMAT_TEXT_V1, xkb::COMPILE_NO_FLAGS).map(|map| xkb::State::new(&map));
+                    state.xkb = xkb::Keymap::new_from_string(&context, map.trim_end_matches('\0').to_owned(), xkb::KEYMAP_FORMAT_TEXT_V1, xkb::COMPILE_NO_FLAGS).map(|map| {
+                        let mut xkb_state = xkb::State::new(&map);
+                        if let Some(m) = state.mod_state {
+                            xkb_state.update_mask(m.depressed, m.latched, m.locked, 0, 0, m.group);
+                        }
+                        xkb_state
+                    });
                 }
             }
             wl_keyboard::Event::Modifiers { mods_depressed, mods_latched, mods_locked, group, .. } => {
+                state.mod_state = Some(keyboard::ModState { depressed: mods_depressed, latched: mods_latched, locked: mods_locked, group });
                 if let Some(xkb) = &mut state.xkb {
                     xkb.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                     state.input.push(Input::Physical(crate::PhysicalInput::Modifiers(key_mods(xkb)), None));
                 }
             }
-            wl_keyboard::Event::Key { key, state: wayland_client::WEnum::Value(pressed), .. } if state.keyboard_focus => {
+            wl_keyboard::Event::Key { key, state: wayland_client::WEnum::Value(pressed), .. } if state.keyboard_focus.focused() => {
                 use winit::platform::scancode::PhysicalKeyExtScancode;
                 if let Some(xkb) = &state.xkb {
                     let pressed = pressed == wl_keyboard::KeyState::Pressed;
-                    let fallback = key_event(xkb, key);
-                    if let winit::keyboard::PhysicalKey::Code(key) = crate::PhysicalKeyCode::from_scancode(key) {
-                        state.input.push(Input::Physical(crate::PhysicalInput::Key { key, mods: key_mods(xkb), pressed, repeat: false }, fallback));
+                    let physical = match crate::PhysicalKeyCode::from_scancode(key) {
+                        winit::keyboard::PhysicalKey::Code(code) => Some(code),
+                        _ => None,
+                    };
+                    let fallback = key_event(xkb, key, physical);
+                    if let Some(code) = physical {
+                        state.input.push(Input::Physical(crate::PhysicalInput::Key { key: code, mods: key_mods(xkb), pressed, repeat: false }, fallback));
                     } else if let Some(key) = fallback {
                         state.input.push(if pressed { Input::Key(key) } else { Input::KeyUp(key) });
                     }
@@ -193,23 +228,16 @@ impl Dispatch<WlKeyboard, ()> for State {
 fn key_mods(state: &xkbcommon::xkb::State) -> crate::Mods {
     use xkbcommon::xkb;
     let active = |name: &str| state.mod_name_is_active(name, xkb::STATE_MODS_EFFECTIVE);
-    crate::Mods { shift: active(xkb::MOD_NAME_SHIFT), ctrl: active(xkb::MOD_NAME_CTRL), cmd: active(xkb::MOD_NAME_CTRL), alt: active(xkb::MOD_NAME_ALT), logo: active(xkb::MOD_NAME_LOGO) }
+    crate::input::key_table::mods_from_keys(active(xkb::MOD_NAME_SHIFT), active(xkb::MOD_NAME_CTRL), active(xkb::MOD_NAME_ALT), active(xkb::MOD_NAME_LOGO))
 }
 
-fn key_event(state: &xkbcommon::xkb::State, key: u32) -> Option<crate::KeyEvent> {
+fn key_event(state: &xkbcommon::xkb::State, key: u32, physical: Option<crate::PhysicalKeyCode>) -> Option<crate::KeyEvent> {
     use xkbcommon::xkb;
     let code = xkb::Keycode::new(key + 8);
-    let symbol = state.key_get_one_sym(code).raw();
+    let sym = state.key_get_one_sym(code);
     let mods = key_mods(state);
-    let key = match named_keysym(symbol) {
-        Some(key) => key,
-        None => {
-            let text = state.key_get_utf8(code);
-            if mods.cmd { crate::Key::Command(char::from_u32(xkb::keysym_to_utf32(state.key_get_one_sym(code)))?.to_ascii_lowercase()) }
-            else if !text.is_empty() && !text.chars().any(char::is_control) { crate::Key::Text(text) } else { return None; }
-        }
-    };
-    Some(crate::KeyEvent { key, mods })
+    let text = state.key_get_utf8(code);
+    keyboard::key_event_from(named_keysym(sym.raw()), xkb::keysym_to_utf32(sym), text, mods, physical)
 }
 
 /// The named key an XKB keysym is, or None for one that types (or nothing Rune names).
@@ -225,24 +253,6 @@ fn named_keysym(symbol: u32) -> Option<crate::Key> {
         0xff14 => crate::Key::ScrollLock, 0xff13 | 0xff6b => crate::Key::Pause,
         _ => return None,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::named_keysym;
-    use crate::Key;
-
-    #[test]
-    fn special_keysyms_are_named_keys() {
-        for (symbol, key) in [
-            (0xff14, Key::ScrollLock), (0xff13, Key::Pause), (0xff6b, Key::Pause), (0xff67, Key::ContextMenu),
-            (0xff61, Key::PrintScreen), (0xff15, Key::PrintScreen), (0xff63, Key::Insert),
-            (0xffbe, Key::Function(1)), (0xffd5, Key::Function(24)), (0xff55, Key::PageUp),
-        ] {
-            assert_eq!(named_keysym(symbol), Some(key), "keysym {symbol:#x}");
-        }
-        assert_eq!(named_keysym(0x61), None);
-    }
 }
 
 impl Dispatch<WlRegistry, GlobalListContents> for State {
@@ -278,12 +288,15 @@ fn shape(c: crate::el::Cursor) -> Shape {
         Cursor::ResizeColumn => Shape::ColResize,
         Cursor::ResizeRow => Shape::RowResize,
         Cursor::Crosshair => Shape::Crosshair,
+        Cursor::Cell => Shape::Cell,
+        Cursor::ZoomIn => Shape::ZoomIn,
+        Cursor::ZoomOut => Shape::ZoomOut,
     }
 }
 impl Dispatch<WlSurface, ()> for State {
     fn event(state: &mut Self, _: &WlSurface, event: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         if let wl_surface::Event::PreferredBufferScale { factor } = event {
-            state.scale = Some(factor.max(1));
+            readiness::step(&mut state.readiness, readiness::Event::Scale(factor.max(1)));
         }
     }
 }
@@ -292,9 +305,9 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
         match event {
             zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
                 layer.ack_configure(serial);
-                state.configured = Some((width, height));
+                readiness::step(&mut state.readiness, readiness::Event::Configure { width, height });
             }
-            zwlr_layer_surface_v1::Event::Closed => state.closed = true,
+            zwlr_layer_surface_v1::Event::Closed => readiness::step(&mut state.readiness, readiness::Event::Closed),
             _ => {}
         }
     }
@@ -312,11 +325,12 @@ pub(crate) struct Watch {
 }
 
 impl Watch {
+    #[allow(unsafe_code)]
     pub(crate) fn spawn(fd: RawFd, wake: Waker) -> Watch {
         let stop = Arc::new(AtomicBool::new(false));
         let turns = Arc::new((Mutex::new(0u64), Condvar::new()));
         let (stopped, seen) = (stop.clone(), turns.clone());
-        let _ = std::thread::Builder::new().name("rune-layer-watch".into()).spawn(move || {
+        std::thread::Builder::new().name("rune-layer-watch".into()).spawn(move || {
             while !stopped.load(Ordering::Relaxed) {
                 let mut poll = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
                 // SAFETY: one pollfd for a display socket. winit's outlives the event loop; an
@@ -326,9 +340,9 @@ impl Watch {
                 let (count, turned) = &*seen;
                 let before = *count.lock().unwrap();
                 wake();
-                let _ = turned.wait_timeout_while(count.lock().unwrap(), Duration::from_millis(100), |n| *n == before);
+                turned.wait_timeout_while(count.lock().unwrap(), Duration::from_millis(100), |n| *n == before).ok();
             }
-        });
+        }).ok();
         Watch { stop, turns }
     }
 
@@ -370,6 +384,7 @@ pub(crate) struct LayerSurface {
 
 impl LayerSurface {
     /// None when the display isn't Wayland or the compositor lacks layer-shell.
+    #[allow(unsafe_code)]
     pub fn new(display: RawDisplayHandle, namespace: &str, at: Placement, interactive: bool, options: &OverlayOptions, output_id: Option<u32>, wake: Option<Waker>) -> Option<LayerSurface> {
         let RawDisplayHandle::Wayland(display) = display else { return None };
         // SAFETY: winit owns this `wl_display` for the life of the event loop, which outlives
@@ -405,10 +420,10 @@ impl LayerSurface {
         let mut this = LayerSurface { registry, seat_global, regions: std::cell::RefCell::new(Some(Vec::new())), compositor, output, seat, options: options.clone(), queue, state, layer, surface, display: display.display, watch };
         this.place(at);
         this.surface.commit();
-        while this.state.configured.is_none() && !this.state.closed {
+        while !this.state.readiness.configured() {
             this.queue.blocking_dispatch(&mut this.state).ok()?;
         }
-        (!this.state.closed).then_some(this)
+        (!this.state.readiness.closed()).then_some(this)
     }
 
     pub fn place(&mut self, at: Placement) {
@@ -446,7 +461,7 @@ impl LayerSurface {
         self.layer.set_margin(top, right, bottom, left);
     }
 
-    pub fn configured_size(&self) -> Option<(u32, u32)> { self.state.configured }
+    pub fn configured_size(&self) -> Option<(u32, u32)> { self.state.readiness.size() }
 
     /// Sets the surface's pending input region; true when it changed, so it waits for a commit.
     pub fn input_regions(&self, regions: &[[f32; 4]], interactive: bool) -> bool {
@@ -484,34 +499,36 @@ impl LayerSurface {
     }
 
     pub fn request_keys(&self) -> bool {
-        if self.layer.version() < 4 { return false; }
+        if !keyboard::can_request_keys(self.options.keys, self.layer.version()) { return false; }
         self.layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
         self.surface.commit();
-        let _ = self.queue.flush();
+        self.queue.flush().ok();
         true
     }
 
-    pub fn supports_keys(&self) -> bool { self.layer.version() >= 4 && self.seat.is_some() }
+    pub fn supports_keys(&self) -> bool {
+        keyboard::supports_keys(self.options.keys, self.layer.version(), self.seat.is_some())
+    }
 
     /// Shows `want` while the pointer is over the surface, once per change. Without
     /// cursor-shape-v1 only `Cursor::Hidden` applies; others keep the cursor the pointer
     /// arrived with, such as a terminal's I-beam.
     pub fn set_cursor(&mut self, want: crate::el::Cursor) {
-        let (Some(serial), Some(pointer)) = (self.state.entered, &self.state.pointer) else { return };
-        if self.state.shown == Some(want) { return; }
+        let (Over::Inside { serial, cursor }, Some(pointer)) = (self.state.over, &self.state.pointer) else { return };
+        if cursor == Some(want) { return; }
         match (want, &self.state.shape) {
             (crate::el::Cursor::Hidden, _) => pointer.set_cursor(serial, None, 0, 0),
             (want, Some(device)) => device.set_shape(serial, shape(want)),
             (_, None) => return,
         }
-        self.state.shown = Some(want);
-        let _ = self.queue.flush();
+        self.state.over = Over::Inside { serial, cursor: Some(want) };
+        self.queue.flush().ok();
     }
 
     /// Commit role state (placement) without a new buffer; wgpu's present commits buffers.
     pub fn commit(&mut self) {
         self.surface.commit();
-        let _ = self.queue.flush();
+        self.queue.flush().ok();
     }
 
     pub fn set_buffer_scale(&mut self, scale: i32) {
@@ -523,7 +540,12 @@ impl LayerSurface {
     /// Handles what the compositor sent since the last call (winit reads the socket).
     pub fn dispatch(&mut self) -> Changes {
         self.turn();
-        Changes { size: self.state.configured.take(), input: std::mem::take(&mut self.state.input), scale: self.state.scale.take(), closed: self.state.closed }
+        Changes {
+            size: self.state.readiness.take_size(),
+            input: std::mem::take(&mut self.state.input),
+            scale: self.state.readiness.take_scale(),
+            closed: self.state.readiness.closed(),
+        }
     }
 
     /// Handles what the compositor sent to a hidden surface and drops its input, keeping size
@@ -533,12 +555,12 @@ impl LayerSurface {
     pub fn drain(&mut self) -> bool {
         self.turn();
         self.state.input.clear();
-        self.state.closed
+        self.state.readiness.closed()
     }
 
     fn turn(&mut self) {
-        let _ = self.queue.dispatch_pending(&mut self.state);
-        let _ = self.queue.flush();
+        self.queue.dispatch_pending(&mut self.state).ok();
+        self.queue.flush().ok();
         if let Some(watch) = &self.watch { watch.turned(); }
     }
 
@@ -562,6 +584,10 @@ impl Drop for LayerSurface {
         if let Some(output) = self.output.take() && output.version() >= 3 { output.release(); }
         self.layer.destroy();
         self.surface.destroy();
-        let _ = self.queue.flush();
+        self.queue.flush().ok();
     }
 }
+
+#[cfg(test)]
+#[path = "layer_shell_tests.rs"]
+mod tests;

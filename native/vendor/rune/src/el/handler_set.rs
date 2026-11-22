@@ -2,7 +2,7 @@
 //! `Cold<Handlers>`, so elements without callbacks pay one pointer.
 use crate::cold::Empty;
 use crate::el::{
-    AtBottomFn, Cursor, DragEndFn, DragFn, DragOutFn, DropSpec, LayoutFn, LayoutTxFn, ModalSpec,
+    AtBottomFn, Cursor, DragEndFn, DragFn, DragOutFn, DropSpec, LanguagesFn, LayoutFn, LayoutTxFn, ModalSpec,
     PasteFn, PointerFn, PressFn, ScrollOffsetFn, SelectionChangeFn, SelectionCopy, VisibleRowsFn,
     WindowFocusFn,
 };
@@ -11,10 +11,16 @@ use crate::el::{
 pub(crate) struct Handlers {
     pub on_paste: Option<PasteFn>,
     pub on_window_focus: Option<WindowFocusFn>,
+    /// `El::on_spellcheck`: the app's spell checking setting and what flips it.
+    pub on_spellcheck: Option<(bool, WindowFocusFn)>,
+    /// `El::on_spellcheck_languages`: keeps the dictionaries a field's menu chose.
+    pub on_spellcheck_languages: Option<LanguagesFn>,
     pub modal: Option<ModalSpec>,
     pub on_press: Option<PressFn>,
     pub on_double_press: Option<PressFn>,
     pub on_secondary_press: Option<PointerFn>,
+    /// `El::on_middle_press`.
+    pub on_middle_press: Option<PressFn>,
     pub on_hover: Option<PressFn>,
     pub on_hover_change: Option<WindowFocusFn>,
     /// Seconds the pointer must stay inside, then outside, before `on_hover_change` hears it.
@@ -25,11 +31,17 @@ pub(crate) struct Handlers {
     pub on_drag: Option<DragFn>,
     pub drag_out: Option<DragOutFn>,
     pub drag_threshold: Option<f32>,
+    /// `El::touch_drags_at_once`.
+    pub touch_at_once: bool,
+    /// `El::press_on_down`.
+    pub press_on_down: bool,
     pub on_drag_start: Option<PressFn>,
     pub on_drag_end: Option<DragEndFn>,
     pub drop: Option<Box<DropSpec>>,
     pub on_at_bottom: Option<AtBottomFn>,
-    pub on_far_from_bottom: Option<(f32, AtBottomFn)>,
+    /// `on_far_from_bottom`: its least distance, the key of the frame whose height counts in
+    /// place of the viewport's own (`on_far_from_bottom_under`), and its handler.
+    pub on_far_from_bottom: Option<(f32, Option<std::rc::Rc<str>>, AtBottomFn)>,
     pub on_visible_rows: Option<VisibleRowsFn>,
     pub on_layout: Option<LayoutTxFn>,
     pub on_screen_layout: Option<LayoutFn>,
@@ -80,6 +92,7 @@ impl Handlers {
             || self.on_press.is_some()
             || self.on_double_press.is_some()
             || self.on_secondary_press.is_some()
+            || self.on_middle_press.is_some()
             || self.on_hover.is_some()
             || self.on_hover_change.is_some()
             || self.on_drag.is_some()
@@ -93,10 +106,13 @@ impl Empty for Handlers {
     const EMPTY: &'static Self = &Handlers {
         on_paste: None,
         on_window_focus: None,
+        on_spellcheck: None,
+        on_spellcheck_languages: None,
         modal: None,
         on_press: None,
         on_double_press: None,
         on_secondary_press: None,
+        on_middle_press: None,
         on_hover: None,
         on_hover_change: None,
         hover_delay: [0.0; 2],
@@ -105,6 +121,8 @@ impl Empty for Handlers {
         on_drag: None,
         drag_out: None,
         drag_threshold: None,
+        touch_at_once: false,
+        press_on_down: false,
         on_drag_start: None,
         on_drag_end: None,
         drop: None,

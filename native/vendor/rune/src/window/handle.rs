@@ -12,8 +12,19 @@ pub(super) struct NativeWindow {
     pub(super) ready: AtomicBool,
     /// What the host's meter last published.
     pub(super) stats: Arc<Mutex<SurfaceStats>>,
-    /// The event loop and slot once the host exists, and the requests made before it did.
-    pub(super) route: Mutex<(Option<(EventLoopProxy<WakeEvent>, usize)>, Vec<Request>)>,
+    pub(super) route: Mutex<Route>,
+}
+
+/// Where a window's requests go.
+pub(super) enum Route {
+    /// No host yet, or a headless run, which takes them each turn (`take_headless`).
+    Unbound { queued: Vec<Request> },
+    /// The host's event loop and slot.
+    Bound { proxy: EventLoopProxy<WakeEvent>, slot: usize },
+}
+
+impl Default for Route {
+    fn default() -> Self { Route::Unbound { queued: Vec::new() } }
 }
 
 /// A window's native reference, refreshed across App close/reopen without owning the window.
@@ -28,25 +39,31 @@ impl WindowHandle {
     /// Routes requests to the window's host, starting with those queued before it existed.
     pub(super) fn bind(&self, proxy: EventLoopProxy<WakeEvent>, slot: usize) {
         let mut route = self.native.route.lock().unwrap();
-        for request in std::mem::take(&mut route.1) { let _ = proxy.send_event(request(slot)); }
-        route.0 = Some((proxy, slot));
+        if let Route::Unbound { queued } = &mut *route {
+            for request in std::mem::take(queued) { proxy.send_event(request(slot)).ok(); }
+        }
+        *route = Route::Bound { proxy, slot };
     }
 
     /// A headless run never binds a host; it takes the queued requests instead.
+    #[cfg_attr(not(any(feature = "tooling", debug_assertions)), allow(dead_code))]
     pub(crate) fn take_headless(&self) -> Vec<WakeEvent> {
-        let queued = std::mem::take(&mut self.native.route.lock().unwrap().1);
+        let queued = match &mut *self.native.route.lock().unwrap() {
+            Route::Unbound { queued } => std::mem::take(queued),
+            Route::Bound { .. } => Vec::new(),
+        };
         queued.into_iter().map(|request| request(0)).collect()
     }
 
+    #[cfg_attr(not(any(feature = "tooling", debug_assertions)), allow(dead_code))]
     pub(crate) fn headless_pending(&self) -> bool {
-        !self.native.route.lock().unwrap().1.is_empty()
+        matches!(&*self.native.route.lock().unwrap(), Route::Unbound { queued } if !queued.is_empty())
     }
 
     pub(super) fn send(&self, request: impl FnOnce(usize) -> WakeEvent + Send + 'static) {
-        let mut route = self.native.route.lock().unwrap();
-        match &route.0 {
-            Some((proxy, slot)) => { let _ = proxy.send_event(request(*slot)); }
-            None => route.1.push(Box::new(request)),
+        match &mut *self.native.route.lock().unwrap() {
+            Route::Bound { proxy, slot } => { proxy.send_event(request(*slot)).ok(); }
+            Route::Unbound { queued } => queued.push(Box::new(request)),
         }
     }
 
@@ -65,6 +82,51 @@ impl WindowHandle {
         let _window = self.window().ok()?;
         let number = self.native.number.load(Ordering::Acquire);
         (number != 0).then_some(number)
+    }
+    /// Where the window is on the desktop and whether it's maximized, minimized or full screen,
+    /// to save and reopen it there. None while it's closed, and on Wayland, which hides window
+    /// positions. Call it on the UI thread.
+    pub fn placement(&self) -> Option<crate::windows::WindowPlacement> {
+        let window = self.window().ok()?;
+        let (outer, inner) = (window.outer_position().ok()?, window.inner_position().ok()?);
+        let size = window.inner_size();
+        let (maximized, minimized, full_screen) = (window.is_maximized(), window.is_minimized().unwrap_or(false), window.fullscreen().is_some());
+        #[cfg(target_os = "windows")]
+        let restore = ((maximized || minimized) && !full_screen).then(|| crate::platform::win32::restore_frame(&window)).flatten();
+        #[cfg(not(target_os = "windows"))]
+        let restore = None;
+        Some(crate::windows::WindowPlacement {
+            position: (outer.x, outer.y),
+            content_position: (inner.x, inner.y),
+            content_size: (size.width, size.height),
+            scale: window.scale_factor(),
+            maximized,
+            minimized,
+            full_screen,
+            restore,
+            display: window.current_monitor().map(|m| ((m.position().x, m.position().y), (m.size().width, m.size().height))),
+        })
+    }
+    /// Shows `state` on the window's taskbar button: a progress bar and a count badge (see
+    /// [`crate::Taskbar`]). macOS shows the count on the Dock icon, summed over the app's windows
+    /// (the Dock has no progress bar of its own). Call it on the UI thread.
+    pub fn set_taskbar(&self, state: crate::Taskbar) {
+        #[cfg(target_os = "windows")]
+        if let Ok(window) = self.window() { crate::platform::win32::taskbar::set(&window, state); }
+        #[cfg(target_os = "macos")]
+        if let Ok(window) = self.window() { crate::platform::macos::dock_badge(&window, state.count()); }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let _ = state;
+    }
+    /// Flashes the window's taskbar button twice and leaves it lit until the window comes to the
+    /// front, for something that needs the person; `false` stops it once that's handled. A
+    /// window in front, or Focus Assist holding notifications back, flashes nothing. Windows
+    /// only for now. Call it on the UI thread.
+    pub fn flash(&self, on: bool) {
+        #[cfg(target_os = "windows")]
+        if let Ok(window) = self.window() { crate::platform::win32::taskbar::flash(&window, on); }
+        #[cfg(not(target_os = "windows"))]
+        let _ = on;
     }
     pub fn set_click_through(&self, click_through: bool) -> Result<(), String> {
         self.window()?.set_cursor_hittest(!click_through).map_err(|e| e.to_string())
@@ -122,8 +184,11 @@ impl WindowHandle {
 
 #[cfg(target_os = "macos")]
 pub(super) fn native_window_number(window: &Window) -> Option<u32> {
-    // SAFETY: called on winit's event thread.
-    u32::try_from(unsafe { crate::platform::macos::ns_window(window)?.windowNumber() }).ok().filter(|n| *n != 0)
+    u32::try_from(crate::platform::macos::ns_window(window)?.windowNumber()).ok().filter(|n| *n != 0)
 }
 #[cfg(not(target_os = "macos"))]
 pub(super) fn native_window_number(_: &Window) -> Option<u32> { None }
+
+#[cfg(test)]
+#[path = "handle_tests.rs"]
+mod tests;

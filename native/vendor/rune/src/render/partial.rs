@@ -1,12 +1,13 @@
 //! Lumen patch (`native/vendor/README.md`): a window redraws only what changed.
 //!
-//! Upstream renders every pixel of the window each frame. A cover fading in, a hover, a clock
-//! label ticking, each costs the whole window, and a page of covers loading drives that at the
-//! display's rate for seconds. Here a window draws into a canvas texture that keeps its pixels
-//! between frames. Each frame compares its instances with the last frame's, keeping their
-//! order. The screen areas of what was added, removed or changed, and of images whose atlas
-//! texels changed, are the damage: up to `MAX_RECTS` rectangles, each cleared and redrawn under
-//! a scissor with all instances in order. The canvas is then copied to the drawable.
+//! Upstream renders every pixel of the window each frame (on Windows only, `render::damaged`
+//! redraws in place with an alpha-blended clear quad and skips frames with blurred layers or
+//! backdrop blurs, which does not clear transparent windows). Here a window draws into a canvas
+//! texture that keeps its pixels between frames. Each frame compares its instances with the last
+//! frame's, keeping their order. The screen areas of what was added, removed or changed, and of
+//! images whose atlas texels changed, are the damage: up to `MAX_RECTS` rectangles, each cleared
+//! with `BlendState` = replace and redrawn under a scissor with all instances in order. The
+//! canvas is then copied to the drawable.
 //!
 //! A pixel outside the damage is covered by the same instances in the same order as last frame,
 //! sampling the same texels, so it would draw the same. An instance inside layers reaches the
@@ -14,8 +15,8 @@
 //! it. A backdrop blur samples what lies under it, so damage that reaches what it samples takes
 //! all of it in. Only what can't be bounded draws the whole frame: compositors, native surfaces
 //! and materials, effect slots and cached subtrees, which Lumen doesn't use. So do a new canvas,
-//! a changed key (size, format, clear colour, blending, scale), a glyph atlas page starting
-//! over, and damage over `FULL_SHARE` of the window.
+//! a changed key (size, format, clear colour, blending, scale, swap chain), a glyph atlas page
+//! starting over, and damage over `FULL_SHARE` of the window.
 //!
 //! `RUNE_PARTIAL=off` draws every frame whole; `verify` also draws each partial frame whole and
 //! reports any pixel that differs (slow); `stats` prints how each second's frames were drawn.
@@ -79,32 +80,21 @@ pub(crate) fn image_dirty(images: &ImageAtlas) -> Vec<(usize, u32, u32)> {
 type Edges = [f32; 4];
 
 /// What an instance touches in its layer's frame, as `[x0, y0, x1, y1]`: the quad `base_vs`
-/// rasterizes, inside its clip. A layer marker gives its element's rect, a backdrop blur its
-/// own rect: what they draw beyond that is found from their scopes and samples.
+/// rasterizes, inside its clip. A layer marker gives its element's rect (before its own turn,
+/// which `to_screen` applies once from `chain`); a backdrop blur gives its own rect: what they
+/// draw beyond that is found from their scopes and samples.
 fn local_extent(i: &Instance) -> Option<Edges> {
     let kind = i.params[1];
     if kind == KIND_LAYER_END || kind == KIND_EFFECT {
         return None;
     }
-    // `base_vs`'s growth per kind.
-    let grow = if kind == KIND_SHADOW {
-        i.params[2] * 3.0 + 1.0
-    } else if kind == KIND_GLYPH {
-        0.0
-    } else if kind == KIND_INSET || (kind > 4.5 && kind < 9.5) {
-        1.0
-    } else if kind == KIND_BACKDROP_BLUR {
-        0.0
+    let e = if kind == KIND_LAYER {
+        let [x, y, w, h] = i.rect;
+        [x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0]
     } else {
-        1.0 + i.params[2] * 2.0
+        let (x0, y0, x1, y1) = i.damage_quad_bounds()?;
+        [x0, y0, x1, y1]
     };
-    let [x, y, w, h] = i.rect;
-    let mut e = [x - grow, y - grow, x + w + grow, y + h + grow];
-    if kind == KIND_GLYPH && i.params[0] != 0.0 {
-        // A turned icon: its quad turns about its centre.
-        let (cx, cy, r) = (x + w * 0.5, y + h * 0.5, (w * w + h * h).sqrt() * 0.5);
-        e = [cx - r, cy - r, cx + r, cy + r];
-    }
     let c = i.clip;
     let e = [e[0].max(c[0]) - 1.0, e[1].max(c[1]) - 1.0, e[2].min(c[2]) + 1.0, e[3].min(c[3]) + 1.0];
     (e[2] > e[0] && e[3] > e[1] && e.iter().all(|v| v.is_finite())).then_some(e)
@@ -117,20 +107,8 @@ fn union(a: &mut Option<Edges>, b: Edges) {
     });
 }
 
-fn meets(a: Edges, b: Edges) -> bool {
+fn meets_u32(a: [u32; 4], b: [u32; 4]) -> bool {
     a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
-}
-
-/// The upright bounds of `r` turned `angle` radians about `p` (`base_vs`'s turned composite).
-fn turned(r: Edges, angle: f32, p: [f32; 2]) -> Edges {
-    let (sn, c) = angle.sin_cos();
-    let mut out = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
-    for (x, y) in [(r[0], r[1]), (r[2], r[1]), (r[0], r[3]), (r[2], r[3])] {
-        let (dx, dy) = (x - p[0], y - p[1]);
-        let (qx, qy) = (p[0] + c * dx - sn * dy, p[1] + sn * dx + c * dy);
-        out = [out[0].min(qx), out[1].min(qy), out[2].max(qx), out[3].max(qy)];
-    }
-    out
 }
 
 /// How a layer moves what it holds on its way to the screen.
@@ -150,7 +128,7 @@ fn to_screen(mut e: Edges, chain: &[Scope]) -> Edges {
             e = [e[0] - s.reach, e[1] - s.reach, e[2] + s.reach, e[3] + s.reach];
         }
         if let Some((angle, pivot)) = s.turn {
-            e = turned(e, angle, pivot);
+            e = turned_bounds(e, angle, pivot);
         }
     }
     e
@@ -308,33 +286,40 @@ fn change_with(prev: &[Instance], pa: &Analysis, cur: &[Instance], ca: &Analysis
     if damage.is_empty() {
         return Change::Same;
     }
-    // A backdrop blur that damage reaches redraws all it samples, in one rectangle: its
-    // sample is taken mid-pass from what the pass has drawn so far.
-    let blurs: Vec<Edges> = pa.blurs.iter().chain(&ca.blurs).copied().collect();
-    let mut taken = vec![false; blurs.len()];
-    loop {
-        let reached: Vec<usize> = (0..blurs.len()).filter(|&b| !taken[b] && damage.iter().any(|&d| meets(d, blurs[b]))).collect();
-        if reached.is_empty() { break; }
-        for b in reached {
-            taken[b] = true;
-            damage.push(blurs[b]);
-        }
-    }
-    if taken.contains(&true) {
-        let mut all = None;
-        for d in damage.drain(..) { union(&mut all, d); }
-        damage.extend(all);
-    }
     let (w, h) = (viewport.0 as f32, viewport.1 as f32);
-    let rects: Vec<[u32; 4]> = damage.iter()
-        .map(|d| [d[0].floor().max(0.0), d[1].floor().max(0.0), d[2].ceil().min(w), d[3].ceil().min(h)])
-        .filter(|r| r[2] > r[0] && r[3] > r[1])
-        .map(|r| r.map(|v| v as u32))
-        .collect();
+    let clamp = |d: &Edges| -> Option<[u32; 4]> {
+        let r = [d[0].floor().max(0.0), d[1].floor().max(0.0), d[2].ceil().min(w), d[3].ceil().min(h)];
+        (r[2] > r[0] && r[3] > r[1]).then(|| r.map(|v| v as u32))
+    };
+    let mut rects: Vec<[u32; 4]> = damage.iter().filter_map(clamp).collect();
     if rects.is_empty() {
         return Change::Same;
     }
-    let rects = merge(rects);
+    // A backdrop blur that any final (merged) damage rectangle reaches redraws all it samples,
+    // in one rectangle: its sample is taken mid-pass from what the pass has drawn so far, and
+    // a multi-rect borrowed pass cannot split for a blur. Loop until merging/hulling reaches no
+    // further blurs so neither `merge` nor folding can expand a rect over an unreached blur.
+    let blurs: Vec<[u32; 4]> = pa.blurs.iter().chain(&ca.blurs).filter_map(clamp).collect();
+    let mut taken = vec![false; blurs.len()];
+    loop {
+        rects = merge(rects);
+        let reached: Vec<usize> = (0..blurs.len())
+            .filter(|&b| !taken[b] && rects.iter().any(|r| meets_u32(*r, blurs[b])))
+            .collect();
+        if reached.is_empty() {
+            break;
+        }
+        let mut all = rects[0];
+        for r in rects.iter().skip(1) {
+            all = hull(&all, r);
+        }
+        for b in reached {
+            taken[b] = true;
+            all = hull(&all, &blurs[b]);
+        }
+        rects.clear();
+        rects.push(all);
+    }
     if rects.iter().map(area).sum::<f32>() > FULL_SHARE * w * h {
         return Change::Whole(Whole::Area);
     }
@@ -350,6 +335,7 @@ struct Key {
     srgb: bool,
     scale: u32,
     glyph_resets: u64,
+    swap: u64,
 }
 
 /// A window's canvas: the last frame's pixels, instances, and cached analysis.
@@ -380,6 +366,9 @@ pub(crate) struct Frame<'a> {
     pub srgb: bool,
     pub scale: f32,
     pub glyph_resets: u64,
+    /// Swap-chain generation (`configure::generation` on Windows, 0 elsewhere): a new swap chain
+    /// draws whole so its first present is never a `Present1` dirty-rect present.
+    pub swap: u64,
     /// Something draws outside the instances (native surfaces, materials).
     pub outside: bool,
     pub image_dirty: &'a [(usize, u32, u32)],
@@ -393,9 +382,11 @@ impl Partial {
 
     /// Draws the frame `renderer` prepared into the canvas, whole or only where it changed, and
     /// copies it to `target` (`target_texture`'s view, when the canvas can be copied to it).
-    /// False when this frame can't use the canvas: the caller draws it as before.
+    /// Returns `Some(change)` when this frame used the canvas, or `None` when the caller should
+    /// draw it as before.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer, encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView, target_texture: Option<&wgpu::Texture>, format: wgpu::TextureFormat, size: (u32, u32), f: Frame<'_>) -> bool {
+        target: &wgpu::TextureView, target_texture: Option<&wgpu::Texture>, format: wgpu::TextureFormat, size: (u32, u32), f: Frame<'_>) -> Option<Change> {
         // Effect slots draw what a compositor hook paints; backdrop blurs are followed below.
         let effects = renderer.effects.iter().any(|(_, i)| i.params[1] != KIND_BACKDROP_BLUR);
         let usable = mode() != Mode::Off && !f.outside && renderer.springs.is_none() && !effects && size.0 > 0 && size.1 > 0;
@@ -403,14 +394,22 @@ impl Partial {
             self.invalidate();
             self.prev.clear();
             self.prev_analysis = None;
-            return false;
+            return None;
         }
-        if self.canvas.as_ref().is_none_or(|c| c.size != size || c.format != format) {
-            self.canvas = Some(Canvas::new(device, format, size));
-            self.key = None;
+        match self.canvas.as_mut() {
+            Some(c) if c.format == format => {
+                if c.size != size {
+                    c.resize(device, size);
+                    self.key = None;
+                }
+            }
+            _ => {
+                self.canvas = Some(Canvas::new(device, format, size));
+                self.key = None;
+            }
         }
         let key = Key {
-            size, format, clear: f.clear.map(f32::to_bits), srgb: f.srgb, scale: f.scale.to_bits(), glyph_resets: f.glyph_resets,
+            size, format, clear: f.clear.map(f32::to_bits), srgb: f.srgb, scale: f.scale.to_bits(), glyph_resets: f.glyph_resets, swap: f.swap,
         };
         let identical = self.key == Some(key)
             && f.image_dirty.is_empty()
@@ -453,12 +452,12 @@ impl Partial {
             self.prev_analysis = next_analysis;
         }
         self.key = Some(key);
-        true
+        Some(change)
     }
 }
 
 impl Canvas {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32)) -> Canvas {
+    fn make_texture(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("partial canvas"),
             size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
@@ -470,6 +469,18 @@ impl Canvas {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
+        (texture, view)
+    }
+
+    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
+        let (texture, view) = Self::make_texture(device, self.format, size);
+        self.texture = texture;
+        self.view = view;
+        self.size = size;
+    }
+
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: (u32, u32)) -> Canvas {
+        let (texture, view) = Self::make_texture(device, format, size);
         let fullscreen = "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
             let p = array(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
             return vec4(p[i], 0.0, 1.0);
@@ -562,8 +573,8 @@ impl Canvas {
     /// `RUNE_PARTIAL=verify`: draws the frame whole into a scratch texture and reports where it
     /// differs from the canvas.
     fn verify(&self, device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer, encoder: &mut wgpu::CommandEncoder, clear: [f32; 4], rect: &[[u32; 4]]) {
-        let whole = Canvas::new(device, self.format, self.size);
-        renderer.draw(encoder, &whole.view, clear);
+        let (whole_texture, whole_view) = Self::make_texture(device, self.format, self.size);
+        renderer.draw(encoder, &whole_view, clear);
         let bpp = self.format.block_copy_size(None).unwrap_or(4);
         let row = (self.size.0 * bpp).div_ceil(256) * 256;
         let read = |tex: &wgpu::Texture, enc: &mut wgpu::CommandEncoder| {
@@ -575,13 +586,13 @@ impl Canvas {
             }, wgpu::Extent3d { width: self.size.0, height: self.size.1, depth_or_array_layers: 1 });
             buf
         };
-        let (a, b) = (read(&self.texture, encoder), read(&whole.texture, encoder));
+        let (a, b) = (read(&self.texture, encoder), read(&whole_texture, encoder));
         // The frame's encoder submits later; read after a submission of this one's work.
         let taken = std::mem::replace(encoder, device.create_command_encoder(&Default::default()));
         renderer.submit(queue, taken);
         let map = |buf: &wgpu::Buffer| {
             buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            rune_gpu::health::poll(device, wgpu::PollType::wait_indefinitely()).ok();
             buf.slice(..).get_mapped_range().expect("mapped range").to_vec()
         };
         let (pa, pb) = (map(&a), map(&b));
@@ -609,7 +620,9 @@ impl Renderer {
     /// Draws the prepared frame into `view` only inside `rects` (`[x0, y0, x1, y1]`), keeping
     /// what it holds elsewhere: in each, under its scissor, `clear` resets it and every instance
     /// draws in order. A backdrop blur splits the pass to sample what it drew so far, which
-    /// needs the pass owned, so a frame with one draws a single rectangle (`change` makes one).
+    /// needs the pass owned; `change` folds damage into a single rectangle whenever any merged
+    /// rectangle reaches a blur, and multi-rect passes otherwise rely on `Renderer::draw_backdrop_blur`
+    /// returning early when the active scissor misses the blur.
     pub(crate) fn draw_damaged(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, rects: &[[u32; 4]], size: [u32; 2],
         clear: &mut dyn FnMut(&mut wgpu::RenderPass<'_>)) {
         self.encode_layers_timed(encoder, None, &mut |_, _| {});
@@ -643,6 +656,7 @@ impl Renderer {
             clear(&mut pass);
             if self.count == 0 { continue; }
             let mut active = pass::ActivePass::borrowed(&mut pass).bounded(b);
+            active.set_scissor(None, size);
             self.draw_layer_range(&mut active, self.format, 0..self.count, None, &mut |_, _| {});
         }
     }
@@ -692,7 +706,7 @@ mod tests {
         let a: Vec<_> = (0..50).map(|k| rect(k as f32 * 10.0, 0.0, 8.0, 8.0)).collect();
         let mut b = a.clone();
         b.insert(25, rect(500.0, 300.0, 20.0, 20.0));
-        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[497, 297, 523, 323]]));
+        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[498, 298, 522, 322]]));
         assert_eq!(change(&a, &a, &[], (1000, 800)), Change::Same);
     }
 
@@ -702,7 +716,7 @@ mod tests {
         let a = vec![marker, rect(100.0, 100.0, 50.0, 50.0), rect(160.0, 100.0, 10.0, 10.0), Instance::end_layer()];
         marker.fill[3] = 0.5;
         let b = vec![marker, a[1], a[2], a[3]];
-        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[97, 97, 173, 153]]));
+        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[98, 98, 172, 152]]));
     }
 
     #[test]
@@ -711,7 +725,7 @@ mod tests {
         let mut b = a.clone();
         b[0].fill[0] = 0.5;
         b[1].fill[0] = 0.5;
-        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[7, 7, 33, 33], [897, 697, 933, 713]]));
+        assert_eq!(change(&a, &b, &[], (1000, 800)), Change::Rects(vec![[8, 8, 32, 32], [898, 698, 932, 712]]));
     }
 
     #[test]
@@ -734,6 +748,23 @@ mod tests {
         img.uv = [0.0, 200.0, 40.0, 40.0];
         let list = vec![img];
         assert_eq!(change(&list, &list, &[(1, 0, 100)], (1000, 800)), Change::Same);
-        assert_eq!(change(&list, &list, &[(1, 220, 230)], (1000, 800)), Change::Rects(vec![[7, 7, 53, 53]]));
+        assert_eq!(change(&list, &list, &[(1, 220, 230)], (1000, 800)), Change::Rects(vec![[8, 8, 52, 52]]));
+    }
+
+    #[test]
+    fn merged_hull_reaching_a_backdrop_blur_folds_blur_into_single_rect() {
+        // Two thin rects straddling a backdrop blur: neither touches the blur directly,
+        // but their merged hull (waste under MERGE_SLACK) crosses the blur's sampling region.
+        let mut blur = rect(200.0, 200.0, 20.0, 20.0);
+        blur.params = [2.0, KIND_BACKDROP_BLUR, 0.0, 1.0];
+        let a = vec![rect(150.0, 205.0, 10.0, 10.0), rect(260.0, 205.0, 10.0, 10.0), blur];
+        let mut b = a.clone();
+        b[0].fill[0] = 0.5;
+        b[1].fill[0] = 0.5;
+        let Change::Rects(rects) = change(&a, &b, &[], (1000, 800)) else { panic!() };
+        assert_eq!(rects.len(), 1, "merged hull over a blur must draw as one owned-pass rect: {rects:?}");
+        // Must include the blur's sampling reach (~20 px around [200..220]).
+        let [x0, y0, x1, y1] = rects[0];
+        assert!(x0 <= 148 && x1 >= 272 && y0 <= 180 && y1 >= 240, "{rects:?}");
     }
 }

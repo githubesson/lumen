@@ -21,6 +21,8 @@ pub struct VisualCold {
     pub border_bottom: Option<Color>,
     /// Per-side border widths `[top, right, bottom, left]` in points (`El::border_sides`).
     pub(crate) border_sides: Option<[f32; 4]>,
+    /// The border takes room in layout, snapped to device pixels (`El::border_layout`).
+    pub(crate) border_layout: bool,
     /// Dash and gap lengths of a dashed border, in points (`El::border_dash`).
     pub border_dash: Option<[f32; 2]>,
     /// Points into the dash pattern where it starts (`El::border_dash_phase`).
@@ -41,6 +43,8 @@ pub struct VisualCold {
     /// The icon's colour came from `El::color`; without it the icon takes the window's
     /// foreground (`Cx::foreground`) when the view sets one.
     pub(crate) icon_inked: bool,
+    /// A colour icon draws as its silhouette in the icon's colour (`El::icon_one_color`).
+    pub(crate) icon_one_color: bool,
     /// Vertical linear gradient (top, bottom) painted over the fill, under hover/press overlays.
     pub gradient: Option<Box<[Color; 2]>>,
     /// Radial or angled linear gradient painted over the fill, under hover/press overlays.
@@ -48,6 +52,8 @@ pub struct VisualCold {
     pub outline: Option<Outline>,
     /// Vector strokes and fills in the element's own points, over the fill.
     pub shape: Option<Rc<Shape>>,
+    /// A terminal's cell grid (`grid`), painted over the fill.
+    pub(crate) grid: Option<Rc<crate::el::grid::Grid>>,
     /// An RGBA image scaled into the element's rect, over the fill and shape.
     pub pixels: Option<crate::pixels::Pixels>,
     /// How `pixels` keeps its aspect ratio; `None` stretches it to the rect.
@@ -94,6 +100,33 @@ pub struct VisualCold {
     pub(crate) clip_to_content: bool,
     /// `El::matched_crop`: a matched flight keeps the content at its own size, cropped.
     pub(crate) flight_crop: bool,
+    /// `El::hold_landing_width`: an animated width change lands its contents and slides them.
+    pub(crate) hold_landing: bool,
+    pub(crate) row_face: Option<&'static str>,
+    /// `El::press_color`: its text and icons' colour while a press on it is held.
+    pub(crate) press_color: Option<Color>,
+    /// `El::paint_contained`: the origin (window points) its children snap against.
+    pub(crate) paint_contain: Option<[f32; 2]>,
+    /// `El::motion_snaps`: while it moves, it and its subtree snap every frame.
+    pub(crate) motion_snaps: bool,
+    /// `El::hairline`: scales its thin axis by half around its midpoint at paint time, matching
+    /// CSS `height: 1px; transform: scaleY(0.5)` across DPI scales.
+    pub(crate) hairline: bool,
+    /// `El::offset`: a visual shift in points.
+    pub(crate) offset: [f32; 2],
+    /// Static alpha of this element's own paint; never inherited or isolated.
+    pub paint_alpha: f32,
+    /// `El::layer_opacity`: static alpha its whole subtree composites at, as one layer.
+    pub(crate) layer_opacity: f32,
+    pub blur: f32,
+    /// `El::rotate`, in radians clockwise.
+    pub(crate) rotate: f32,
+    /// App-defined tag a compositor reads per instance (`Runtime::marks`); 0 inherits the parent's.
+    pub mark: u32,
+    /// `El::mirror_in_rtl`: its icon flips left to right in a right-to-left element.
+    pub(crate) mirror_rtl: bool,
+    /// `El::paint_order`: where it paints among its siblings; 0 is tree order.
+    pub(crate) paint_order: i16,
 }
 
 impl Empty for VisualCold {
@@ -102,6 +135,7 @@ impl Empty for VisualCold {
         surface_place: crate::native_surface::place::SurfacePlace::CENTRED,
         border_bottom: None,
         border_sides: None,
+        border_layout: false,
         border_dash: None,
         border_dash_phase: 0.0,
         shadows: Vec::new(),
@@ -112,10 +146,12 @@ impl Empty for VisualCold {
         cutout: None,
         icon: None,
         icon_inked: false,
+        icon_one_color: false,
         gradient: None,
         radial: None,
         outline: None,
         shape: None,
+        grid: None,
         pixels: None,
         pixels_fit: None,
         effect: None,
@@ -138,45 +174,53 @@ impl Empty for VisualCold {
         instant_motion: false,
         clip_to_content: false,
         flight_crop: false,
+        hold_landing: false,
+        row_face: None,
+        press_color: None,
+        paint_contain: None,
+        motion_snaps: false,
+        hairline: false,
+        offset: [0.0; 2],
+        paint_alpha: 1.0,
+        layer_opacity: 1.0,
+        blur: 0.0,
+        rotate: 0.0,
+        mark: 0,
+        mirror_rtl: false,
+        paint_order: 0,
     };
 }
 
+/// Border, hover and press colours and per-corner radii: interactive boxes set them, most
+/// boxes don't, so they wait behind `Cold<VisualBox>`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct VisualBox {
+    pub(crate) border: Color,
+    pub(crate) hover: Color,
+    pub(crate) press: Color,
+    /// Per-corner radii `[tl, tr, br, bl]`, read when `Visual::radius` is NaN.
+    pub(crate) corners: [f32; 4],
+    pub(crate) border_width: f32,
+}
+
+impl Empty for VisualBox {
+    const EMPTY: &'static Self = &VisualBox {
+        border: Color::TRANSPARENT,
+        hover: Color::TRANSPARENT,
+        press: Color::TRANSPARENT,
+        corners: [0.0; 4],
+        border_width: 0.0,
+    };
+}
+
+/// The paint fields every box may set; the rest wait behind `box_paint` and `cold`.
 #[derive(Clone, Debug)]
 pub struct Visual {
     pub fill: Color,
-    pub border: Color,
-    pub hover: Color,
-    pub press: Color,
-    pub radius: [f32; 4],
-    /// `El::offset`: a visual shift in points, and the curve it moves on.
-    pub(crate) offset: [f32; 2],
-    pub border_width: f32,
+    /// The corner radius; NaN when the corners differ, which `box_paint.corners` then holds.
+    pub(crate) radius: f32,
     pub opacity: f32,
-    /// Static alpha of this element's own paint; never inherited or isolated.
-    pub paint_alpha: f32,
-    /// `El::layer_opacity`: static alpha its whole subtree composites at, as one layer.
-    pub(crate) layer_opacity: f32,
-    pub blur: f32,
-    /// `El::rotate`, in radians clockwise.
-    pub(crate) rotate: f32,
-    /// App-defined tag a compositor reads per instance (`Runtime::marks`); 0 inherits the parent's.
-    pub mark: u32,
-    /// Rectangular native input region for overlays using `OverlayInput::Regions`.
-    pub hit: bool,
-    /// Corners follow Apple's continuous curve instead of circular arcs (`El::continuous_corners`).
-    pub continuous_corners: bool,
-    pub blend: crate::render::Blend,
-    /// Tracks hover for its descendants' `group_*` styles even without a hover colour. Any
-    /// element with a hover colour is a group too.
-    pub hover_group: bool,
-    /// Rasterize this subtree once into an offscreen texture when settled (`El::cache`).
-    pub(crate) cache: bool,
-    /// `El::raise`: paints and takes input above the rest of the window.
-    pub(crate) raise: bool,
-    /// `El::pixel_snap(false)`: this subtree paints at its exact fractional rects.
-    pub(crate) no_pixel_snap: bool,
-    /// `El::ride_trailing`: x holds against the parent's trailing edge while its width moves.
-    pub(crate) ride_trailing: bool,
+    pub(crate) box_paint: Cold<VisualBox>,
     pub(crate) cold: Cold<VisualCold>,
 }
 
@@ -184,6 +228,82 @@ impl Visual {
     #[inline]
     pub(crate) fn cold_mut(&mut self) -> &mut VisualCold {
         &mut self.cold
+    }
+
+    #[inline]
+    pub(crate) fn box_paint_mut(&mut self) -> &mut VisualBox {
+        &mut self.box_paint
+    }
+
+    /// The corner radii `[tl, tr, br, bl]`.
+    #[inline]
+    pub(crate) fn radii(&self) -> [f32; 4] {
+        if self.radius.is_nan() { self.box_paint.corners } else { [self.radius; 4] }
+    }
+
+    /// Sets the corner radii, inline when they're all the same.
+    #[inline]
+    pub(crate) fn set_radii(&mut self, r: [f32; 4]) {
+        if r == [r[0]; 4] {
+            self.radius = r[0];
+        } else {
+            self.radius = f32::NAN;
+            self.box_paint_mut().corners = r;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn border(&self) -> Color {
+        self.box_paint.border
+    }
+
+    #[inline]
+    pub(crate) fn border_width(&self) -> f32 {
+        self.box_paint.border_width
+    }
+
+    #[inline]
+    pub(crate) fn hover(&self) -> Color {
+        self.box_paint.hover
+    }
+
+    #[inline]
+    pub(crate) fn press(&self) -> Color {
+        self.box_paint.press
+    }
+
+    /// Sets the hover colour, allocating `box_paint` only for one that isn't the default.
+    #[inline]
+    pub(crate) fn set_hover(&mut self, c: Color) {
+        if c != Color::TRANSPARENT || !self.box_paint.is_empty() {
+            self.box_paint_mut().hover = c;
+        }
+    }
+
+    /// Sets the press colour, allocating `box_paint` only for one that isn't the default.
+    #[inline]
+    pub(crate) fn set_press(&mut self, c: Color) {
+        if c != Color::TRANSPARENT || !self.box_paint.is_empty() {
+            self.box_paint_mut().press = c;
+        }
+    }
+
+    /// Sets the border's colour alone, allocating `box_paint` only for a change.
+    #[inline]
+    pub(crate) fn set_border_color(&mut self, c: Color) {
+        if c != self.box_paint.border {
+            self.box_paint_mut().border = c;
+        }
+    }
+
+    /// Sets the border, allocating `box_paint` only for one that isn't the default.
+    #[inline]
+    pub(crate) fn set_border(&mut self, width: f32, c: Color) {
+        if width != 0.0 || c != Color::TRANSPARENT || !self.box_paint.is_empty() {
+            let b = self.box_paint_mut();
+            b.border_width = width;
+            b.border = c;
+        }
     }
 }
 
@@ -196,30 +316,63 @@ impl Deref for Visual {
 }
 
 impl Default for Visual {
+    #[inline]
     fn default() -> Self {
-        Visual {
-            fill: Color::TRANSPARENT,
-            border: Color::TRANSPARENT,
-            hover: Color::TRANSPARENT,
-            press: Color::TRANSPARENT,
-            radius: [0.0; 4],
-            offset: [0.0; 2],
-            border_width: 0.0,
-            opacity: 1.0,
-            paint_alpha: 1.0,
-            layer_opacity: 1.0,
-            blur: 0.0,
-            rotate: 0.0,
-            mark: 0,
-            hit: false,
-            continuous_corners: false,
-            blend: crate::render::Blend::SourceOver,
-            hover_group: false,
-            cache: false,
-            raise: false,
-            no_pixel_snap: false,
-            ride_trailing: false,
-            cold: Cold::default(),
-        }
+        Visual { fill: Color::TRANSPARENT, radius: 0.0, opacity: 1.0, box_paint: Cold::NONE, cold: Cold::NONE }
+    }
+}
+
+/// `Visual`'s flags, one bit each, kept beside it on `El` and `Node`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VisualFlags(u8);
+
+impl VisualFlags {
+    /// Rectangular native input region for overlays using `OverlayInput::Regions`.
+    pub(crate) const HIT: u8 = 1;
+    /// Corners follow Apple's continuous curve instead of circular arcs (`El::continuous_corners`).
+    pub(crate) const CONTINUOUS_CORNERS: u8 = 1 << 1;
+    /// Composites with `Blend::PlusLighter` (`El::plus_lighter`).
+    pub(crate) const PLUS_LIGHTER: u8 = 1 << 2;
+    /// Tracks hover for its descendants' `group_*` styles even without a hover colour. Any
+    /// element with a hover colour is a group too.
+    pub(crate) const HOVER_GROUP: u8 = 1 << 3;
+    /// Rasterize this subtree once into an offscreen texture when settled (`El::cache`).
+    pub(crate) const CACHE: u8 = 1 << 4;
+    /// `El::raise`: paints and takes input above the rest of the window.
+    pub(crate) const RAISE: u8 = 1 << 5;
+    /// `El::pixel_snap(false)`: this subtree paints at its exact fractional rects.
+    pub(crate) const NO_PIXEL_SNAP: u8 = 1 << 6;
+    /// `El::ride_trailing`: x holds against the parent's trailing edge while its width moves.
+    pub(crate) const RIDE_TRAILING: u8 = 1 << 7;
+
+    #[inline(always)]
+    pub(crate) fn set(&mut self, bit: u8, on: bool) {
+        if on { self.0 |= bit } else { self.0 &= !bit }
+    }
+
+    #[inline(always)]
+    pub(crate) fn hit(self) -> bool { self.0 & Self::HIT != 0 }
+    #[inline(always)]
+    pub(crate) fn continuous_corners(self) -> bool { self.0 & Self::CONTINUOUS_CORNERS != 0 }
+    #[inline(always)]
+    pub(crate) fn blend(self) -> crate::render::Blend {
+        if self.0 & Self::PLUS_LIGHTER != 0 { crate::render::Blend::PlusLighter } else { crate::render::Blend::SourceOver }
+    }
+    #[inline(always)]
+    pub(crate) fn hover_group(self) -> bool { self.0 & Self::HOVER_GROUP != 0 }
+    #[inline(always)]
+    pub(crate) fn cache(self) -> bool { self.0 & Self::CACHE != 0 }
+    #[inline(always)]
+    pub(crate) fn raise(self) -> bool { self.0 & Self::RAISE != 0 }
+    #[inline(always)]
+    pub(crate) fn no_pixel_snap(self) -> bool { self.0 & Self::NO_PIXEL_SNAP != 0 }
+    #[inline(always)]
+    pub(crate) fn ride_trailing(self) -> bool { self.0 & Self::RIDE_TRAILING != 0 }
+}
+
+impl Visual {
+    /// Whether a press on it shows (an `El::press` overlay or an `El::press_color`).
+    pub(crate) fn tracks_press(&self) -> bool {
+        self.press().a > 0.0 || self.cold.get().is_some_and(|c| c.press_color.is_some())
     }
 }

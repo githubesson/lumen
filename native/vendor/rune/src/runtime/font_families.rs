@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<S: 'static> Runtime<S> {
+impl RuntimeCore {
     /// Put `sans` and `mono` behind the `Family::Sans` and `Family::Mono` slots, as
     /// `Tx::set_font_families` does from a handler. Every runtime on this thread follows on its
     /// next frame (all of an app's windows and overlays), and windows opened later start in
@@ -23,17 +23,22 @@ impl<S: 'static> Runtime<S> {
         tx.font_families.as_ref().is_some_and(|(sans, mono)| self.text.families() != (sans.as_str(), mono.as_str()))
     }
 
-    /// Takes up families chosen since this runtime last looked. On a change, everything sized
-    /// in the old families goes: memoized subtrees, and every measured leaf's layout result.
-    /// The text system has already dropped its layouts. True when the next frame must build.
+    /// Takes up families chosen, or a web app's full faces fetched, since this runtime last
+    /// looked. On a change, everything sized in the old fonts goes: memoized subtrees, and every
+    /// measured leaf's layout result. The text system has already dropped its layouts. True
+    /// when the next frame must build.
     pub(crate) fn follow_font_families(&mut self) -> bool {
-        if !self.text.follow_chosen() {
+        let chosen = self.text.follow_chosen();
+        if !(self.text.follow_full_faces() || chosen) {
             return false;
         }
-        self.memo.clear();
-        self.layout.mark_all_dirty();
-        self.dirty = true;
-        self.relayout = true;
+        for n in &mut self.tree.nodes {
+            n.text_layout = None;
+        }
+        self.commit.clear_memo();
+        self.commit.layout.mark_all_dirty();
+        self.commit.dirty = true;
+        self.commit.relayout = true;
         true
     }
 }

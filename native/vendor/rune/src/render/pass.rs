@@ -8,14 +8,30 @@ pub(super) struct Backdrop {
     pub(super) view: wgpu::TextureView,
 }
 
-pub(super) enum PassInner<'a, 'p> {
-    Borrowed(&'a mut wgpu::RenderPass<'p>),
-    Owned(wgpu::RenderPass<'p>),
+/// The pass a frame records into. Only a pass the renderer opened itself can end mid-frame
+/// (`split`): the caller's own `draw_range` pass has no encoder to copy its target and re-open it.
+pub(super) enum ActivePass<'a, 'p> {
+    /// A pass the caller opened and will end: it carries no encoder.
+    Borrowed {
+        pass: &'a mut wgpu::RenderPass<'p>,
+        /// The scissor a scope set (`None`: the whole target), restored after a nested scope.
+        scissor: Option<[u32; 4]>,
+        /// What every scissor stays inside: the part of the target a frame redraws
+        /// (`Renderer::draw_damaged`).
+        bound: Option<[u32; 4]>,
+    },
+    /// A pass this renderer opened along with its encoder and target.
+    Owned(OpenPass<'a, 'p>),
+    /// Held only between `split` ending the pass and re-opening it, while the encoder copies the
+    /// target and runs the hook.
+    Parked,
 }
 
-pub(super) struct ActivePass<'a, 'p> {
-    pub(super) inner: Option<PassInner<'a, 'p>>,
-    pub(super) encoder: Option<(&'a mut wgpu::CommandEncoder, &'a wgpu::TextureView)>,
+/// An owned pass, with everything a re-opened pass restores.
+pub(super) struct OpenPass<'a, 'p> {
+    pass: wgpu::RenderPass<'p>,
+    encoder: &'a mut wgpu::CommandEncoder,
+    view: &'a wgpu::TextureView,
     /// The scissor a scope set (`None`: the whole target), restored when the pass re-opens.
     scissor: Option<[u32; 4]>,
     /// The frame pass's timestamp writes: a re-opened pass writes the end index again.
@@ -24,37 +40,67 @@ pub(super) struct ActivePass<'a, 'p> {
     bound: Option<[u32; 4]>,
 }
 
+/// Intersects an optional scissor with an optional damage bound (Lumen patch).
+fn intersect_bound(scissor: Option<[u32; 4]>, bound: Option<[u32; 4]>) -> Option<[u32; 4]> {
+    match (scissor, bound) {
+        (s, None) => s,
+        (None, Some(b)) => Some(b),
+        (Some([x, y, w, h]), Some([bx, by, bw, bh])) => {
+            let (x0, y0) = (x.max(bx), y.max(by));
+            let (x1, y1) = ((x + w).min(bx + bw).max(x0), (y + h).min(by + bh).max(y0));
+            Some([x0, y0, x1 - x0, y1 - y0])
+        }
+    }
+}
+
 impl<'a, 'p> ActivePass<'a, 'p> {
     pub(super) fn borrowed(pass: &'a mut wgpu::RenderPass<'p>) -> Self {
-        ActivePass { inner: Some(PassInner::Borrowed(pass)), encoder: None, scissor: None, timestamps: None, bound: None }
+        ActivePass::Borrowed { pass, scissor: None, bound: None }
     }
 
-    pub(super) fn owned(
-        pass: wgpu::RenderPass<'static>,
-        encoder: &'a mut wgpu::CommandEncoder,
-        view: &'a wgpu::TextureView,
-    ) -> Self {
-        ActivePass { inner: Some(PassInner::Owned(pass)), encoder: Some((encoder, view)), scissor: None, timestamps: None, bound: None }
-    }
-
-    pub(super) fn with_timestamps(mut self, timestamps: Option<wgpu::RenderPassTimestampWrites<'a>>) -> Self {
-        self.timestamps = timestamps;
-        self
+    /// A caller's pass whose scissors all stay inside `bound` (`[x, y, width, height]`).
+    pub(super) fn borrowed_within(pass: &'a mut wgpu::RenderPass<'p>, bound: [u32; 4]) -> Self {
+        ActivePass::Borrowed { pass, scissor: None, bound: Some(bound) }
     }
 
     /// Lumen patch: keeps every scissor inside `bound` (`[x, y, width, height]`), which the
     /// pass's scissor already is.
-    pub(super) fn bounded(mut self, bound: [u32; 4]) -> Self {
-        self.bound = Some(bound);
+    pub(super) fn bounded(mut self, b: [u32; 4]) -> Self {
+        match &mut self {
+            ActivePass::Borrowed { bound, .. } => *bound = Some(b),
+            ActivePass::Owned(owned) => owned.bound = Some(b),
+            ActivePass::Parked => {}
+        }
         self
+    }
+
+    pub(super) fn owned(
+        pass: wgpu::RenderPass<'p>,
+        encoder: &'a mut wgpu::CommandEncoder,
+        view: &'a wgpu::TextureView,
+    ) -> Self {
+        Self::owned_timed(pass, encoder, view, None)
+    }
+
+    pub(super) fn owned_timed(
+        pass: wgpu::RenderPass<'p>,
+        encoder: &'a mut wgpu::CommandEncoder,
+        view: &'a wgpu::TextureView,
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'a>>,
+    ) -> Self {
+        ActivePass::Owned(OpenPass { pass, encoder, view, scissor: None, timestamps, bound: None })
     }
 
     /// Sets the scissor to `rect` (`[x, y, width, height]`), or to the whole `size` target.
     pub(super) fn set_scissor(&mut self, rect: Option<[u32; 4]>, size: [u32; 2]) {
-        self.scissor = rect;
+        let bound = match self {
+            ActivePass::Borrowed { scissor, bound, .. } => { *scissor = rect; *bound }
+            // Lumen patch: respect `owned.bound` too when redrawing a damaged backdrop blur.
+            ActivePass::Owned(owned) => { owned.scissor = rect; owned.bound }
+            ActivePass::Parked => None,
+        };
         let [x, y, w, h] = rect.unwrap_or([0, 0, size[0], size[1]]);
-        // Lumen patch: inside the damaged rectangle.
-        let [x, y, w, h] = match self.bound {
+        let [x, y, w, h] = match bound {
             Some([bx, by, bw, bh]) => {
                 let (x0, y0) = (x.max(bx), y.max(by));
                 let (x1, y1) = ((x + w).min(bx + bw).max(x0), (y + h).min(by + bh).max(y0));
@@ -67,13 +113,29 @@ impl<'a, 'p> ActivePass<'a, 'p> {
 
     /// The scissor in effect: the scope's, inside the damage bound (Lumen patch).
     pub(super) fn scissor(&self) -> Option<[u32; 4]> {
-        match (self.scissor, self.bound) {
-            (s, None) => s,
-            (None, Some(b)) => Some(b),
-            (Some([x, y, w, h]), Some([bx, by, bw, bh])) => {
-                let (x0, y0) = (x.max(bx), y.max(by));
-                let (x1, y1) = ((x + w).min(bx + bw).max(x0), (y + h).min(by + bh).max(y0));
-                Some([x0, y0, x1 - x0, y1 - y0])
+        match self {
+            ActivePass::Borrowed { scissor, bound, .. } => intersect_bound(*scissor, *bound),
+            ActivePass::Owned(owned) => intersect_bound(owned.scissor, owned.bound),
+            ActivePass::Parked => None,
+        }
+    }
+
+    /// Whether this pass has an encoder and a target that can be copied, so `split` can end it.
+    fn splittable(&self) -> bool {
+        match self {
+            ActivePass::Owned(owned) => owned.view.texture().usage().contains(wgpu::TextureUsages::COPY_SRC),
+            ActivePass::Borrowed { .. } | ActivePass::Parked => false,
+        }
+    }
+
+    /// Takes the owned pass out of `self`, leaving it `Parked`; puts a borrowed pass back and
+    /// returns `None` for it.
+    fn take(&mut self) -> Option<OpenPass<'a, 'p>> {
+        match std::mem::replace(self, ActivePass::Parked) {
+            ActivePass::Owned(owned) => Some(owned),
+            other => {
+                *self = other;
+                None
             }
         }
     }
@@ -110,8 +172,8 @@ impl<'a, 'p> ActivePass<'a, 'p> {
 
     /// Ends the pass, copies its target into the pooled backdrop of `format` (all of it, or
     /// only `copy`, a window device-pixel rect `[x0, y0, x1, y1]`), runs `then` on the encoder,
-    /// and re-opens the pass with `LoadOp::Load`. `None` when the pass has no encoder, its
-    /// target lacks `COPY_SRC`, or no backdrop of `format` is pooled.
+    /// and re-opens the pass with `LoadOp::Load`. `None` when the pass is borrowed, its target
+    /// lacks `COPY_SRC`, or no backdrop of `format` is pooled.
     pub(super) fn split<'r>(
         &mut self,
         renderer: &'r Renderer,
@@ -122,13 +184,14 @@ impl<'a, 'p> ActivePass<'a, 'p> {
         copy: Option<[f32; 4]>,
         then: impl FnOnce(&mut wgpu::CommandEncoder, &'r Backdrop),
     ) -> Option<&'r Backdrop> {
-        let (encoder, view) = self.encoder.as_mut()?;
-        if !view.texture().usage().contains(wgpu::TextureUsages::COPY_SRC) { return None; }
+        if !self.splittable() { return None; }
         let bd = renderer.backdrops.iter().find(|b| b.format == format)?;
-        drop(self.inner.take());
+        let OpenPass { pass, encoder, view, scissor, timestamps, bound } = self.take()?;
+        // The pass ends here: the encoder is free until it re-opens below.
+        drop(pass);
         let (vw, vh) = (bd.texture.width(), bd.texture.height());
         if in_layer {
-            let _clear = (*encoder).begin_render_pass(&wgpu::RenderPassDescriptor {
+            let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("backdrop clear"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &bd.view,
@@ -165,7 +228,7 @@ impl<'a, 'p> ActivePass<'a, 'p> {
             }
         };
         if copy_w > 0 && copy_h > 0 {
-            (*encoder).copy_texture_to_texture(
+            encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: src_tex,
                     mip_level: 0,
@@ -181,17 +244,17 @@ impl<'a, 'p> ActivePass<'a, 'p> {
                 wgpu::Extent3d { width: copy_w, height: copy_h, depth_or_array_layers: 1 },
             );
         }
-        then(&mut **encoder, bd);
-        let mut next = (*encoder).begin_render_pass(&wgpu::RenderPassDescriptor {
+        then(&mut *encoder, bd);
+        let mut next = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(if in_layer { "isolated group" } else { "frame" }),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: *view,
+                view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: self.timestamps.as_ref().filter(|t| t.end_of_pass_write_index.is_some()).map(|t| wgpu::RenderPassTimestampWrites {
+            timestamp_writes: timestamps.as_ref().filter(|t| t.end_of_pass_write_index.is_some()).map(|t| wgpu::RenderPassTimestampWrites {
                 query_set: t.query_set,
                 beginning_of_pass_write_index: None,
                 end_of_pass_write_index: t.end_of_pass_write_index,
@@ -200,9 +263,9 @@ impl<'a, 'p> ActivePass<'a, 'p> {
             multiview_mask: None,
         }).forget_lifetime();
         next.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
-        // Lumen patch: the effective scissor, inside the damage bound.
-        if let Some([x, y, w, h]) = self.scissor() { next.set_scissor_rect(x, y, w, h); }
-        self.inner = Some(PassInner::Owned(next));
+        // Lumen patch: restore the effective scissor, inside the damage bound.
+        if let Some([x, y, w, h]) = intersect_bound(scissor, bound) { next.set_scissor_rect(x, y, w, h); }
+        *self = ActivePass::Owned(OpenPass { pass: next, encoder, view, scissor, timestamps, bound });
         Some(bd)
     }
 }
@@ -210,18 +273,20 @@ impl<'a, 'p> ActivePass<'a, 'p> {
 impl<'p> std::ops::Deref for ActivePass<'_, 'p> {
     type Target = wgpu::RenderPass<'p>;
     fn deref(&self) -> &Self::Target {
-        match self.inner.as_ref().expect("active pass") {
-            PassInner::Borrowed(p) => p,
-            PassInner::Owned(p) => p,
+        match self {
+            ActivePass::Borrowed { pass, .. } => &**pass,
+            ActivePass::Owned(owned) => &owned.pass,
+            ActivePass::Parked => panic!("no active pass: split ended the pass"),
         }
     }
 }
 
 impl<'p> std::ops::DerefMut for ActivePass<'_, 'p> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        match self.inner.as_mut().expect("active pass") {
-            PassInner::Borrowed(p) => p,
-            PassInner::Owned(p) => p,
+        match self {
+            ActivePass::Borrowed { pass, .. } => &mut **pass,
+            ActivePass::Owned(owned) => &mut owned.pass,
+            ActivePass::Parked => panic!("no active pass: split ended the pass"),
         }
     }
 }

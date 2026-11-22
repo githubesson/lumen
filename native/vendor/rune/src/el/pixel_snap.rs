@@ -16,7 +16,38 @@ impl El {
     /// (`El::offset` from a value it animates), so it glides instead of stepping a pixel at a
     /// time.
     pub fn pixel_snap(mut self, on: bool) -> Self {
-        self.vis.no_pixel_snap = !on;
+        self.vis_flags.set(crate::el::VisualFlags::NO_PIXEL_SNAP, !on);
+        self
+    }
+
+    /// Snaps this element's children as Blink does inside a box with paint containment
+    /// (`contain: paint`, `content` or `strict`) whose top-left is `origin`, in window points:
+    /// that box's origin rounds to a whole device pixel on its own, and each child's position
+    /// in it rounds again, with no carry between the two. At 1.875x a box at 44 pt (82.5 px)
+    /// starts at 83, so a child 17 pt into it (31.875 px) lands on 115, not on 114 where its
+    /// own position would round. Pass the containing box's origin even when this element
+    /// isn't it (a panel inset inside a `main` that has the containment).
+    pub fn paint_contained(mut self, origin: [f32; 2]) -> Self {
+        self.vis.cold_mut().paint_contain = Some(origin);
+        self
+    }
+
+    /// While it moves, this element and everything in it snap to whole device pixels every
+    /// frame, as Chromium paints a box that layout moves (a width or position that springs):
+    /// its fill, border, shadow and ring keep the profile they have at rest, stepping a pixel
+    /// at a time. By default a moving box glides at sub-pixel precision, as Chromium draws a
+    /// CSS transform, and its edges blend over the pixels they cross.
+    pub fn motion_snaps(mut self) -> Self {
+        self.vis.cold_mut().motion_snaps = true;
+        self
+    }
+
+    /// Scales this element's thin axis by half around its midpoint at paint time, matching
+    /// Chromium's `height: 1px; transform: scaleY(0.5)` (or vertical `width: 1px; transform: scaleX(0.5)`):
+    /// 0.50 coverage in one pixel at 1x, and 0.625 / 0.375 across two pixels at 1.5x, while layout
+    /// keeps its full 1 pt slot.
+    pub fn hairline(mut self) -> Self {
+        self.vis.cold_mut().hairline = true;
         self
     }
 }

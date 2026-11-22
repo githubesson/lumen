@@ -16,6 +16,10 @@ pub(crate) struct Sticky {
     /// `inset` counts from the element's bottom (`El::sticky_top_showing`).
     pub tail: bool,
     pub shadows: Vec<Shadow>,
+    /// `El::stuck_fade`: lead and span, in points.
+    pub fade: Option<[f32; 2]>,
+    /// `El::stuck_reveal`: the parent's shift, in points, at which this element shows whole.
+    pub reveal: Option<f32>,
 }
 
 impl El {
@@ -40,7 +44,7 @@ impl El {
     /// vertical scroll ancestor this is a no-op (a horizontal-only viewport is skipped).
     /// Cached subtrees containing sticky elements draw live rather than baking their shifts.
     pub fn sticky_top(mut self, inset: f32) -> Self {
-        let s = self.sticky.get_or_insert_with(Default::default);
+        let s = self.cold_mut().sticky.get_or_insert_with(Default::default);
         s.edge = Some(StickyEdge::Top);
         s.inset = if inset.is_finite() { inset } else { 0.0 };
         s.tail = false;
@@ -52,13 +56,13 @@ impl El {
     /// grows or a new page's taller one sticks in the right place on its first frame.
     pub fn sticky_top_showing(mut self, show: f32) -> Self {
         self = self.sticky_top(show);
-        if let Some(s) = &mut self.sticky { s.tail = true; }
+        if let Some(s) = self.cold.get_mut_if_some().and_then(|c| c.sticky.as_mut()) { s.tail = true; }
         self
     }
     /// [`El::sticky_top`] against the viewport's bottom edge: held `inset` points above it while
     /// its parent is in view, and pushed down by its parent's top edge (a section footer).
     pub fn sticky_bottom(mut self, inset: f32) -> Self {
-        let s = self.sticky.get_or_insert_with(Default::default);
+        let s = self.cold_mut().sticky.get_or_insert_with(Default::default);
         s.edge = Some(StickyEdge::Bottom);
         s.inset = if inset.is_finite() { inset } else { 0.0 };
         self
@@ -72,7 +76,7 @@ impl El {
     /// horizontal scroll ancestor this is a no-op. [`ElementInfo::stuck`](crate::runtime::ElementInfo)
     /// reads the shift to the right.
     pub fn sticky_left(mut self, inset: f32) -> Self {
-        let s = self.sticky.get_or_insert_with(Default::default);
+        let s = self.cold_mut().sticky.get_or_insert_with(Default::default);
         s.edge = Some(StickyEdge::Left);
         s.inset = if inset.is_finite() { inset } else { 0.0 };
         self
@@ -82,7 +86,28 @@ impl El {
     /// follows the scroll exactly: an elevation under a stuck header, or a hairline divider with
     /// `Shadow { y: 0.5, color, ..Default::default() }` under an opaque one. Several stack.
     pub fn stuck_shadow(mut self, shadow: Shadow) -> Self {
-        self.sticky.get_or_insert_with(Default::default).shadows.push(shadow);
+        self.cold_mut().sticky.get_or_insert_with(Default::default).shadows.push(shadow);
+        self
+    }
+    /// Fades this [`El::sticky_top`] element's first child (its title), not its own fill or its
+    /// other children (a cover above it, a gradient under it), as the next sticky-top sibling
+    /// rises to it: whole while that sibling's top is `lead + span` points or
+    /// more below this one's drawn top, gone once it's `lead` below, linearly between, frame by
+    /// frame with the scroll. Desktop's Home fades a stuck day header's title so as the next day
+    /// comes up (`home/scroll.ts`), its fill still covering the rows under it until the next
+    /// header, a later sibling drawn over it, takes its place. A header with no sticky sibling
+    /// after it stays whole.
+    pub fn stuck_fade(mut self, lead: f32, span: f32) -> Self {
+        self.cold_mut().sticky.get_or_insert_with(Default::default).fade = Some([lead, span.max(0.0)]);
+        self
+    }
+    /// Shows this child of a [`El::sticky_top`] element as far as its parent is stuck: hidden
+    /// at rest, whole once the parent has held `span` points, linearly between, frame by frame
+    /// with the scroll. A gradient hung under a stuck header with it fades in as rows scroll
+    /// beneath, as Desktop's model dialog fades its header's `::after` by how far its rows have
+    /// scrolled under it (`select-dialog.tsx` `--model-dialog-header-fade`).
+    pub fn stuck_reveal(mut self, span: f32) -> Self {
+        self.cold_mut().sticky.get_or_insert_with(Default::default).reveal = Some(span.max(1e-3));
         self
     }
 }

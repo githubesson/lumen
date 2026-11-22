@@ -10,6 +10,14 @@ pub(crate) fn with_font(fonts: &'static [&'static [u8]], bytes: Vec<u8>) -> &'st
     Box::leak(all.into_boxed_slice())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn load_font_url(fonts: &mut &'static [&'static [u8]], url: &str) {
+    match crate::image::font_file(url) {
+        Ok(bytes) => *fonts = with_font(*fonts, bytes),
+        Err(e) => eprintln!("rune: font {url}: {e}"),
+    }
+}
+
 impl<S: 'static> App<S> {
     /// Mount onto an existing `<canvas id="…">` in the web document instead of appending a
     /// full-viewport canvas and locking `document.body`. The canvas sits inline in the page at
@@ -54,10 +62,24 @@ impl<S: 'static> App<S> {
         #[cfg(target_arch = "wasm32")]
         self.font_urls.push(url.to_owned());
         #[cfg(not(target_arch = "wasm32"))]
-        match crate::image::font_file(url) {
-            Ok(bytes) => self.spec.fonts = with_font(self.spec.fonts, bytes),
-            Err(e) => eprintln!("rune: font {url}: {e}"),
-        }
+        load_font_url(&mut self.spec.fonts, url);
         self
+    }
+
+    /// [`Self::font_url`] for a font the first frame doesn't need, such as one a setting picks:
+    /// on web the browser fetches it once the first frame is up, so it costs the page neither
+    /// download size nor start time. Until it arrives, text that names its family sets in the
+    /// slot's fallback (Inter, IBM Plex Mono); then every window takes it up on its next frame,
+    /// in place of any registered face of the same family, width, style and weight. A font that
+    /// fails to load is reported in the console and skipped. On native it's [`Self::font_url`].
+    pub fn font_url_later(self, url: &str) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut app = self;
+            app.late_font_urls.push(url.to_owned());
+            app
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.font_url(url)
     }
 }

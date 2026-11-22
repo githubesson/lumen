@@ -4,9 +4,11 @@
 //! or due timer on a shown window waits for that frame to poll, so the app's inbox (media
 //! keys, MPRIS) would queue until the window shows again. Once a frame asked for a wake or
 //! timer is `STALL` overdue, the host polls without it, as for a hidden window, and keeps
-//! asking for the frame. Loops on screen wait for that frame too (`Runtime::drop_loop_wake`),
+//! asking for the frame. Loops on screen wait for that frame too (`RuntimeCore::drop_loop_wake`),
 //! or their wake would poll every frame interval.
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::time::Instant;
 
 /// How long a requested frame may take before the host stops waiting for it to poll.
 pub(super) const STALL: Duration = Duration::from_millis(250);
@@ -46,7 +48,7 @@ mod tests {
 
     #[test]
     fn a_frame_overdue_polls_once_until_one_comes() {
-        let t0 = Instant::now();
+        let t0 = crate::time::now();
         let mut w = RedrawWatch::default();
         assert!(!w.stalled(t0 + STALL) && w.deadline().is_none(), "nothing asked");
         w.asked(t0);

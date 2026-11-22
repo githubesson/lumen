@@ -10,6 +10,9 @@ mod keys;
 mod press;
 mod scroll;
 
+#[cfg(test)]
+mod tests;
+
 /// What a handler may say about the commit it causes.
 #[derive(Clone, Debug, Default)]
 pub struct Tx {
@@ -21,17 +24,29 @@ pub struct Tx {
     pub(crate) drag_repeat_after: Option<std::time::Duration>,
     /// `Tx::input_time`.
     pub(crate) input_time: Option<crate::time::Instant>,
+    /// `Tx::input_waiting`.
+    pub(crate) input_waiting: bool,
     pub(crate) physical_key: Option<crate::PhysicalKeyCode>,
     pub(crate) key_base: Option<char>,
     pub(crate) focused: Option<String>,
-    pub(crate) instant: bool,
-    pub(crate) motion: Option<Spring>,
-    /// The layout curve from [`Tx::motion_curve`]; `motion` holds its spring stand-in.
-    pub(crate) motion_curve: Option<Anim>,
+    /// What this change does with motion ([`Tx::instant`], [`Tx::animated`], [`Tx::settle`]).
+    pub(crate) commit: Commit,
+    /// The motion this change's layout moves on ([`Tx::motion`], [`Tx::motion_curve`]).
+    pub(crate) motion: Option<MotionSource>,
     /// `Tx::follow_edge`.
     pub(crate) follow_edge: bool,
+    /// No input in this window caused this commit and no handler asked for motion
+    /// (`Tx::animated`): what it mounts and unmounts appears and goes in its final state.
+    /// Set by the runtime for each frame's commit.
+    pub(crate) unprompted: bool,
+    /// A handler called [`Self::animated`].
+    pub(crate) asked_motion: bool,
+    /// Virtual growth stacks whose visible tail may grow for this commit alone.
+    pub(crate) live_growth: Vec<(String, bool)>, // selector, carry row ink
+    pub(crate) tail_rooms: Vec<(String, String, String)>,
+    /// A resting poll changed the model but hasn't committed its tree yet.
+    pub(crate) polled_change: bool,
     pub(crate) color_motion: Option<Spring>,
-    pub(crate) settle: bool,
     pub(crate) relayout: bool,
     /// The viewport moved only because the window's own resize animation stepped it.
     pub(crate) window_step: bool,
@@ -57,7 +72,7 @@ pub struct Tx {
     pub(crate) keep_on_screen: Vec<String>,
     pub(crate) wakes: Vec<std::time::Duration>,
     pub(crate) shell: Option<Shell>,
-    pub(crate) minimize: bool,
+    pub(crate) minimize_order: Option<std::num::NonZeroU64>,
     /// `Tx::toggle_maximized`.
     pub(crate) toggle_maximized: bool,
     /// `Tx::toggle_full_screen`.
@@ -67,6 +82,8 @@ pub struct Tx {
     /// `Tx::drop_point`.
     pub(crate) drop_point: Option<PointerEvent>,
     pub(crate) title: Option<String>,
+    /// `Tx::announce`: what a screen reader says after this handler.
+    pub(crate) announce: Option<(String, crate::LiveRegion)>,
     pub(crate) open_urls: Vec<crate::open_url::Link>,
     pub(crate) trace: Option<TraceCalls>,
     pub(crate) popups: Vec<crate::popup_menu::Call>,
@@ -74,6 +91,7 @@ pub struct Tx {
     pub(crate) window_frame: Option<crate::window::frame::FrameRequest>,
     /// The mouse button driving this press or drag (`Tx::button`).
     pub(crate) button: crate::PointerButton,
+    pub(crate) touch_tap: bool,
     /// Modifier keys held as the handler runs.
     pub(crate) mods: crate::Mods,
     pub(crate) srgb_blend: Option<bool>,
@@ -82,6 +100,14 @@ pub struct Tx {
     pub(crate) font_smoothing: Option<crate::text::FontSmoothing>,
     pub(crate) font_families: Option<(String, String)>,
     pub(crate) blur: bool,
+    /// `Tx::focus` and `Tx::return_focus`: the key, whether its ring shows, and which asked.
+    pub(crate) focus_to: Option<(String, bool, FocusAsk)>,
+    /// `Tx::focus_visible`.
+    pub(crate) focus_visible: bool,
+    /// `Tx::assistive_technology`.
+    pub(crate) assistive: bool,
+    /// `Tx::by_keys`.
+    pub(crate) by_keys: bool,
     /// The text selection as the event arrived (`Tx::text_selection`).
     pub(crate) selection: Option<Rc<crate::TextSelection>>,
     /// `Tx::select_text`, `Tx::select_all_text` and `Tx::clear_text_selection`; the last wins.
@@ -95,6 +121,17 @@ pub struct Tx {
     pub(crate) playground: Vec<crate::playground::Request>,
     /// `Tx::invalidate_memos_by_prefix`.
     pub(crate) evict_memos: Vec<String>,
+    /// `Tx::clock`.
+    pub(crate) clock: f64,
+}
+
+/// Which asked for focus: [`Tx::focus`], [`Tx::focus_when_shown`], or [`Tx::return_focus`]
+/// handing it back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FocusAsk {
+    Focus,
+    WhenShown,
+    Return,
 }
 
 /// A change to the text selection a handler asked for, carried out after its commit.
@@ -103,6 +140,114 @@ pub(crate) enum SelectRequest {
     Range(String, std::ops::Range<usize>),
     All(String),
     Clear,
+}
+
+/// What a change does with motion, from `Tx::instant`, `Tx::animated` and `Tx::settle`, where
+/// the last call in a handler wins. Two facts live in it so neither can disagree with the
+/// other: whether this change's own layout applies at once, and whether it lands every running
+/// track. `settle` then `animated` keeps the second without the first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Commit {
+    /// Animate this change; motion an earlier change set going keeps running.
+    #[default]
+    Animate,
+    /// Only the lack of an input cause made this commit instant. An explicit instant wins
+    /// even over a request to animate a list's tail.
+    Unprompted,
+    /// Apply this change at once; motion an earlier change set going keeps running.
+    Instant,
+    /// Apply this change at once and land every running track.
+    Settle,
+    /// Land every running track, and still animate this change's own layout: `settle` then
+    /// `animated`.
+    SettleAnimated,
+}
+
+impl Commit {
+    pub(crate) fn without_input(self) -> Self {
+        if self == Self::Animate { Self::Unprompted } else { self.instant() }
+    }
+
+    /// The two facts as one intent.
+    pub(crate) fn new(snaps: bool, lands: bool) -> Commit {
+        match (snaps, lands) {
+            (false, false) => Commit::Animate,
+            (true, false) => Commit::Instant,
+            (true, true) => Commit::Settle,
+            (false, true) => Commit::SettleAnimated,
+        }
+    }
+
+    /// This change's own layout applies at once instead of moving on its spring.
+    pub(crate) fn snaps(self) -> bool {
+        matches!(self, Commit::Unprompted | Commit::Instant | Commit::Settle)
+    }
+
+    /// This change lands every running track: growth, reveals and follow-the-end.
+    pub(crate) fn lands(self) -> bool {
+        matches!(self, Commit::Settle | Commit::SettleAnimated)
+    }
+
+    /// Set or clear the snap, keeping whether running tracks land.
+    pub(crate) fn snap(self, snaps: bool) -> Commit {
+        Commit::new(snaps, self.lands())
+    }
+
+    /// `Tx::instant`: this change applies at once.
+    pub(crate) fn instant(self) -> Commit {
+        self.snap(true)
+    }
+
+    /// `Tx::animated`: this change animates, while running tracks still land if they were asked
+    /// to, and a later `instant` in the same change wins.
+    pub(crate) fn animated(self) -> Commit {
+        self.snap(false)
+    }
+
+    /// Two handlers' asks for one commit: either may snap or land it.
+    pub(crate) fn merge(self, one: Commit) -> Commit {
+        Commit::new(self.snaps() || one.snaps(), self.lands() || one.lands())
+    }
+}
+
+/// The motion a change's layout moves on: `Tx::motion`'s spring, or a whole curve from
+/// `Tx::motion_curve`. Read as one source, so the curve and the spring stand-in that only
+/// spring-taking motion uses can never disagree.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum MotionSource {
+    /// A spring, as Rune's layout springs normally are.
+    Spring(Spring),
+    /// A curve, with the zero-bounce spring of its duration for what the layout moves but only
+    /// takes a spring (matched flights). Scroll requests aren't one: they glide on the spring
+    /// they name.
+    Curve { anim: Anim, spring: Spring },
+}
+
+impl MotionSource {
+    /// `Tx::motion_curve`'s source: the curve, and its stand-in spring.
+    pub(crate) fn curve(anim: Anim) -> MotionSource {
+        let spring = match anim.curve {
+            rune_motion::Curve::Spring(s) => s,
+            c => Spring::new(c.logical_duration().max(0.01), 0.0),
+        };
+        MotionSource::Curve { anim, spring }
+    }
+
+    /// The spring this change's layout moves on.
+    pub(crate) fn spring(self) -> Spring {
+        match self {
+            MotionSource::Spring(spring) | MotionSource::Curve { spring, .. } => spring,
+        }
+    }
+
+    /// The curve this change's layout moves on, for what draws progress rather than stepping a
+    /// spring.
+    pub(crate) fn anim(self) -> Anim {
+        match self {
+            MotionSource::Spring(spring) => spring.into(),
+            MotionSource::Curve { anim, .. } => anim,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -118,6 +263,19 @@ pub enum Shell {
     /// Close the window as if the user had: `App::keep_running` keeps the app and its state.
     Close,
     Quit,
+    /// Quit, then start the app again (`Tx::relaunch`).
+    Relaunch,
+}
+
+impl Shell {
+    /// What follows the app's exit for this request, when it quits.
+    pub(crate) fn after(self) -> Option<crate::quit::After> {
+        match self {
+            Shell::Close => None,
+            Shell::Quit => Some(crate::quit::After::Exit),
+            Shell::Relaunch => Some(crate::quit::After::Relaunch),
+        }
+    }
 }
 
 impl Tx {
@@ -195,8 +353,30 @@ impl Tx {
     /// display's rate this way, until it stops asking. That needs a display link pacing the
     /// surface (macOS); hidden, covered, faded out or unpaced, a wake due sooner than a frame
     /// waits about a frame (60 Hz), so a poll that keeps asking never spins the loop.
+    #[cfg_attr(feature = "frame-profile", track_caller)]
     pub fn wake_after(&mut self, duration: std::time::Duration) {
+        #[cfg(feature = "frame-profile")]
+        crate::frame::live_log::waker(std::panic::Location::caller(), duration);
         self.wakes.push(duration);
+    }
+
+    /// The window's logical clock in seconds as this handler or poll runs: the `clock` `poll`
+    /// gets, and the frame's for a handler. Headless runs step it virtually, so a state
+    /// machine that stamps its timers with it (`rune::machine`) runs the same in a script.
+    /// 0 for a `Tx` no runtime made.
+    pub fn clock(&self) -> f64 {
+        self.clock
+    }
+
+    /// Wake the app's poll hook once the clock reaches `due` (seconds on [`Tx::clock`]), as
+    /// [`Tx::wake_after`] does for the time left; a deadline already past wakes the next
+    /// frame. A timed state stores its deadline and asks for it here, and its poll checks
+    /// `clock >= due` to fire the timer as an event.
+    #[cfg_attr(feature = "frame-profile", track_caller)]
+    pub fn wake_at(&mut self, due: f64) {
+        #[cfg(feature = "frame-profile")]
+        crate::frame::live_log::waker(std::panic::Location::caller(), std::time::Duration::from_secs_f64((due - self.clock).max(0.0)));
+        self.wakes.push(std::time::Duration::from_secs_f64((due - self.clock).max(0.0)));
     }
 
     /// Close the window after this handler, as the close button would (`App::on_close` runs).
@@ -204,9 +384,18 @@ impl Tx {
         self.shell = self.shell.max(Some(Shell::Close));
     }
 
-    /// Quit the app after this handler, whether or not it keeps running without a window.
+    /// Quit the app after this handler, whether or not it keeps running without a window. Every
+    /// open window's `App::on_quit` runs as it ends; no `on_close` does.
     pub fn quit(&mut self) {
-        self.shell = Some(Shell::Quit);
+        self.shell = self.shell.max(Some(Shell::Quit));
+    }
+
+    /// Quit the app as [`Tx::quit`] does, then start it again, with the same arguments, once
+    /// this process has exited, as Electron's `app.relaunch()` and `app.quit()` do: a menu's
+    /// Restart, or an update put in place. A system shutdown or logoff that ends the app first
+    /// doesn't start it again.
+    pub fn relaunch(&mut self) {
+        self.shell = Some(Shell::Relaunch);
     }
 
     /// Minimize this window after this handler, as its minimize button would (winit's
@@ -215,7 +404,7 @@ impl Tx {
     /// minimize button.
     /// A close or quit asked in the same change wins.
     pub fn minimize(&mut self) {
-        self.minimize = true;
+        self.minimize_order = Some(crate::app::window_request_order());
     }
 
     /// Maximize this window after this handler, or restore it when it is maximized, as its
@@ -245,6 +434,16 @@ impl Tx {
     /// opened again. Headless `--tree` output shows it as `"title"`. An overlay has no title.
     pub fn set_title(&mut self, title: impl Into<String>) {
         self.title = Some(title.into());
+    }
+
+    /// Have a screen reader say `text` after this handler, without moving focus: a reply that
+    /// finished, a request that arrived, an item that moved. `Polite` waits for the reader to
+    /// finish what it's saying; `Assertive` interrupts it (errors and requests that block
+    /// work). Each window keeps one announcement, a live region of its own that draws nothing;
+    /// the last call in a frame wins, and saying the same words again says them again. With no
+    /// assistive technology listening it costs one string.
+    pub fn announce(&mut self, text: impl Into<String>, how: crate::LiveRegion) {
+        if how != crate::LiveRegion::Off { self.announce = Some((text.into(), how)); }
     }
 
     /// Open `url` in the system's default handler once this handler's frame is done: a browser
@@ -298,6 +497,62 @@ impl Tx {
     /// model clears it too. Does nothing when nothing has focus.
     pub fn blur(&mut self) {
         self.blur = true;
+    }
+
+    /// Focus the element keyed `key` once this handler's change is on screen, as a web page's
+    /// `element.focus()`: a menu's trigger as the menu closes, say. The first shown, focusable
+    /// element with that key takes it (or its first focusable child), drawing its focus ring when
+    /// `ring` (`:focus-visible`). A text field focused through its model (`TextEdit::focused`)
+    /// in the same change wins over it. Nothing happens when no such element shows.
+    pub fn focus(&mut self, key: impl Into<String>, ring: bool) {
+        self.focus_to = Some((key.into(), ring, FocusAsk::Focus));
+    }
+
+    /// [`Tx::focus`] for an element that may not be shown yet: content still loading, a card that
+    /// comes in with the next build, a window that isn't drawing. The request waits, through any
+    /// number of commits, until an element with the key shows, and focuses it then, however long
+    /// its loading or motion takes, whatever focus did meanwhile (a closing palette leaving it on
+    /// the prompt). It's dropped when the user presses a key or a pointer button, or when another
+    /// focus is asked for.
+    pub fn focus_when_shown(&mut self, key: impl Into<String>, ring: bool) {
+        self.focus_to = Some((key.into(), ring, FocusAsk::WhenShown));
+    }
+
+    /// [`Tx::focus`] for focus a closing menu or popover hands back to its trigger, as a web
+    /// menu's `onCloseAutoFocus` does after the change that closed it. A modal that opens in the
+    /// same change (a dialog a menu's pick opens) keeps focus, and as it closes hands it back to
+    /// where focus was before that change, as a web dialog that opened from a menu item records
+    /// that item: when it's gone, nothing has focus. Focus this change already asked for (a
+    /// pick that focused something with [`Tx::focus`]) stays asked, as a web menu's restore
+    /// finds focus moved outside the menu and leaves it.
+    pub fn return_focus(&mut self, key: impl Into<String>, ring: bool) {
+        if self.focus_to.as_ref().is_none_or(|(.., ask)| *ask == FocusAsk::Return) {
+            self.focus_to = Some((key.into(), ring, FocusAsk::Return));
+        }
+    }
+
+    /// Whether an assistive client (a screen reader, Voice Access, an automation tool) is
+    /// reading this window's accessibility tree: the tree is built only then. Work done only for
+    /// one, such as deciding what [`Tx::announce`] says, can wait for it and cost nothing without.
+    /// In a browser it's always true: a page can't tell whether a screen reader reads it, and
+    /// its mirror and live regions are always there.
+    pub fn assistive_technology(&self) -> bool {
+        self.assistive
+    }
+
+    /// Whether keyboard focus was showing its ring (`:focus-visible`) as this event arrived:
+    /// the keyboard, not the pointer, has been driving. A menu that opens with it returns focus
+    /// to its trigger with the ring.
+    pub fn focus_visible(&self) -> bool {
+        self.focus_visible
+    }
+
+    /// Whether a key brought this change: a key handler, or a control that Return or Space
+    /// pressed. A menu that opens from it is a keyboard open (Kobalte's `keyboard` gesture),
+    /// which lights its first row and hands focus back to its trigger with the ring, whatever
+    /// put focus on the trigger before.
+    pub fn by_keys(&self) -> bool {
+        self.by_keys
     }
 
     /// The [`El::selectable`] text selection as this event arrived: the texts it covers with
@@ -369,6 +624,31 @@ impl Tx {
         self.font_families = Some((sans.into(), mono.into()));
     }
 
+    /// Shapes and breaks the text of `view` into the window's layout cache in its next idle turn,
+    /// laid out as the window would lay it out (at its own size, or at `size` in points), without
+    /// mounting it: nothing draws, hits, animates or is announced, and no handler runs. A view shown
+    /// later with the same texts at the same widths finds them laid out. For the most it from the
+    /// window's own root, as the next frame will lay it out (the session under a resting pointer
+    /// shown where the open one is). Prepared layouts no view holds are kept to about 1 MiB by the
+    /// cache's own count, oldest out first, and all go at the window's next rest. One request is
+    /// held, the latest, for the window whose state `view` reads; it never runs on a turn with
+    /// input waiting, and an idle window wakes for it no more once it ran.
+    pub fn prepare_text<S: 'static>(&mut self, view: fn(&S, &mut crate::Cx<S>) -> crate::El, size: Option<(f32, f32)>) {
+        PREPARE.with_borrow_mut(|a| *a = Some((Box::new(view), size)));
+    }
+
+    /// Takes `prepare_text`'s request if it is for a window of state `S`.
+    pub(crate) fn take_prepared<S: 'static>() -> Option<(fn(&S, &mut crate::Cx<S>) -> crate::El, Option<(f32, f32)>)> {
+        if !Self::prepare_owed::<S>() { return None; }
+        let (view, size) = PREPARE.with_borrow_mut(Option::take)?;
+        Some((*view.downcast::<fn(&S, &mut crate::Cx<S>) -> crate::El>().ok()?, size))
+    }
+
+    /// Whether `prepare_text` holds a request for a window of state `S`.
+    pub(crate) fn prepare_owed<S: 'static>() -> bool {
+        PREPARE.with_borrow(|a| a.as_ref().is_some_and(|(view, _)| view.is::<fn(&S, &mut crate::Cx<S>) -> crate::El>()))
+    }
+
     fn frame_request(&mut self, request: crate::window::frame::FrameRequest) {
         self.window_frame = Some(self.window_frame.unwrap_or_default().merge(request));
     }
@@ -421,35 +701,34 @@ impl Tx {
     /// An already-running scroll glide is not settled unless this commit replaces it;
     /// use [`Tx::settle`] to land running tracks.
     pub fn instant(&mut self) {
-        self.instant = true;
+        self.commit = self.commit.instant();
     }
     /// Animate this change even where the runtime would apply it at once, as it does a drag's
-    /// moves: the rows a dragged row passes step aside on their springs, while the dragged row
+    /// moves, or a commit no input in this window caused (`El::transition`: those mount and
+    /// unmount at once otherwise): the rows a dragged row passes step aside on their springs, while the dragged row
     /// follows the pointer exactly with `El::offset_motion(Anim::INSTANT)`.
-    /// This clears only this handler's instant flag; another handler's `instant()` in the
-    /// same frame still wins. It neither requests a commit after `live_only()` nor overrides
-    /// `settle()`. `motion()` still chooses the layout spring. The last call to `instant()`
-    /// or `animated()` in this handler wins.
+    /// This clears this handler's snap; another handler's `instant()` in the same frame still
+    /// wins. A `settle()` in the same change keeps its landing of running tracks. It neither
+    /// requests a commit after `live_only()`. `motion()` still chooses the layout spring. The
+    /// last call to `instant()` or `animated()` in this handler wins.
     pub fn animated(&mut self) {
-        self.instant = false;
+        self.commit = self.commit.animated();
+        self.asked_motion = true;
     }
-    /// Animate this change's layout with `spring` instead of each element's own.
+    /// Animate this change's layout with `spring` instead of each element's own. Scroll
+    /// requests keep the spring they name; see [`Self::motion_curve`].
     pub fn motion(&mut self, spring: Spring) {
-        self.motion = Some(spring);
-        self.motion_curve = None;
+        self.motion = Some(MotionSource::Spring(spring));
     }
     /// Animate this change's layout on `anim` instead of each element's own spring: a spring,
     /// or a fixed-duration eased tween to compare against one
     /// (`tx.motion_curve(Curve::tween(0.35, Easing::cubic(0.16, 1.0, 0.3, 1.0)))`). What
-    /// moves with the layout but only takes a spring (scroll requests, matched flights) uses a
-    /// zero-bounce spring of the curve's duration. The last `motion` or `motion_curve` wins.
+    /// moves with the layout but only takes a spring (matched flights) uses a zero-bounce
+    /// spring of the curve's duration. Scroll requests don't follow it: each glides on the
+    /// spring it names, [`Self::scroll_to_with`]'s or `tok::motion::GLIDE`. The last `motion` or
+    /// `motion_curve` wins.
     pub fn motion_curve(&mut self, anim: impl Into<Anim>) {
-        let anim = anim.into();
-        self.motion = Some(match anim.curve {
-            rune_motion::Curve::Spring(s) => s,
-            c => Spring::new(c.logical_duration().max(0.01), 0.0),
-        });
-        self.motion_curve = Some(anim);
+        self.motion = Some(MotionSource::curve(anim.into()));
     }
     /// Rows pinned to a stick-to-bottom viewport's bottom ride its edge through this change:
     /// room the edge frees (a question dock folding back into a composer under a chat) carries
@@ -461,11 +740,16 @@ impl Tx {
     /// Apply this change with no animation and land every running track: growth, reveals and
     /// follow-the-end (opening or returning to a session, guarantee 8).
     pub fn settle(&mut self) {
-        self.instant = true;
-        self.settle = true;
+        self.commit = Commit::Settle;
     }
     /// Animate this change's colours with `spring` (a theme change uses `tok::motion::CALM`).
     pub fn color_motion(&mut self, spring: Spring) {
         self.color_motion = Some(spring);
     }
+}
+
+thread_local! {
+    /// `Tx::prepare_text`'s latest request on this thread: the view, boxed, and its size in points
+    /// if not the window's.
+    static PREPARE: std::cell::RefCell<Option<(Box<dyn std::any::Any>, Option<(f32, f32)>)>> = const { std::cell::RefCell::new(None) };
 }

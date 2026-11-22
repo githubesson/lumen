@@ -28,12 +28,19 @@ pub(crate) fn jump_color() -> Color { crate::oklch(0.68, 0.2, 25.0) }
 /// The scrubber's state; keep one in the app's state.
 #[derive(Default)]
 pub struct Scrub {
-    rewind: Option<Rewind>,
-    clip: Option<Arc<Clip>>,
+    showing: Showing,
     frame: usize,
     anchor: Option<usize>,
     picked: Option<u32>,
     note: crate::TextEdit,
+}
+
+#[derive(Default)]
+enum Showing {
+    #[default]
+    Closed,
+    /// `clip` over the window; `held` is the recorder it froze, which closing resumes.
+    Open { clip: Arc<Clip>, held: Option<Rewind> },
 }
 
 /// What a press of a key did ([`Scrub::key`]).
@@ -74,17 +81,28 @@ impl Sent {
 }
 
 impl Scrub {
-    /// Freezes `rewind` and shows its clip at the last frame anything moved in.
+    /// Freezes `rewind` and shows its clip at the last frame anything moved in. A recorder an
+    /// earlier `open` froze records again.
     pub fn open(&mut self, rewind: &Rewind) {
-        self.show(rewind.freeze());
-        self.rewind = Some(rewind.clone());
+        self.close();
+        let clip = rewind.freeze();
+        self.show_from(clip, Some(rewind.clone()));
     }
 
-    /// Shows `clip` without a recorder behind it (a story, a saved clip).
+    /// Shows `clip` without a recorder behind it (a story, a saved clip). A recorder an
+    /// earlier `open` froze stays frozen until [`close`](Self::close).
     pub fn show(&mut self, clip: Arc<Clip>) {
+        let held = match std::mem::take(&mut self.showing) {
+            Showing::Open { held, .. } => held,
+            Showing::Closed => None,
+        };
+        self.show_from(clip, held);
+    }
+
+    fn show_from(&mut self, clip: Arc<Clip>, held: Option<Rewind>) {
         let last = clip.len().saturating_sub(1);
         self.frame = if clip.activity(last) > 0.0 { last } else { clip.next_active(last, -1).unwrap_or(last) };
-        self.clip = Some(clip);
+        self.showing = Showing::Open { clip, held };
         self.anchor = None;
         self.picked = None;
         self.note = crate::TextEdit::default();
@@ -92,13 +110,17 @@ impl Scrub {
 
     /// Hides the scrubber and resumes recording.
     pub fn close(&mut self) {
-        if let Some(rewind) = self.rewind.take() { rewind.resume(); }
-        self.clip = None;
+        if let Showing::Open { held: Some(rewind), .. } = std::mem::take(&mut self.showing) { rewind.resume(); }
     }
 
-    pub fn is_open(&self) -> bool { self.clip.is_some() }
+    pub fn is_open(&self) -> bool { self.clip().is_some() }
 
-    pub fn clip(&self) -> Option<&Arc<Clip>> { self.clip.as_ref() }
+    pub fn clip(&self) -> Option<&Arc<Clip>> {
+        match &self.showing {
+            Showing::Open { clip, .. } => Some(clip),
+            Showing::Closed => None,
+        }
+    }
 
     /// The frame showing.
     pub fn frame(&self) -> usize { self.frame }
@@ -111,8 +133,8 @@ impl Scrub {
 
     /// Shows frame `k`; with `extend`, selects from where the selection started to it.
     pub fn seek(&mut self, k: usize, extend: bool) {
-        let Some(clip) = &self.clip else { return };
-        let k = k.min(clip.len().saturating_sub(1));
+        let Some(len) = self.clip().map(|clip| clip.len()) else { return };
+        let k = k.min(len.saturating_sub(1));
         if extend { self.anchor.get_or_insert(self.frame); } else { self.anchor = None; }
         self.frame = k;
     }
@@ -130,14 +152,14 @@ impl Scrub {
 
     /// What Send would hand on now.
     pub fn sent(&self) -> Option<Sent> {
-        Some(Sent { clip: self.clip.clone()?, frames: self.selection(), note: self.note.text.clone() })
+        Some(Sent { clip: self.clip()?.clone(), frames: self.selection(), note: self.note.text.clone() })
     }
 
     /// ←/→ step a frame (⇧ selects, ⌥ jumps to the next frame anything moved in), Home/End go
     /// to the ends, Return sends and Escape closes. Route the app's unhandled keys here while
     /// [`Scrub::is_open`].
     pub fn key(&mut self, ev: &KeyEvent) -> Keyed {
-        let Some(clip) = self.clip.clone() else { return Keyed::Ignored };
+        let Some(clip) = self.clip().cloned() else { return Keyed::Ignored };
         let extend = ev.mods.shift;
         let step = |dir: isize| if ev.mods.alt { clip.next_active(self.frame, dir) } else { self.frame.checked_add_signed(dir) };
         match ev.key {
@@ -157,15 +179,30 @@ impl Scrub {
     /// stage. Pause the app's subtree (`El::time_scale(0.0)`) while it shows, not the window's
     /// clock: the scrubber itself still animates. `lens` finds this state in the app's; Send
     /// (the button, or Return in the note) calls `on_send`.
+    #[inline]
     pub fn view<S: 'static>(&self, lens: fn(&mut S) -> &mut Scrub, on_send: fn(&mut S, Sent, &mut Tx)) -> El {
-        let Some(clip) = &self.clip else { return el() };
+        self.view_inner(&ScrubActions {
+            clear_pick: &|e| e.on_press(move |s: &mut S| lens(s).picked = None),
+            toggle_pick: &|e, id| e.on_press(move |s: &mut S| {
+                let scrub = lens(s);
+                scrub.picked = if scrub.picked == Some(id) { None } else { Some(id) };
+            }),
+            send: &|e| e.on_press_tx(move |s: &mut S, tx: &mut Tx| if let Some(sent) = lens(s).sent() { on_send(s, sent, tx); }),
+            note: &|e| e
+                .on_edit(move |s: &mut S| &mut lens(s).note)
+                .on_submit(move |s: &mut S, tx: &mut Tx| if let Some(sent) = lens(s).sent() { on_send(s, sent, tx); }),
+            track_drag: &|e| e.on_drag(move |s: &mut S, d: &mut crate::Drag, tx: &mut Tx| super::track::drag(lens(s), d, tx)),
+        })
+    }
+
+    fn view_inner(&self, actions: &ScrubActions<'_>) -> El {
+        let Some(clip) = self.clip() else { return el() };
         let (vw, vh) = clip.viewport();
         let [ox, oy, w, _] = crate::memo::layout_with("rewind", |r| r.map(|v| (v * 2.0).round() / 2.0)).unwrap_or([0.0, 0.0, vw, vh]);
         let changes = clip.changes(self.frame);
         // The live view under it keeps changing; dimmed, the recorded frame reads over it.
-        let layer = el().key("rewind").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .child(el().key("rewind-dim").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK.alpha(0.55))
-                .on_press(move |s: &mut S| lens(s).picked = None));
+        let dim = (actions.clear_pick)(el().key("rewind-dim").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK.alpha(0.55)));
+        let layer = el().key("rewind").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).child(dim);
         // Recorded frames: they land where they were, never springing between steps.
         let mut marks = el().key("rewind-marks").absolute(-ox, -oy).size(vw, vh).motion(crate::Spring::NONE);
         for (id, shot) in clip.frame(self.frame) {
@@ -175,13 +212,13 @@ impl Scrub {
                 .border(0.5, Color::WHITE.alpha(0.08 + 0.14 * shot.opacity.clamp(0.0, 1.0))));
         }
         if let Some(id) = self.picked { marks = marks.children(self.path_view(clip, id)); }
-        for c in changes.iter().rev() { marks = marks.children(outline(c, lens)); }
+        for c in changes.iter().rev() { marks = marks.children(outline(c, actions.toggle_pick)); }
         if let Some(id) = self.picked.filter(|id| !changes.iter().any(|c| c.id == *id))
             && let Some((_, s)) = clip.frame(self.frame).into_iter().find(|(i, _)| *i == id)
         {
             marks = marks.child(el().key("rewind-picked").absolute(s.rect[0], s.rect[1]).size(s.rect[2].max(1.0), s.rect[3].max(1.0)).border(1.0, Color::WHITE.alpha(0.7)));
         }
-        layer.child(marks).child(self.bar(clip, w, &changes, lens, on_send))
+        layer.child(marks).child(self.bar(clip, w, &changes, actions))
     }
 
     fn path_view(&self, clip: &Clip, id: u32) -> Vec<El> {
@@ -200,7 +237,7 @@ impl Scrub {
         }).collect()
     }
 
-    fn bar<S: 'static>(&self, clip: &Clip, w: f32, changes: &[Change], lens: fn(&mut S) -> &mut Scrub, on_send: fn(&mut S, Sent, &mut Tx)) -> El {
+    fn bar(&self, clip: &Clip, w: f32, changes: &[Change], actions: &ScrubActions<'_>) -> El {
         let t = tok::theme(true);
         let sel = self.selection();
         let moved = changes.iter().filter(|c| c.before.is_some() && c.after.is_some()).count();
@@ -208,15 +245,12 @@ impl Scrub {
         if moved > 0 { facts.push(format!("{moved} moved")); }
         if sel.len() > 1 { facts.push(format!("{} frames selected", sel.len())); }
         let track_w = (w - PAD * 2.0).max(1.0);
-        let send = row().key("rewind-send").h(24.0).px(10.0).center_y().radius(tok::radius::SM).fill(t.card)
+        let send = (actions.send)(row().key("rewind-send").h(24.0).px(10.0).center_y().radius(tok::radius::SM).fill(t.card)
             .border(0.5, t.card_border).hover(t.hover).press(t.press)
             .role("button").label("Send these frames")
-            .child(text("Send").font(type_::LABEL).color(t.text))
-            .on_press_tx(move |s: &mut S, tx: &mut Tx| if let Some(sent) = lens(s).sent() { on_send(s, sent, tx); });
-        let note = text_input(&self.note, type_::BODY).key("rewind-note").single_line().grow(1.0)
-            .placeholder("What's wrong here?", t.text_secondary)
-            .on_edit(move |s: &mut S| &mut lens(s).note)
-            .on_submit(move |s: &mut S, tx: &mut Tx| if let Some(sent) = lens(s).sent() { on_send(s, sent, tx); });
+            .child(text("Send").font(type_::LABEL).color(t.text)));
+        let note = (actions.note)(text_input(&self.note, type_::BODY).key("rewind-note").single_line().grow(1.0)
+            .placeholder("What's wrong here?", t.text_secondary));
         let mut controls = row().w_full().h(24.0).gap(12.0).center_y()
             .child(text(facts.join("  ·  ")).font(type_::MONO_CAPTION.mono()).color(t.text_secondary))
             .child(note);
@@ -225,14 +259,23 @@ impl Scrub {
         }
         col().key("rewind-bar").pin(Some(0.0), None, Some(0.0), Some(0.0)).h(BAR_H).px(PAD).pt(8.0).gap(8.0)
             .fill(t.bg.alpha(0.96)).border(0.5, t.separator)
-            .child(super::track::view(clip, self.frame, sel, track_w, lens))
+            .child(super::track::view(clip, self.frame, sel, track_w, actions.track_drag))
             .child(controls.child(send))
             .child(spacer())
     }
 }
 
+/// Type-erased handler binders passed from [`Scrub::view`] into the non-generic view builders.
+struct ScrubActions<'a> {
+    clear_pick: &'a dyn Fn(El) -> El,
+    toggle_pick: &'a dyn Fn(El, u32) -> El,
+    send: &'a dyn Fn(El) -> El,
+    note: &'a dyn Fn(El) -> El,
+    track_drag: &'a dyn Fn(El) -> El,
+}
+
 /// An element that changed this frame: its old place dim, its new place outlined, and a label.
-fn outline<S: 'static>(c: &Change, lens: fn(&mut S) -> &mut Scrub) -> Vec<El> {
+fn outline(c: &Change, toggle_pick: &dyn Fn(El, u32) -> El) -> Vec<El> {
     let Some(now) = c.after.or(c.before) else { return Vec::new() };
     let color = if c.jump { jump_color() } else { moved_color() };
     let id = c.id;
@@ -241,10 +284,12 @@ fn outline<S: 'static>(c: &Change, lens: fn(&mut S) -> &mut Scrub) -> Vec<El> {
         out.push(el().key(format!("rewind-was-{id}")).absolute(b.rect[0], b.rect[1]).size(b.rect[2].max(1.0), b.rect[3].max(1.0)).border(1.0, color.alpha(0.35)));
     }
     let r = now.rect;
-    out.push(el().key(format!("rewind-box-{id}")).absolute(r[0], r[1]).size(r[2].max(1.0), r[3].max(1.0))
-        .border(if c.after.is_some() { 1.5 } else { 1.0 }, color.alpha(if c.after.is_some() { 1.0 } else { 0.5 }))
-        .role("button").label(format!("Show {}'s path", c.name))
-        .on_press(move |s: &mut S| { let scrub = lens(s); scrub.picked = if scrub.picked == Some(id) { None } else { Some(id) }; }));
+    out.push(toggle_pick(
+        el().key(format!("rewind-box-{id}")).absolute(r[0], r[1]).size(r[2].max(1.0), r[3].max(1.0))
+            .border(if c.after.is_some() { 1.5 } else { 1.0 }, color.alpha(if c.after.is_some() { 1.0 } else { 0.5 }))
+            .role("button").label(format!("Show {}'s path", c.name)),
+        id,
+    ));
     let above = r[1] >= 20.0;
     out.push(row().key(format!("rewind-label-{id}")).absolute(r[0], if above { r[1] - 19.0 } else { r[1] + r[3] + 2.0 }).h(17.0).px(5.0).center_y()
         .radius(3.0).fill(color).child(text(c.label()).font(type_::LABEL).color(Color::BLACK)));

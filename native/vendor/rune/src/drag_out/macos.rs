@@ -1,15 +1,18 @@
 //! `NSDraggingSource` for [`super::begin`]. The session starts inside winit's `mouseDragged:`
 //! (which dispatches `CursorMoved` synchronously), so `NSApp.currentEvent` is the drag event.
 //! Pasteboard types follow what Finder and System Settings' privacy lists accept for a file.
+
+#![allow(unsafe_code)]
+
 use super::{DragImage, DragItem, DragOperation, DragOutStart, DragOutcome, path_text};
 use std::cell::{Cell, RefCell};
-use objc2::{ClassType, DeclaredClass, declare_class, msg_send_id, mutability, rc::Retained, sel,
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained, sel,
     runtime::{AnyObject, NSObjectProtocol, ProtocolObject}};
 use objc2_app_kit::{NSApplication, NSDragOperation, NSDraggingContext, NSDraggingFormation, NSDraggingItem,
     NSDraggingSession, NSDraggingSource, NSEvent, NSEventModifierFlags, NSEventType, NSImage,
-    NSFilenamesPboardType, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeURL,
+    NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeURL,
     NSPasteboardType, NSView, NSWindow};
-use objc2_foundation::{MainThreadMarker, NSArray, NSCopying, NSData, NSObject, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{NSArray, NSData, NSObject, NSPoint, NSRect, NSSize, NSString, NSURL};
 
 type Done = Box<dyn FnOnce(DragOutcome)>;
 type Muted = Vec<(Retained<NSWindow>, Retained<NSArray<NSPasteboardType>>)>;
@@ -17,6 +20,8 @@ type Muted = Vec<(Retained<NSWindow>, Retained<NSArray<NSPasteboardType>>)>;
 struct Ivars {
     done: RefCell<Option<Done>>,
     mask: Cell<NSDragOperation>,
+    /// The app's own windows are offered the drag too (`DragItem::within_app`).
+    within_app: Cell<bool>,
     /// The app's windows that stop taking drops while this session runs, with the types each
     /// had registered.
     muted: RefCell<Muted>,
@@ -38,27 +43,29 @@ impl Drop for Ivars {
     }
 }
 
-declare_class!(
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RuneDragOutSource"]
+    #[ivars = Ivars]
     struct Source;
-    unsafe impl ClassType for Source {
-        type Super = NSObject;
-        type Mutability = mutability::MainThreadOnly;
-        const NAME: &'static str = "RuneDragOutSource";
-    }
-    impl DeclaredClass for Source { type Ivars = Ivars; }
+
+    // SAFETY: `Source` inherits from `NSObject`, which implements `NSObjectProtocol`.
     unsafe impl NSObjectProtocol for Source {}
+
+    // SAFETY: `Source` is `MainThreadOnly` and each method matches AppKit's `NSDraggingSource` selector ABI.
     unsafe impl NSDraggingSource for Source {
-        #[method(draggingSession:sourceOperationMaskForDraggingContext:)]
+        #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
         fn mask(&self, _session: &NSDraggingSession, context: NSDraggingContext) -> NSDragOperation {
-            mask_in(self.ivars().mask.get(), context)
+            mask_in(self.ivars().mask.get(), context, self.ivars().within_app.get())
         }
-        #[method(draggingSession:endedAtPoint:operation:)]
+        #[unsafe(method(draggingSession:endedAtPoint:operation:))]
         fn ended(&self, _session: &NSDraggingSession, _point: NSPoint, operation: NSDragOperation) {
             unmute(std::mem::take(&mut *self.ivars().muted.borrow_mut()));
             let done = self.ivars().done.borrow_mut().take();
             if let Some(done) = done { report(done, outcome(operation)); }
         }
-        #[method(ignoreModifierKeysForDraggingSession:)]
+        #[unsafe(method(ignoreModifierKeysForDraggingSession:))]
         fn ignore_modifiers(&self, _session: &NSDraggingSession) -> bool { single(self.ivars().mask.get()) }
     }
 );
@@ -82,9 +89,10 @@ fn mask(item: &DragItem) -> NSDragOperation {
         .into_iter().filter(|&(op, _)| item.offers(op)).fold(NSDragOperation::None, |m, (_, ns)| m | ns)
 }
 
-/// The app's own windows are offered nothing: Rune windows take no drops.
-fn mask_in(mask: NSDragOperation, context: NSDraggingContext) -> NSDragOperation {
-    if context == NSDraggingContext::WithinApplication { NSDragOperation::None } else { mask }
+/// The app's own windows are offered nothing unless the item lets them take it: Rune windows
+/// take no drops from their own drags by default.
+fn mask_in(mask: NSDragOperation, context: NSDraggingContext, within_app: bool) -> NSDragOperation {
+    if context == NSDraggingContext::WithinApplication && !within_app { NSDragOperation::None } else { mask }
 }
 
 /// Modifier keys pick among several offered operations (Cmd+Option for a link in Finder); with
@@ -95,7 +103,7 @@ fn single(mask: NSDragOperation) -> bool { mask.bits().count_ones() <= 1 }
 /// empty mask, so a drag let go over the app would end Copied without sliding back (and hand
 /// the app its own file). The app's drop-taking windows stop taking drops for the session.
 fn mute(mtm: MainThreadMarker) -> Muted {
-    let winit_types = || NSArray::from_id_slice(&[unsafe { NSFilenamesPboardType }.copy()]);
+    let winit_types = || NSArray::from_retained_slice(&[NSString::from_str("NSFilenamesPboardType")]);
     // SAFETY: window and delegate calls on the main thread. NSWindow answers
     // `registeredDraggedTypes` like NSView, though only NSView declares it; without it, the
     // types are winit's.
@@ -104,7 +112,7 @@ fn mute(mtm: MainThreadMarker) -> Muted {
             .filter(|w| w.delegate().is_some_and(|d| d.respondsToSelector(sel!(draggingEntered:))))
             .filter_map(|w| {
                 let types: Retained<NSArray<NSPasteboardType>> = if w.respondsToSelector(sel!(registeredDraggedTypes)) {
-                    msg_send_id![&*w, registeredDraggedTypes]
+                    msg_send![&*w, registeredDraggedTypes]
                 } else { winit_types() };
                 if types.is_empty() { return None; }
                 w.unregisterDraggedTypes();
@@ -143,10 +151,13 @@ pub(super) fn begin(window: &winit::window::Window, start: DragOutStart, picture
             d.setDraggingFrame_contents(f, image.as_deref().map(|i| &**i as &AnyObject));
             d
         }).collect();
-        let source = mtm.alloc::<Source>().set_ivars(Ivars { done: RefCell::new(Some(done)), mask: Cell::new(mask(&start.item)), muted: RefCell::new(mute(mtm)) });
-        let source: Retained<Source> = msg_send_id![super(source), init];
+        // A drag the app's windows take leaves their drop registration alone.
+        let within_app = start.item.drops_within_app();
+        let muted = if within_app { Muted::new() } else { mute(mtm) };
+        let source = mtm.alloc::<Source>().set_ivars(Ivars { done: RefCell::new(Some(done)), mask: Cell::new(mask(&start.item)), within_app: Cell::new(within_app), muted: RefCell::new(muted) });
+        let source: Retained<Source> = msg_send![super(source), init];
         LIVE.with(|live| *live.borrow_mut() = Some(source.clone()));
-        let session = view.beginDraggingSessionWithItems_event_source(&NSArray::from_vec(dragging), &event, ProtocolObject::from_ref(&*source));
+        let session = view.beginDraggingSessionWithItems_event_source(&NSArray::from_retained_slice(&dragging), &event, ProtocolObject::from_ref(&*source));
         // A drop nowhere slides the image back over the element.
         session.setAnimatesToStartingPositionsOnCancelOrFail(true);
         session.setDraggingFormation(NSDraggingFormation::None);
@@ -158,19 +169,16 @@ pub(super) fn begin(window: &winit::window::Window, start: DragOutStart, picture
 /// event dispatch).
 fn drag_event(mtm: MainThreadMarker, view: &NSView) -> Option<Retained<NSEvent>> {
     let current = NSApplication::sharedApplication(mtm).currentEvent();
-    // SAFETY: reading event and window properties on the main thread.
-    unsafe {
-        if let Some(event) = &current {
-            if matches!(event.r#type(), NSEventType::LeftMouseDragged | NSEventType::LeftMouseDown) { return current; }
-        }
-        // With the button already up, AppKit would never end the session.
-        if NSEvent::pressedMouseButtons() & 1 == 0 { return None; }
-        let window = view.window()?;
-        let at = window.mouseLocationOutsideOfEventStream();
-        let time = current.as_ref().map_or(0.0, |e| e.timestamp());
-        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
-            NSEventType::LeftMouseDragged, at, NSEventModifierFlags::empty(), time, window.windowNumber(), None, 0, 1, 1.0)
+    if let Some(event) = &current {
+        if matches!(event.r#type(), NSEventType::LeftMouseDragged | NSEventType::LeftMouseDown) { return current; }
     }
+    // With the button already up, AppKit would never end the session.
+    if NSEvent::pressedMouseButtons() & 1 == 0 { return None; }
+    let window = view.window()?;
+    let at = window.mouseLocationOutsideOfEventStream();
+    let time = current.as_ref().map_or(0.0, |e| e.timestamp());
+    NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        NSEventType::LeftMouseDragged, at, NSEventModifierFlags::empty(), time, window.windowNumber(), None, 0, 1, 1.0)
 }
 
 /// The drag image and where it starts, in the view's (flipped, top-left) points.
@@ -190,8 +198,8 @@ fn image_and_frame(start: &DragOutStart, picture: Option<&DragImage>) -> (Option
         if let Some((image, frame)) = image { return (Some(image), frame); }
         // No picture: the first file's Finder icon, else the element's outline only.
         let icon = start.item.paths().first().map(|path| {
-            let workspace: Retained<AnyObject> = msg_send_id![objc2::class!(NSWorkspace), sharedWorkspace];
-            let icon: Retained<NSImage> = msg_send_id![&workspace, iconForFile: &*NSString::from_str(&path_text(path))];
+            let workspace: Retained<AnyObject> = msg_send![objc2::class!(NSWorkspace), sharedWorkspace];
+            let icon: Retained<NSImage> = msg_send![&workspace, iconForFile: &*NSString::from_str(&path_text(path))];
             icon.setSize(NSSize::new(64.0, 64.0));
             icon
         });
@@ -244,8 +252,11 @@ mod tests {
     #[test]
     fn nothing_is_offered_to_the_apps_own_windows() {
         let m = NSDragOperation::Copy | NSDragOperation::Link;
-        assert_eq!(mask_in(m, NSDraggingContext::OutsideApplication), m);
-        assert_eq!(mask_in(m, NSDraggingContext::WithinApplication), NSDragOperation::None);
+        assert_eq!(mask_in(m, NSDraggingContext::OutsideApplication, false), m);
+        assert_eq!(mask_in(m, NSDraggingContext::WithinApplication, false), NSDragOperation::None);
+        // `DragItem::within_app` offers the app's own windows the same operations.
+        assert_eq!(mask_in(m, NSDraggingContext::WithinApplication, true), m);
+        assert_eq!(mask_in(m, NSDraggingContext::OutsideApplication, true), m);
     }
 
     #[test]
@@ -267,7 +278,7 @@ mod tests {
 
     fn ivars(log: &std::rc::Rc<RefCell<Vec<DragOutcome>>>) -> Ivars {
         let log = log.clone();
-        Ivars { done: RefCell::new(Some(Box::new(move |o| log.borrow_mut().push(o)))), mask: Cell::new(NSDragOperation::Copy), muted: RefCell::default() }
+        Ivars { done: RefCell::new(Some(Box::new(move |o| log.borrow_mut().push(o)))), mask: Cell::new(NSDragOperation::Copy), within_app: Cell::new(false), muted: RefCell::default() }
     }
 
     #[test]

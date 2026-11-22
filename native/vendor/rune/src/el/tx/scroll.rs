@@ -1,11 +1,50 @@
 //! `Tx`'s scroll requests: revealing a row, moving a viewport to its end, a page or an
 //! offset, and holding an element where it shows.
+//!
+//! None of them follows the change's motion ([`Tx::motion`], [`Tx::motion_curve`]): a glide
+//! runs on `tok::motion::GLIDE`, or on the spring [`Tx::scroll_to_with`] takes, and every other
+//! request moves at once.
 
 #[cfg(doc)]
 use crate::El;
 use crate::Tx;
 
 impl Tx {
+    /// Let newly inserted and resizing rows at the visible end of this virtual growth stack
+    /// grow through a linear feather on their usual springs. For a live arrival, not a page
+    /// load. Rows that trade places carry their contents with them. The selector names the
+    /// stack, not the scroll viewport. This neither scrolls to the end nor animates other
+    /// layout or chrome. A reader scrolled away, a resizing viewport, reduced motion, the
+    /// first paint and an explicit `instant()` or `settle()` still land.
+    pub fn grow_visible_tail(&mut self, stack: impl Into<String>) {
+        self.request_live_growth(stack.into(), false);
+    }
+
+    /// Like [`Self::grow_visible_tail`], but a row crossing a neighbour also carries its
+    /// changing paint and child exits. A resizing row carries its inset, and a stationary
+    /// neighbour can round its joined corners. This applies only to this live commit.
+    pub fn grow_visible_tail_with_ink(&mut self, stack: impl Into<String>) {
+        self.request_live_growth(stack.into(), true);
+    }
+
+    pub(crate) fn request_live_growth(&mut self, stack: String, ink: bool) {
+        if let Some((_, carry)) = self.live_growth.iter_mut().find(|(key, _)| *key == stack) {
+            *carry |= ink;
+        } else {
+            self.live_growth.push((stack, ink));
+        }
+    }
+
+    /// A newly delivered `row` in `stack` takes room from a panel immediately below its
+    /// viewport. If the panel gives the viewport exactly the height it loses, move that
+    /// shared edge on the incoming row's growth, not a second spring. Otherwise the usual
+    /// `grow_visible_tail` rules apply. `panel` names its occupied space, excluding overlaps.
+    pub fn grow_visible_tail_from(&mut self, stack: impl Into<String>, row: impl Into<String>, panel: impl Into<String>) {
+        let stack = stack.into();
+        self.grow_visible_tail(stack.clone());
+        self.tail_rooms.push((stack, row.into(), panel.into()));
+    }
+
     /// Reveal a keyed row, including a currently unrealized virtual row. It scrolls the nearest
     /// vertical viewport around the row and, through [`El::scroll_x`] or [`El::scroll_xy`], the
     /// nearest horizontal one, each just far enough. The vertical reveal follows the presented
@@ -61,13 +100,13 @@ impl Tx {
     /// shows its content from `x` points in, clamped to its ends: 0 is the start, as a carousel's
     /// "back to the first" does. Instant; any momentum stops. See [`El::scroll_x`].
     pub fn scroll_to_x(&mut self, key: impl Into<String>, x: f32) {
-        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: None, glide: None, anchor: false });
+        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: None, glide: None, anchor: crate::runtime::ScrollAnchor::None });
     }
     /// Move the vertical scroll viewport keyed `key` (or the nearest one containing it) so it
     /// shows its content from `y` points down, clamped to its ends. Instant; any momentum or
     /// glide stops, and a `stick_bottom` viewport that lands on its end follows it again.
     pub fn scroll_to_y(&mut self, key: impl Into<String>, y: f32) {
-        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: None, y: Some(y), glide: None, anchor: false });
+        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: None, y: Some(y), glide: None, anchor: crate::runtime::ScrollAnchor::None });
     }
     /// Glide the scroll viewport keyed `key` (or the nearest one containing it) to show its
     /// content from (`x`, `y`) points in, on the spring [`Tx::scroll_to_bottom`] uses, as a
@@ -77,7 +116,7 @@ impl Tx {
     /// another request takes over mid-glide, a request keeping its speed. Reduced motion, and a
     /// settled frame, jump. [`Tx::scroll_to_with`] picks the spring.
     pub fn scroll_to(&mut self, key: impl Into<String>, x: f32, y: f32) {
-        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: Some(y), glide: Some(crate::tok::motion::GLIDE), anchor: false });
+        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: Some(y), glide: Some(crate::tok::motion::GLIDE), anchor: crate::runtime::ScrollAnchor::None });
     }
     /// [`Tx::scroll_to`] on `spring` instead of the default glide. A request that arrives
     /// mid-glide keeps the glide's speed, so a selection moved by key repeat, each press asking
@@ -91,23 +130,35 @@ impl Tx {
     /// tx.scroll_to_with("board", 0.0, row_top, rune::Spring::new(0.18, 0.0));
     /// ```
     pub fn scroll_to_with(&mut self, key: impl Into<String>, x: f32, y: f32, spring: crate::Spring) {
-        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: Some(y), glide: Some(spring), anchor: false });
+        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: Some(y), glide: Some(spring), anchor: crate::runtime::ScrollAnchor::None });
     }
     /// [`Tx::scroll_to`] without the glide. An app stepping its own glide calls it each frame:
     /// hover under a still pointer then holds while the content moves and resolves once the
     /// frame after the last step, as it does for a glide.
     pub fn scroll_to_instant(&mut self, key: impl Into<String>, x: f32, y: f32) {
-        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: Some(y), glide: None, anchor: false });
+        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: Some(x), y: Some(y), glide: None, anchor: crate::runtime::ScrollAnchor::None });
     }
     /// Move the vertical scroll viewport around the element or [`crate::TextHighlight`] keyed
     /// `key` so its top sits `at` points below the viewport's top, clamped to the content's ends:
     /// a page that opens on a heading lands it just under its bar. It's placed from the layout of the commit this
     /// handler causes, so the frame that first draws a new page draws it there, and unlike
     /// [`Tx::scroll_into_view`] where it lands doesn't depend on where the view was or what was
-    /// stuck over it. Instant; any momentum or glide stops. The element must be laid out: reveal
-    /// a virtual row that isn't mounted with [`Tx::scroll_into_view`].
+    /// stuck over it. Instant; any momentum or glide stops. A virtual row that isn't mounted
+    /// lands too: the jump goes where its list's estimates put it, which mounts it, and is placed
+    /// again from its layout before the frame draws, the rows it mounts there showing at once.
+    /// `"row/mark"` lands element or highlight `mark` anywhere inside the element keyed `row`,
+    /// including a virtual row that isn't mounted yet: one request, one jump.
     pub fn scroll_key_to(&mut self, key: impl Into<String>, at: f32) {
-        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: None, y: Some(at), glide: None, anchor: true });
+        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: None, y: Some(at), glide: None, anchor: crate::runtime::ScrollAnchor::Top });
+    }
+    /// Move the vertical scroll viewport around the element or [`crate::TextHighlight`] keyed
+    /// `key` so its vertical midpoint sits `center_y` points below the viewport's top, snapped to
+    /// whole device pixels (`round(offset * scale) / scale`) as Chromium's `scrollTo({ top })`
+    /// does. For a [`crate::TextHighlight`], the midpoint is taken from the highlight's inline
+    /// font-metric box (`[baseline - ascent, baseline + descent]`, matching Blink's
+    /// `Range::getBoundingClientRect()`). Instant; any momentum or glide stops.
+    pub fn scroll_key_center_at(&mut self, key: impl Into<String>, center_y: f32) {
+        self.scroll_offsets.push(crate::runtime::ScrollRequest { key: key.into(), x: None, y: Some(center_y), glide: None, anchor: crate::runtime::ScrollAnchor::CenterSnapped });
     }
     /// Keep the element keyed `key` (or at that path) where it shows on screen across the
     /// commit this handler causes, by moving the nearest vertical scroll viewport around it. A

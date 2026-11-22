@@ -36,6 +36,9 @@ pub struct WheelEvent {
     /// Point-precise deltas (a trackpad or a free-spinning wheel), rather than the line steps of
     /// a notched mouse wheel, which an app may want to smooth.
     pub precise: bool,
+    /// Whole notches of a mouse wheel on a platform whose browsers ease them (Windows): an
+    /// unclaimed delta eases there as Chromium's does (`Runtime::set_wheel_glide`).
+    pub notch: bool,
 }
 
 impl WheelEvent {
@@ -46,6 +49,7 @@ impl WheelEvent {
     pub fn mods(mut self, mods: Mods) -> Self { self.mods = mods; self }
     pub fn phase(mut self, phase: GesturePhase) -> Self { self.phase = phase; self }
     pub fn precise(mut self, precise: bool) -> Self { self.precise = precise; self }
+    pub fn notch(mut self, notch: bool) -> Self { self.notch = notch; self }
 }
 
 /// A pinch an [`El::on_magnify`] handler sees.
@@ -198,7 +202,7 @@ impl El {
     /// logical, as `on_key` sees it: Space is `Key::Text(" ")`. A canvas that pans while Space
     /// is held starts on Space's press in `on_key` and stops here.
     pub fn on_key_up<S: 'static>(mut self, f: impl Fn(&mut S, &KeyEvent, &mut Tx) -> bool + 'static) -> Self {
-        self.focus.key_up = Some(Rc::new(move |s, e, tx| f(state::<S>(s), e, tx)));
+        self.cold_mut().focus.key_up = Some(Rc::new(move |s, e, tx| f(state::<S>(s), e, tx)));
         self
     }
 }
@@ -206,6 +210,7 @@ impl El {
 impl Tx {
     /// In `on_press` and `on_drag`, the button that drove it, which is
     /// [`PointerButton::Primary`] unless the element opted in to others with
-    /// [`El::pointer_buttons`]. Other handlers see `Primary`.
+    /// [`El::pointer_buttons`]; in `on_link`, `Middle` for a middle click on the link; in
+    /// [`El::on_middle_press`], `Middle`. Other handlers see `Primary`.
     pub fn button(&self) -> PointerButton { self.button }
 }
