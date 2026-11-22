@@ -131,14 +131,10 @@ pub fn arm_debounce(app: &mut App) {
     let s = &mut app.pages.library;
     s.query_gen += 1;
     let seq = s.query_gen;
-    let tx = app.net.sender();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS));
-        tx.send(move |app| {
-            if app.pages.library.query_gen == seq {
-                super::apply_draft(app);
-            }
-        });
+    app.net.after(Duration::from_millis(SEARCH_DEBOUNCE_MS), move |app| {
+        if app.pages.library.query_gen == seq {
+            super::apply_draft(app);
+        }
     });
 }
 

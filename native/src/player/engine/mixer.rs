@@ -9,7 +9,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::Duration;
 
 use crate::net::LateWaker;
 
@@ -25,12 +24,14 @@ pub struct Feed {
     /// The seek this feed answers.
     pub epoch: u64,
     pub format: OutFormat,
+    /// Readable-slot threshold at or below which a parked decoder is woken.
+    pub low_water: usize,
 }
 
 /// A source in the mix.
 pub struct MixVoice {
     pub state: Arc<VoiceState>,
-    pub ctl: Sender<DecoderCmd>,
+    ctl: Option<Sender<DecoderCmd>>,
     feed: Option<Feed>,
     /// Frames read from the feed.
     played: u64,
@@ -40,13 +41,43 @@ pub struct MixVoice {
     ended: bool,
 }
 
+impl Drop for MixVoice {
+    fn drop(&mut self) {
+        self.feed = None;
+        self.ctl = None;
+        self.state.wake_decoder();
+    }
+}
+
 impl MixVoice {
     pub fn new(state: Arc<VoiceState>, ctl: Sender<DecoderCmd>) -> MixVoice {
-        MixVoice { state, ctl, feed: None, played: 0, awaiting: 0, ended: false }
+        MixVoice { state, ctl: Some(ctl), feed: None, played: 0, awaiting: 0, ended: false }
     }
 
     fn id(&self) -> u64 {
         self.state.id
+    }
+
+    /// Read up to `out.len() / ch` frames directly into `out` at unity gain.
+    fn pull_copy(&mut self, out: &mut [f32], ch: usize) -> usize {
+        let Some(feed) = &mut self.feed else { return 0 };
+        let n = (out.len() / ch).min(feed.rx.slots() / ch);
+        if n == 0 {
+            return 0;
+        }
+        let Ok(chunk) = feed.rx.read_chunk(n * ch) else { return 0 };
+        let (a, b) = chunk.as_slices();
+        out[..a.len()].copy_from_slice(a);
+        if !b.is_empty() {
+            out[a.len()..a.len() + b.len()].copy_from_slice(b);
+        }
+        chunk.commit_all();
+        self.played += n as u64;
+        std::sync::atomic::fence(Ordering::SeqCst);
+        if self.state.decoder_waiting.load(Ordering::Relaxed) && feed.rx.slots() <= feed.low_water {
+            self.state.wake_decoder_if_waiting();
+        }
+        n
     }
 
     /// Read up to `out.len() / ch` frames, adding them in at `gain(frame)`.
@@ -58,11 +89,21 @@ impl MixVoice {
         }
         let Ok(chunk) = feed.rx.read_chunk(n * ch) else { return 0 };
         let (a, b) = chunk.as_slices();
-        for (i, s) in a.iter().chain(b).enumerate() {
-            out[i] += s * gain(i / ch);
+        let mut src = a.iter().chain(b);
+        for (f, frame) in out[..n * ch].chunks_exact_mut(ch).enumerate() {
+            let g = gain(f);
+            for dst in frame.iter_mut() {
+                if let Some(&s) = src.next() {
+                    *dst += s * g;
+                }
+            }
         }
         chunk.commit_all();
         self.played += n as u64;
+        std::sync::atomic::fence(Ordering::SeqCst);
+        if self.state.decoder_waiting.load(Ordering::Relaxed) && feed.rx.slots() <= feed.low_water {
+            self.state.wake_decoder_if_waiting();
+        }
         n
     }
 
@@ -104,7 +145,15 @@ pub struct Outbox {
     retired: rtrb::Producer<Retired>,
     /// Events are waiting: the porter wakes the UI.
     pending: Arc<AtomicBool>,
+    stopped: Arc<AtomicBool>,
     porter: Option<std::thread::Thread>,
+}
+
+impl Drop for Outbox {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+        self.wake_porter();
+    }
 }
 
 impl Outbox {
@@ -113,30 +162,36 @@ impl Outbox {
         let (events, events_rx) = rtrb::RingBuffer::new(EVENT_SLOTS);
         let (retired, mut retired_rx) = rtrb::RingBuffer::<Retired>::new(RETIRED_SLOTS);
         let pending = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
         let flag = pending.clone();
+        let stop = stopped.clone();
         let porter = std::thread::Builder::new()
             .name("lumen-audio-porter".into())
             .spawn(move || {
                 loop {
-                    // The timeout only notices the mixer going away.
-                    std::thread::park_timeout(Duration::from_secs(1));
+                    let mut did_work = false;
                     while let Ok(gone) = retired_rx.pop() {
+                        did_work = true;
                         match gone {
                             Retired::Voice(voice) => drop(voice),
                             Retired::Feed(feed) => drop(feed),
                         }
                     }
                     if flag.swap(false, Ordering::AcqRel) {
+                        did_work = true;
                         waker.wake();
                     }
-                    if retired_rx.is_abandoned() {
+                    if stop.load(Ordering::Acquire) || retired_rx.is_abandoned() {
                         return;
+                    }
+                    if !did_work {
+                        std::thread::park();
                     }
                 }
             })
             .ok()
             .map(|t| t.thread().clone());
-        (Outbox { events, retired, pending, porter }, events_rx)
+        (Outbox { events, retired, pending, stopped, porter }, events_rx)
     }
 
     /// An outbox nobody empties but the test: the events and what's retired.
@@ -144,7 +199,7 @@ impl Outbox {
     pub fn for_tests() -> (Outbox, rtrb::Consumer<EngineEvent>, rtrb::Consumer<Retired>) {
         let (events, events_rx) = rtrb::RingBuffer::new(EVENT_SLOTS);
         let (retired, retired_rx) = rtrb::RingBuffer::new(RETIRED_SLOTS);
-        (Outbox { events, retired, pending: Arc::default(), porter: None }, events_rx, retired_rx)
+        (Outbox { events, retired, pending: Arc::default(), stopped: Arc::default(), porter: None }, events_rx, retired_rx)
     }
 
     fn event(&mut self, event: EngineEvent) {
@@ -221,6 +276,23 @@ impl Mixer {
         self.format
     }
 
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    /// Drain pending commands without rendering samples (used while output is suspended).
+    pub fn drain_cmds(&mut self) {
+        while let Ok(cmd) = self.cmds.try_recv() {
+            self.apply(cmd);
+        }
+        self.gain = self.levels.gain();
+        if let Some(voice) = &self.current
+            && let Some(at) = voice.position()
+        {
+            voice.state.set_position(at);
+        }
+    }
+
     /// The output changed format: every voice decodes again from where it is.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub fn set_format(&mut self, format: OutFormat) {
@@ -233,7 +305,10 @@ impl Mixer {
         for voice in [&mut self.current, &mut self.prepared].into_iter().flatten() {
             let at = voice.position().unwrap_or_else(|| voice.state.position());
             self.outbox.retire_feed(voice.feed.take());
-            let _ = voice.ctl.send(DecoderCmd::Reformat { format, seconds: at });
+            if let Some(ctl) = &voice.ctl {
+                let _ = ctl.send(DecoderCmd::Reformat { format, seconds: at });
+            }
+            voice.state.wake_decoder();
         }
     }
 
@@ -280,13 +355,17 @@ impl Mixer {
                     Some(voice) if feed.epoch < voice.awaiting => Some(feed),
                     Some(voice) if feed.format != format => {
                         // Decoded for an output that's gone: again, for this one.
-                        let _ = voice.ctl.send(DecoderCmd::Reformat { format, seconds: feed.start });
+                        if let Some(ctl) = &voice.ctl {
+                            let _ = ctl.send(DecoderCmd::Reformat { format, seconds: feed.start });
+                        }
+                        voice.state.wake_decoder();
                         Some(feed)
                     }
                     Some(voice) => {
                         voice.awaiting = feed.epoch;
                         voice.played = 0;
                         voice.ended = false;
+                        voice.state.wake_decoder();
                         voice.feed.replace(feed)
                     }
                 };
@@ -303,6 +382,7 @@ impl Mixer {
                         voice.awaiting = epoch;
                         if voice.feed.as_ref().is_some_and(|f| f.epoch < epoch) {
                             voice.ended = false;
+                            voice.state.wake_decoder();
                             voice.feed.take()
                         } else {
                             None
@@ -330,23 +410,36 @@ impl Mixer {
         while let Ok(cmd) = self.cmds.try_recv() {
             self.apply(cmd);
         }
-        out.fill(0.0);
         let ch = self.format.channels.max(1);
         let frames = out.len() / ch;
-        if self.playing && frames > 0 {
-            self.mix(&mut out[..frames * ch], ch);
-            self.equalizer.process(&mut out[..frames * ch]);
-        }
-        // Volume, ramped over the buffer so a drag doesn't click.
         let target = self.levels.gain();
+        if !self.playing || frames == 0 {
+            out.fill(0.0);
+            self.gain = target;
+            if let Some(voice) = &self.current
+                && let Some(at) = voice.position()
+            {
+                voice.state.set_position(at);
+            }
+            return;
+        }
+        let active_len = frames * ch;
+        self.mix(&mut out[..active_len], ch);
+        if active_len < out.len() {
+            out[active_len..].fill(0.0);
+        }
+        self.equalizer.process(&mut out[..active_len]);
+        // Volume, ramped over the buffer so a drag doesn't click.
         let from = self.gain;
         if from == target {
-            if target != 1.0 {
-                out.iter_mut().for_each(|s| *s *= target);
+            if target == 0.0 {
+                out[..active_len].fill(0.0);
+            } else if target != 1.0 {
+                out[..active_len].iter_mut().for_each(|s| *s *= target);
             }
         } else {
-            let step = (target - from) / frames.max(1) as f32;
-            for (f, frame) in out.chunks_mut(ch).enumerate() {
+            let step = (target - from) / frames as f32;
+            for (f, frame) in out[..active_len].chunks_exact_mut(ch).enumerate() {
                 let g = from + step * (f + 1) as f32;
                 frame.iter_mut().for_each(|s| *s *= g);
             }
@@ -362,6 +455,23 @@ impl Mixer {
     fn mix(&mut self, out: &mut [f32], ch: usize) {
         let frames = out.len() / ch;
         let fade = self.fade;
+        if fade.is_none() && self.outgoing.is_none() {
+            // Steady-state fast path: copy directly from the ring without zero-filling or per-sample gain.
+            let mut done = 0;
+            while done < frames {
+                let Some(current) = self.current.as_mut() else { break };
+                let n = current.pull_copy(&mut out[done * ch..], ch);
+                done += n;
+                if done < frames && !(current.at_end() && self.hand_off()) {
+                    break;
+                }
+            }
+            if done < frames {
+                out[done * ch..].fill(0.0);
+            }
+            return;
+        }
+        out.fill(0.0);
         // Equal-power curves, so the mix doesn't dip halfway through.
         let progress = move |k: usize| fade.map(|(done, total)| ((done + k as u64) as f32 / total as f32).min(1.0));
         let mut done = 0;
@@ -464,7 +574,7 @@ mod tests {
             tx.push(value).unwrap();
         }
         std::mem::forget(tx);
-        let feed = Feed { rx, done: Arc::new(AtomicBool::new(done)), start: 0.0, epoch: 0, format: FORMAT };
+        let feed = Feed { rx, done: Arc::new(AtomicBool::new(done)), start: 0.0, epoch: 0, format: FORMAT, low_water: 0 };
         (Box::new(MixVoice::new(state, ctl)), feed)
     }
 

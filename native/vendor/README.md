@@ -209,3 +209,13 @@ Hooks in upstream files:
 - `src/window/lifecycle.rs`: `poll_hidden` polls a shown window whose frame is overdue; the
   wake's frame (`drain`) arms the watch.
 - `src/window/events.rs`: `RedrawRequested` ends it.
+
+#### Partial diff caches previous-frame `Analysis` & elides empty blurred layers
+
+- `src/render/partial.rs`: `Partial` caches the previous frame's `Analysis` alongside `prev` so
+  each frame only analyses `cur`, and skips both analysis and `prev` copying on byte-identical
+  frames when no image atlas rows changed.
+- `src/render.rs`: `end_layer` elides empty non-cached layers (`primitives == 0 && videos == 0`)
+  even when `blur > 0.0` (e.g., off-screen blurred lyrics lines).
+- `src/text/default_fonts.rs`: honors `feature = "embedded-fonts"` on native builds so Lumen
+  (which supplies Geist via `AppSpec::fonts`) omits 1.22 MB of unused Inter TTFs.

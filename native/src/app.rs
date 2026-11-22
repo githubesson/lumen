@@ -69,9 +69,23 @@ pub struct App {
     pub desktop: crate::desktop::Desktop,
 }
 
+static SEEDED_CONFIG: std::sync::Mutex<Option<Config>> = std::sync::Mutex::new(None);
+
+/// Hand `main`'s already-loaded [`Config`] to [`App::new`] so startup reads
+/// and parses `config.json` once instead of twice.
+pub fn seed_config(config: Config) {
+    if let Ok(mut slot) = SEEDED_CONFIG.lock() {
+        *slot = Some(config);
+    }
+}
+
 impl App {
     pub fn new() -> App {
-        let config = Config::load();
+        let config = SEEDED_CONFIG
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+            .unwrap_or_else(Config::load);
         let waker = LateWaker::default();
         let net = Net::new(waker.clone());
         let images = Images::new(waker.clone());

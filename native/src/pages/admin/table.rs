@@ -186,7 +186,14 @@ fn breaks(s: &str, style: TextStyle, width: f32) -> Vec<String> {
 /// punctuation, `/` or a hyphen, nor after an opening bracket, UAX #14
 /// LB13/LB14/LB21); spaces at a break are dropped.
 fn break_all(s: &str, style: TextStyle, width: f32) -> Vec<String> {
-    let chars: Vec<char> = s.chars().collect();
+    let mut chars = Vec::with_capacity(s.len());
+    let mut offsets = Vec::with_capacity(s.len() + 1);
+    for (byte_idx, c) in s.char_indices() {
+        offsets.push(byte_idx);
+        chars.push(c);
+    }
+    offsets.push(s.len());
+    let n = chars.len();
     let allowed = |i: usize| -> bool {
         // A break before chars[i].
         let (a, b) = (chars[i - 1], chars[i]);
@@ -198,15 +205,25 @@ fn break_all(s: &str, style: TextStyle, width: f32) -> Vec<String> {
         }
         !(matches!(b, '/' | ',' | '.' | ':' | ';' | '!' | '?' | ')' | ']' | '}' | '-' | '%') || matches!(a, '(' | '[' | '{'))
     };
-    let fits = |from: usize, to: usize| advance(chars[from..to].iter().collect::<String>().trim_end(), style) <= width + 0.01;
+    let fits = |from: usize, to: usize| advance(s[offsets[from]..offsets[to]].trim_end(), style) <= width + 0.01;
     let mut lines = Vec::new();
     let mut start = 0;
-    while start < chars.len() {
-        let mut end = start + 1;
-        while end < chars.len() && fits(start, end + 1) {
-            end += 1;
-        }
-        if end < chars.len() {
+    while start < n {
+        let mut end = if start + 1 >= n || fits(start, n) {
+            n
+        } else {
+            let (mut lo, mut hi) = (start + 1, n);
+            while lo + 1 < hi {
+                let mid = lo + (hi - lo) / 2;
+                if fits(start, mid) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            lo
+        };
+        if end < n {
             // Back up to the last break opportunity on the line.
             let mut cut = end;
             while cut > start + 1 && !allowed(cut) {
@@ -216,9 +233,9 @@ fn break_all(s: &str, style: TextStyle, width: f32) -> Vec<String> {
                 end = cut;
             }
         }
-        lines.push(chars[start..end].iter().collect::<String>().trim_end().to_string());
+        lines.push(s[offsets[start]..offsets[end]].trim_end().to_string());
         start = end;
-        while start < chars.len() && chars[start] == ' ' {
+        while start < n && chars[start] == ' ' {
             start += 1;
         }
     }
@@ -572,6 +589,65 @@ mod tests {
         let line = Line::new(path, style, Color::BLACK).break_all();
         assert_eq!(line.widths(), line.measure());
         assert!(MEASURED.with(|m| m.borrow().breaks.len() == 1 && m.borrow().widths.len() == 1));
+    }
+
+    #[test]
+    fn break_all_matches_linear_reference() {
+        fn linear_break_all(s: &str, style: TextStyle, width: f32) -> Vec<String> {
+            let chars: Vec<char> = s.chars().collect();
+            let allowed = |i: usize| -> bool {
+                let (a, b) = (chars[i - 1], chars[i]);
+                if b == ' ' {
+                    return false;
+                }
+                if a == ' ' {
+                    return true;
+                }
+                !(matches!(b, '/' | ',' | '.' | ':' | ';' | '!' | '?' | ')' | ']' | '}' | '-' | '%') || matches!(a, '(' | '[' | '{'))
+            };
+            let fits = |from: usize, to: usize| advance(chars[from..to].iter().collect::<String>().trim_end(), style) <= width + 0.01;
+            let mut lines = Vec::new();
+            let mut start = 0;
+            while start < chars.len() {
+                let mut end = start + 1;
+                while end < chars.len() && fits(start, end + 1) {
+                    end += 1;
+                }
+                if end < chars.len() {
+                    let mut cut = end;
+                    while cut > start + 1 && !allowed(cut) {
+                        cut -= 1;
+                    }
+                    if cut > start + 1 || allowed(cut) {
+                        end = cut;
+                    }
+                }
+                lines.push(chars[start..end].iter().collect::<String>().trim_end().to_string());
+                start = end;
+                while start < chars.len() && chars[start] == ' ' {
+                    start += 1;
+                }
+            }
+            if lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines
+        }
+        let samples = [
+            "",
+            "short",
+            "/mnt/external/flac/Velvet Meridian/Demo 1.flac",
+            "https://music.example.com/api/v1/tracks/abc-123_def/stream?quality=lossless&token=xyz1234567890",
+            "Track (Remix) [2026-04-01] - 100%, done!   trailing   spaces",
+            "café/naïve — résumé (über-long-identifier-without-spaces-0123456789)",
+        ];
+        for style in [mono(12.0, 400.0), font(14.0, 400.0)] {
+            for s in samples {
+                for width in [12.0, 48.0, 96.0, 180.0, 600.0] {
+                    assert_eq!(break_all(s, style, width), linear_break_all(s, style, width), "mismatch for {s:?} at width {width}");
+                }
+            }
+        }
     }
 
     #[test]

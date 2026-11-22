@@ -39,7 +39,14 @@ pub fn enter_library(app: &mut App, id: &str) {
     super::load_detail(
         app,
         false,
-        |c: &Client, id: &str| -> api::ApiResult<_> { Ok((api::library::get_artist(c, id)?, api::library::list_artist_tracks(c, id)?)) },
+        |c: &Client, id: &str| -> api::ApiResult<_> {
+            let (artist, tracks) = std::thread::scope(|s| {
+                let a = s.spawn(|| api::library::get_artist(c, id));
+                let t = s.spawn(|| api::library::list_artist_tracks(c, id));
+                (a.join().expect("artist fetch panicked"), t.join().expect("artist tracks fetch panicked"))
+            });
+            Ok((artist?, tracks?))
+        },
         "Failed to load artist.",
         |app, (artist, tracks)| {
             let s = &mut app.pages.library;
@@ -175,7 +182,6 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
     let st = crate::player::list_playback_state(tracks, app.player.current(), app.player.playing);
     let (here, show_pause, can_play) = (st.playing_here, st.show_pause, st.can_play);
     let label = display_text(Some(name), "");
-    let queue = tracks.to_vec();
     let mut play = el()
         .key("artist-play")
         .size(40.0, 40.0)
@@ -195,6 +201,7 @@ fn actions(app: &App, t: &Theme, name: &str, tracks: &[TrackListItem], end: Opti
                 if here {
                     app.player.toggle_play();
                 } else {
+                    let queue = super::detail_tracks(app).to_vec();
                     crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
                 }
             });
@@ -288,13 +295,17 @@ fn discography(app: &App, t: &Theme, releases: &[ArtistRelease], width: f32) -> 
             d.show_all = !d.show_all;
         })
     });
-    let all = releases.to_vec();
-    let shuffled = all.clone();
     let mut body = col().w_full().child(row().gap(8.0).flex_wrap().mb(12.0)
         .child(Btn::new("discography-play", "Play all").primary().icon(&i::PLAY_FILLED).icon_size(16.0).build(t)
-            .on_press(move |app: &mut App| crate::overlays::collection_play::releases(app, all.clone(), false)))
+            .on_press(|app: &mut App| {
+                let all = app.pages.library.detail.releases.clone();
+                crate::overlays::collection_play::releases(app, all, false);
+            }))
         .child(crate::ui::blocks::shuffle_button(t, "discography-shuffle", false)
-            .on_press(move |app: &mut App| crate::overlays::collection_play::releases(app, shuffled.clone(), true))));
+            .on_press(|app: &mut App| {
+                let shuffled = app.pages.library.detail.releases.clone();
+                crate::overlays::collection_play::releases(app, shuffled, true);
+            })));
     if logic::has_release_filters(releases) {
         let mut chips = row().gap(8.0).flex_wrap().mb(12.0);
         for (value, label) in RELEASE_FILTER_OPTIONS {

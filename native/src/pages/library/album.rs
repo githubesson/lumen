@@ -47,7 +47,14 @@ fn load_library(app: &mut App, quiet: bool) {
     super::load_detail(
         app,
         quiet,
-        |c: &Client, id: &str| -> api::ApiResult<_> { Ok((api::library::get_album(c, id)?, api::library::list_album_tracks(c, id)?)) },
+        |c: &Client, id: &str| -> api::ApiResult<_> {
+            let (album, tracks) = std::thread::scope(|s| {
+                let a = s.spawn(|| api::library::get_album(c, id));
+                let t = s.spawn(|| api::library::list_album_tracks(c, id));
+                (a.join().expect("album fetch panicked"), t.join().expect("album tracks fetch panicked"))
+            });
+            Ok((album?, tracks?))
+        },
         "Failed to load album.",
         |app, (album, tracks)| {
             let s = &mut app.pages.library;
@@ -174,15 +181,14 @@ fn arm_refresh(app: &mut App) {
     let d = &mut app.pages.library.detail;
     d.refresh_gen += 1;
     let (seq, key) = (d.refresh_gen, d.key.clone());
-    let tx = app.net.sender();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(logic::ALBUM_DOWNLOAD_REFRESH_MS));
-        tx.send(move |app| {
-            let d = &app.pages.library.detail;
-            if d.refresh_gen == seq && d.key == key && app.location().is("/library") {
-                refresh(app);
-            }
-        });
+    if app.net.is_sync() {
+        return;
+    }
+    app.net.after(Duration::from_millis(logic::ALBUM_DOWNLOAD_REFRESH_MS), move |app| {
+        let d = &app.pages.library.detail;
+        if d.refresh_gen == seq && d.key == key && app.location().is("/library") {
+            refresh(app);
+        }
     });
 }
 

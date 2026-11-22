@@ -467,10 +467,15 @@ impl Client {
 
         // An answer to a request sent before the session changed sets
         // nothing: its clearing `Set-Cookie` would end the new session.
-        if self.own.is_some() && generation == self.inner.auth_generation.load(Ordering::Acquire) {
-            self.keep_cookies(&response);
+        let jar_may_have_changed = if self.own.is_some() {
+            generation == self.inner.auth_generation.load(Ordering::Acquire) && self.keep_cookies(&response)
+        } else {
+            use ureq::ResponseExt;
+            response.headers().contains_key("set-cookie") || response.get_uri().to_string() != url
+        };
+        if jar_may_have_changed {
+            self.save_jar(false);
         }
-        self.save_jar(false);
         let status = response.status().as_u16();
         let header = |name: &str| {
             response.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string)
@@ -480,7 +485,15 @@ impl Client {
         let etag = header("etag");
         let cache_control = header("cache-control");
         let retry_after = header("retry-after");
-        let mut body = Vec::new();
+        let cap = if method == "HEAD" {
+            0
+        } else {
+            header("content-length")
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .map(|n| n.min(64 << 20))
+                .unwrap_or(0)
+        };
+        let mut body = Vec::with_capacity(cap);
         if method != "HEAD" {
             response
                 .body_mut()
@@ -616,8 +629,12 @@ impl Client {
     }
 
     /// Cookies a [`Client::with_cancel`] answer set, into the shared jar.
-    fn keep_cookies(&self, response: &ureq::http::Response<ureq::Body>) {
+    /// Returns true if any `Set-Cookie` header was present.
+    fn keep_cookies(&self, response: &ureq::http::Response<ureq::Body>) -> bool {
         use ureq::ResponseExt;
+        if !response.headers().contains_key("set-cookie") {
+            return false;
+        }
         let uri = response.get_uri();
         let mut jar = self.inner.agent.cookie_jar_lock();
         for value in response.headers().get_all("set-cookie") {
@@ -626,10 +643,11 @@ impl Client {
             }
         }
         jar.release();
+        true
     }
 
     /// Write the jar to disk when it changed since the last write (a
-    /// `Set-Cookie`, here or on a redirect on the way, or a cookie expiring),
+    /// `Set-Cookie` on the response, or a redirect that changes the final URI),
     /// or always when `force`d. Cover fetches by the dozen change nothing,
     /// so they write nothing.
     fn save_jar(&self, force: bool) {

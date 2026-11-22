@@ -274,14 +274,20 @@ fn merge(mut rects: Vec<[u32; 4]>) -> Vec<[u32; 4]> {
 
 /// What changed from `prev` to `cur`, in a `viewport`-sized window whose image atlas rows
 /// `dirty` were rewritten.
+#[cfg(test)]
 pub(crate) fn change(prev: &[Instance], cur: &[Instance], dirty: &[(usize, u32, u32)], viewport: (u32, u32)) -> Change {
     let (pa, ca) = (analyse(prev), analyse(cur));
+    change_with(prev, &pa, cur, &ca, dirty, viewport)
+}
+
+/// Lumen patch: `change` reusing a cached `Analysis` for `prev` so each frame only analyses `cur`.
+fn change_with(prev: &[Instance], pa: &Analysis, cur: &[Instance], ca: &Analysis, dirty: &[(usize, u32, u32)], viewport: (u32, u32)) -> Change {
     if pa.effects || ca.effects {
         return Change::Whole(Whole::Opaque);
     }
     let (gone, new) = unmatched(prev, cur);
     let mut damage: Vec<Edges> = Vec::new();
-    for (a, changed) in [(&pa, &gone), (&ca, &new)] {
+    for (a, changed) in [(pa, &gone), (ca, &new)] {
         for &k in changed {
             if a.cached[k] { return Change::Whole(Whole::Opaque); }
             damage.extend(a.screen[k]);
@@ -346,11 +352,12 @@ struct Key {
     glyph_resets: u64,
 }
 
-/// A window's canvas: the last frame's pixels and instances.
+/// A window's canvas: the last frame's pixels, instances, and cached analysis.
 #[derive(Default)]
 pub(crate) struct Partial {
     canvas: Option<Canvas>,
     prev: Vec<Instance>,
+    prev_analysis: Option<Analysis>,
     key: Option<Key>,
 }
 
@@ -395,6 +402,7 @@ impl Partial {
         if !usable {
             self.invalidate();
             self.prev.clear();
+            self.prev_analysis = None;
             return false;
         }
         if self.canvas.as_ref().is_none_or(|c| c.size != size || c.format != format) {
@@ -404,7 +412,25 @@ impl Partial {
         let key = Key {
             size, format, clear: f.clear.map(f32::to_bits), srgb: f.srgb, scale: f.scale.to_bits(), glyph_resets: f.glyph_resets,
         };
-        let change = if self.key != Some(key) { Change::Whole(Whole::Key) } else { change(&self.prev, f.instances, f.image_dirty, size) };
+        let identical = self.key == Some(key)
+            && f.image_dirty.is_empty()
+            && self.prev.len() == f.instances.len()
+            && bytemuck::cast_slice::<_, u8>(&self.prev) == bytemuck::cast_slice::<_, u8>(f.instances);
+        let (change, next_analysis, unchanged_instances) = if self.key != Some(key) {
+            (Change::Whole(Whole::Key), None, false)
+        } else if identical {
+            let pa = self.prev_analysis.get_or_insert_with(|| analyse(&self.prev));
+            if pa.effects {
+                (Change::Whole(Whole::Opaque), None, true)
+            } else {
+                (Change::Same, None, true)
+            }
+        } else {
+            let pa = self.prev_analysis.get_or_insert_with(|| analyse(&self.prev));
+            let ca = analyse(f.instances);
+            let c = change_with(&self.prev, pa, f.instances, &ca, f.image_dirty, size);
+            (c, Some(ca), false)
+        };
         if mode() == Mode::Stats { stats(&change, size); }
         let canvas = self.canvas.as_ref().unwrap();
         match &change {
@@ -421,8 +447,11 @@ impl Partial {
             }
         }
         canvas.copy_to(device, encoder, target, target_texture);
-        self.prev.clear();
-        self.prev.extend_from_slice(f.instances);
+        if !unchanged_instances {
+            self.prev.clear();
+            self.prev.extend_from_slice(f.instances);
+            self.prev_analysis = next_analysis;
+        }
         self.key = Some(key);
         true
     }

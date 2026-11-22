@@ -357,9 +357,14 @@ pub(crate) fn end_layer(instances: &mut Vec<Instance>, surfaces: &mut [crate::na
     let transfer_clip = scope.fade[3] == 0 && unmasked;
     // A lone effect slot keeps a faded scope: the compositor's paint can't take the opacity.
     let faded_effect = primitives == 1 && instances[start + 1].params[1] == KIND_EFFECT && scope.fill[3] != 1.0;
+    // Lumen patch: an empty non-cached layer paints nothing regardless of blur, blend,
+    // rotation, cutout, or clip, so elide it here instead of emitting a pair of layer markers
+    // (for example, off-screen blurred lyrics lines).
+    let empty_layer = primitives == 0 && videos == 0 && scope.params[3] == 0.0;
     // A layer's `radii` hold its hole (`El::cutout_circle`), which only its composite can cut.
-    if !faded_effect && primitives + videos <= 1 && (primitives + videos == 0 || (scope.border[1] == 0.0 && scope.radii == [0.0; 4])) && scope.params[0] == 0.0 && scope.params[2] == 0.0 && scope.params[3] == 0.0
-        && (transfer_clip || (scope.clip == NO_CLIP && scope.fade == [0; 4])) {
+    if empty_layer || (!faded_effect && primitives + videos <= 1 && scope.border[1] == 0.0 && scope.radii == [0.0; 4]
+        && scope.params[0] == 0.0 && scope.params[2] == 0.0 && scope.params[3] == 0.0
+        && (transfer_clip || (scope.clip == NO_CLIP && scope.fade == [0; 4]))) {
         let opacity = scope.fill[3];
         if primitives == 1 {
             let i = &mut instances[start + 1];

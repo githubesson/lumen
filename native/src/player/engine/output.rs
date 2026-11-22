@@ -37,6 +37,8 @@ pub struct OutputShared {
     /// Moves whenever `devices` or `error` change, so the player redraws
     /// (the Settings row lists them).
     pub changes: AtomicU64,
+    /// True while the output thread is parked waiting for playback or a command.
+    pub sleeping: AtomicBool,
 }
 
 impl OutputShared {
@@ -50,6 +52,7 @@ impl OutputShared {
 pub enum OutputCmd {
     Select(Option<String>),
     Refresh,
+    Wake,
 }
 
 pub fn start(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, waker: LateWaker, device: Option<String>) -> Sender<OutputCmd> {
@@ -94,33 +97,83 @@ fn run(mixer: Arc<Mutex<Mixer>>, shared: Arc<OutputShared>, waker: LateWaker, rx
             }
             clock = Instant::now();
         }
-        // Without a device the mix plays on this thread's clock.
-        let wait = if stream.is_none() {
-            let elapsed = clock.elapsed();
-            clock = Instant::now();
-            let mut m = mixer.lock().unwrap();
-            let format = m.format();
-            let frames = ((elapsed.as_secs_f64().min(0.1)) * format.rate as f64) as usize;
-            scratch.resize(frames * format.channels, 0.0);
-            m.render(&mut scratch);
-            Duration::from_millis(10)
-        } else {
-            Duration::from_secs(2)
-        };
-        match rx.recv_timeout(wait) {
-            Ok(OutputCmd::Select(device)) => {
-                if device != selected {
-                    selected = device;
-                    stream = None;
-                    retry_at = Instant::now();
+        // Without a hardware audio backend on this build, park with zero wakeups while paused
+        // instead of spinning the fallback clock at 100 Hz.
+        let cmd = if !device::SUPPORTED {
+            let is_playing = {
+                let mut m = mixer.lock().unwrap();
+                m.drain_cmds();
+                m.is_playing()
+            };
+            if !is_playing {
+                shared.sleeping.store(true, Ordering::SeqCst);
+                let woke = {
+                    let mut m = mixer.lock().unwrap();
+                    m.drain_cmds();
+                    m.is_playing()
+                };
+                if woke {
+                    shared.sleeping.store(false, Ordering::Relaxed);
+                    clock = Instant::now();
+                    continue;
+                }
+                match rx.recv() {
+                    Ok(c) => {
+                        shared.sleeping.store(false, Ordering::Relaxed);
+                        clock = Instant::now();
+                        Some(c)
+                    }
+                    Err(_) => return,
+                }
+            } else {
+                let elapsed = clock.elapsed();
+                clock = Instant::now();
+                let mut m = mixer.lock().unwrap();
+                let format = m.format();
+                let frames = ((elapsed.as_secs_f64().min(0.1)) * format.rate as f64) as usize;
+                scratch.resize(frames * format.channels, 0.0);
+                m.render(&mut scratch);
+                match rx.recv_timeout(Duration::from_millis(10)) {
+                    Ok(c) => Some(c),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
-            Ok(OutputCmd::Refresh) => {
-                refresh(&shared);
-                shared.changed(&waker);
+        } else {
+            // Without an opened device the mix plays on this thread's clock while retrying.
+            let wait = if stream.is_none() {
+                let elapsed = clock.elapsed();
+                clock = Instant::now();
+                let mut m = mixer.lock().unwrap();
+                let format = m.format();
+                let frames = ((elapsed.as_secs_f64().min(0.1)) * format.rate as f64) as usize;
+                scratch.resize(frames * format.channels, 0.0);
+                m.render(&mut scratch);
+                Duration::from_millis(10)
+            } else {
+                Duration::from_secs(2)
+            };
+            match rx.recv_timeout(wait) {
+                Ok(c) => Some(c),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return,
             }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
+        };
+        if let Some(cmd) = cmd {
+            match cmd {
+                OutputCmd::Select(device) => {
+                    if device != selected {
+                        selected = device;
+                        stream = None;
+                        retry_at = Instant::now();
+                    }
+                }
+                OutputCmd::Refresh => {
+                    refresh(&shared);
+                    shared.changed(&waker);
+                }
+                OutputCmd::Wake => {}
+            }
         }
         if failed.swap(false, Ordering::Relaxed) {
             // The device went away or changed: open again (the list has changed too).
@@ -196,7 +249,7 @@ mod device {
         let format = OutFormat { rate: config.sample_rate, channels: config.channels as usize };
         mixer.lock().unwrap().set_format(format);
         let stream = match supported.sample_format() {
-            SampleFormat::F32 => build::<f32>(&device, config, mixer, failed),
+            SampleFormat::F32 => build_f32(&device, config, mixer, failed),
             SampleFormat::F64 => build::<f64>(&device, config, mixer, failed),
             SampleFormat::I16 => build::<i16>(&device, config, mixer, failed),
             SampleFormat::U16 => build::<u16>(&device, config, mixer, failed),
@@ -209,6 +262,26 @@ mod device {
         .map_err(|e| OpenError::Failed(e.to_string()))?;
         stream.play().map_err(|e| OpenError::Failed(e.to_string()))?;
         Ok(Opened { stream, format, id })
+    }
+
+    /// Direct f32 callback: renders straight into cpal's output buffer with zero scratch copy.
+    fn build_f32(
+        device: &cpal::Device,
+        config: cpal::StreamConfig,
+        mixer: &Arc<Mutex<Mixer>>,
+        failed: &Arc<AtomicBool>,
+    ) -> Result<cpal::Stream, cpal::Error> {
+        let mixer = mixer.clone();
+        let failed = failed.clone();
+        device.build_output_stream::<f32, _, _>(
+            config,
+            move |data: &mut [f32], _| match mixer.try_lock() {
+                Ok(mut m) => m.render(data),
+                Err(_) => data.fill(0.0),
+            },
+            move |_err| failed.store(true, Ordering::Relaxed),
+            None,
+        )
     }
 
     fn build<T: SizedSample + FromSample<f32>>(

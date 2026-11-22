@@ -104,13 +104,13 @@ fn credits_line(t: &Theme, credits: &[AlbumCredit], max: f32) -> El {
 /// `SleevePlay`: Play all, and the player's shuffle beside it.
 fn play_row(app: &App, t: &Theme, tracks: &[TrackListItem], loading: bool, grow: bool) -> El {
     let can_play = tracks.iter().any(|t| t.unavailable != Some(true));
-    let queue = tracks.to_vec();
     let mut play = button("sleeve-play", "Play all", Some(&i::PLAY_FILLED)).primary().disabled(!can_play).build(t);
     if grow {
         play = play.grow(1.0);
     }
     if can_play {
-        play = play.on_press(move |app: &mut App| {
+        play = play.on_press(|app: &mut App| {
+            let queue = super::detail_tracks(app).to_vec();
             crate::ui::track_row::start_list(app, &queue, app.player.shuffle);
         });
     }

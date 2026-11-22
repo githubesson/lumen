@@ -7,8 +7,7 @@
 use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::time::Duration;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{CODEC_TYPE_NULL, CODEC_TYPE_OPUS, CodecParameters, DecoderOptions};
@@ -27,9 +26,6 @@ use super::{DecoderCmd, EngineEvent, EventSink, OutFormat, VoiceState};
 
 /// Seconds of decoded audio a voice keeps ahead of the mixer.
 const BUFFER_SECONDS: usize = 4;
-/// How long a decoder with a full buffer sleeps before looking for room
-/// again (commands wake it at once). A sliver of the buffer.
-const ROOM_POLL: Duration = Duration::from_millis(100);
 
 pub struct Ctx {
     pub voice: Arc<VoiceState>,
@@ -41,10 +37,14 @@ pub struct Ctx {
 }
 
 pub fn spawn(ctx: Ctx) {
-    let _ = std::thread::Builder::new().name(format!("lumen-voice-{}", ctx.voice.id)).spawn(move || run(ctx));
+    let voice = ctx.voice.clone();
+    if let Ok(handle) = std::thread::Builder::new().name(format!("lumen-voice-{}", ctx.voice.id)).spawn(move || run(ctx)) {
+        voice.set_decoder_thread(handle.thread().clone());
+    }
 }
 
 fn run(ctx: Ctx) {
+    ctx.voice.set_decoder_thread(std::thread::current());
     let mut worker = Worker { ctx, epoch: 0 };
     if let Err(Stop::Failed(detail)) = worker.main()
         && !worker.ctx.voice.cancelled.load(Ordering::Relaxed)
@@ -155,9 +155,10 @@ impl Worker {
     }
 
     fn new_feed(&self, start: f64, format: OutFormat) -> Writer {
-        let (tx, rx) = rtrb::RingBuffer::new(format.rate as usize * format.channels * BUFFER_SECONDS);
+        let cap = format.rate as usize * format.channels * BUFFER_SECONDS;
+        let (tx, rx) = rtrb::RingBuffer::new(cap);
         let done = Arc::new(AtomicBool::new(false));
-        let feed = Feed { rx, done: done.clone(), start, epoch: self.epoch, format };
+        let feed = Feed { rx, done: done.clone(), start, epoch: self.epoch, format, low_water: cap * 3 / 4 };
         let _ = self.ctx.mixer.send(MixerCmd::Feed { id: self.ctx.voice.id, feed });
         Writer { tx, done, channels: format.channels }
     }
@@ -225,7 +226,7 @@ impl Worker {
     }
 
     fn check(&self) -> Result<Option<DecoderCmd>, Interrupt> {
-        if self.ctx.voice.cancelled.load(Ordering::Relaxed) {
+        if self.ctx.voice.cancelled.load(Ordering::Acquire) {
             return Err(Interrupt::Stop);
         }
         match self.ctx.ctl.try_recv() {
@@ -244,11 +245,24 @@ impl Worker {
             let room = writer.tx.slots() / ch * ch;
             let n = room.min(samples.len() - at);
             if n == 0 {
-                match self.ctx.ctl.recv_timeout(ROOM_POLL) {
-                    Ok(cmd) => return Err(Interrupt::Cmd(cmd)),
-                    Err(RecvTimeoutError::Timeout) if !self.ctx.voice.cancelled.load(Ordering::Relaxed) => continue,
-                    Err(_) => return Err(Interrupt::Stop),
+                // Publish `decoder_waiting` before re-checking commands and ring
+                // room (paired with the SeqCst fence after `commit_all` in the
+                // mixer) so a low-water pull can't miss our park. Do not exit on
+                // `tx.is_abandoned()`: seeks and reformats retire the old feed
+                // before the accompanying `DecoderCmd` arrives.
+                self.ctx.voice.decoder_waiting.store(true, Ordering::Relaxed);
+                std::sync::atomic::fence(Ordering::SeqCst);
+                if let Some(cmd) = self.check()? {
+                    self.ctx.voice.decoder_waiting.store(false, Ordering::Relaxed);
+                    return Err(Interrupt::Cmd(cmd));
                 }
+                if writer.tx.slots() >= ch {
+                    self.ctx.voice.decoder_waiting.store(false, Ordering::Relaxed);
+                    continue;
+                }
+                std::thread::park();
+                self.ctx.voice.decoder_waiting.store(false, Ordering::Relaxed);
+                continue;
             }
             if let Ok(chunk) = writer.tx.write_chunk_uninit(n) {
                 chunk.fill_from_iter(samples[at..at + n].iter().copied());

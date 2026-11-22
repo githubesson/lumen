@@ -129,7 +129,7 @@ impl Session {
                 self.published = false;
             }
             if let Some(s) = &self.socket {
-                let _ = s.out.send(Out::Close);
+                let _ = s.send(Out::Close);
             }
             self.socket = None;
         }
@@ -143,11 +143,12 @@ impl Session {
         let Some(url) = socket_url(base, &self.device_id) else { return };
         let (out, out_rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
-        let (events, waker, stop2) = (self.events_tx.clone(), self.waker.clone(), stop.clone());
+        let poller = polling::Poller::new().ok().map(Arc::new);
+        let (events, waker, stop2, poller2) = (self.events_tx.clone(), self.waker.clone(), stop.clone(), poller.clone());
         let _ = std::thread::Builder::new()
             .name("lumen-activity".into())
-            .spawn(move || run_socket(url, cookie, out_rx, events, waker, stop2));
-        self.socket = Some(SocketHandle { out, stop });
+            .spawn(move || run_socket(url, cookie, out_rx, events, waker, stop2, poller2));
+        self.socket = Some(SocketHandle { out, stop, poller });
     }
 
     fn next_revision(&mut self) -> u64 {
@@ -170,7 +171,7 @@ impl Session {
         if text.len() > PLAYBACK_SOCKET_MAX_BYTES {
             return false;
         }
-        socket.out.send(Out::Send(text)).is_ok()
+        socket.send(Out::Send(text))
     }
 
     fn disconnected(&mut self) {

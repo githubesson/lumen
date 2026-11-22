@@ -251,7 +251,20 @@ pub struct Theme {
     pub layout: Layout,
 }
 
+/// Hashable key covering every token in [`Theme`], for `rune::memo` versions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ThemeKey {
+    pub mode: Mode,
+    pub radius_bits: u32,
+    pub density: Density,
+    pub layout: Layout,
+}
+
 impl Theme {
+    pub fn key(&self) -> ThemeKey {
+        ThemeKey { mode: self.mode, radius_bits: self.radius.to_bits(), density: self.density, layout: self.layout }
+    }
+
     pub fn new(mode: Mode, radius_setting: u32, density: Density, layout: Layout) -> Theme {
         // `[data-radius="6"]` is 0.45rem, the only step that isn't the px value.
         let radius = match radius_setting {
