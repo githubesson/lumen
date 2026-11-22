@@ -621,7 +621,7 @@ impl Renderer {
     /// what it holds elsewhere: in each, under its scissor, `clear` resets it and every instance
     /// draws in order. A backdrop blur splits the pass to sample what it drew so far, which
     /// needs the pass owned; `change` folds damage into a single rectangle whenever any merged
-    /// rectangle reaches a blur, and multi-rect passes otherwise rely on `backdrop_blur::encode`
+    /// rectangle reaches a blur, and multi-rect passes otherwise rely on `Renderer::draw_backdrop_blur`
     /// returning early when the active scissor misses the blur.
     pub(crate) fn draw_damaged(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, rects: &[[u32; 4]], size: [u32; 2],
         clear: &mut dyn FnMut(&mut wgpu::RenderPass<'_>)) {
