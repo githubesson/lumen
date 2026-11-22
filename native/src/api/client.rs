@@ -647,7 +647,7 @@ impl Client {
     }
 
     /// Write the jar to disk when it changed since the last write (a
-    /// `Set-Cookie`, here or on a redirect on the way, or a cookie expiring),
+    /// `Set-Cookie` on the response, or a redirect that changes the final URI),
     /// or always when `force`d. Cover fetches by the dozen change nothing,
     /// so they write nothing.
     fn save_jar(&self, force: bool) {

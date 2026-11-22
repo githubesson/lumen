@@ -269,19 +269,7 @@ pub struct Mixer {
 
 impl Mixer {
     pub fn new(format: OutFormat, cmds: Receiver<MixerCmd>, levels: Arc<Levels>, outbox: Outbox) -> Mixer {
-        Mixer {
-            format,
-            cmds,
-            levels,
-            outbox,
-            playing: false,
-            current: None,
-            prepared: None,
-            outgoing: None,
-            fade: None,
-            gain: 0.0,
-            equalizer: super::equalizer::Equalizer::new(format.rate, format.channels),
-        }
+        Mixer { format, cmds, levels, outbox, playing: false, current: None, prepared: None, outgoing: None, fade: None, gain: 0.0, equalizer: super::equalizer::Equalizer::new(format.rate, format.channels) }
     }
 
     pub fn format(&self) -> OutFormat {
