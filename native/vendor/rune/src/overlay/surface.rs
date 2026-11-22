@@ -2,10 +2,154 @@
 //! dropping it with the native window's owners.
 
 use super::*;
+use crate::machine::Effects;
 
-impl<T: 'static> Overlay<T> {
+/// What the overlay holds of its native window. On macOS, and for a Wayland layer or XWayland
+/// surface, the window is made with its GPU surface; elsewhere it waits `Parked` for one, as it
+/// does on X11 once a hidden overlay gives its GPU back.
+///
+/// `announced`: `on_created` heard of the native window. Releasing the window's owners
+/// (`Overlay::release`) clears it, so the next window made is announced; a hide that destroys a
+/// Wayland surface without that release leaves it set.
+pub(super) enum Surface<L = Live, B = Backing> {
+    /// No native window: none made yet, or released or destroyed since.
+    None { announced: bool },
+    /// The native window without a GPU surface.
+    Parked { backing: B, announced: bool },
+    /// The native window and its GPU surface.
+    Live { live: L, announced: bool },
+}
+
+impl<L, B> Default for Surface<L, B> {
+    fn default() -> Self { Surface::None { announced: false } }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SurfaceEvent<L = Live, B = Backing> {
+    /// A window was made with its GPU surface, or a parked one got its surface. It holds no
+    /// window then.
+    Made(L),
+    /// A window without a GPU surface waits: just made, given its GPU back, or its surface
+    /// failed. It holds no other window then.
+    Park(B),
+    /// The live window and surface go: parked again, or a Wayland surface destroyed on hide.
+    TakeLive,
+    /// The parked window goes to be given a surface.
+    TakeParked,
+    /// `on_created` hears of the native window.
+    Announce,
+    /// The window's owners are released: the next window made is announced again.
+    Release,
+}
+
+/// What leaves the overlay's hold, for the caller to keep or drop in its order.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SurfaceEffect<L = Live, B = Backing> {
+    Live(L),
+    Parked(B),
+}
+
+impl<L, B> Surface<L, B> {
+    pub(super) fn step(&mut self, event: SurfaceEvent<L, B>) -> Effects<SurfaceEffect<L, B>> {
+        let announced = self.announced();
+        match event {
+            SurfaceEvent::Made(live) => {
+                debug_assert!(matches!(self, Surface::None { .. }), "an overlay makes a window only while it holds none");
+                *self = Surface::Live { live, announced };
+            }
+            SurfaceEvent::Park(backing) => {
+                debug_assert!(matches!(self, Surface::None { .. }), "an overlay parks a window only while it holds none");
+                *self = Surface::Parked { backing, announced };
+            }
+            SurfaceEvent::TakeLive if matches!(self, Surface::Live { .. }) => {
+                let Surface::Live { live, .. } = std::mem::replace(self, Surface::None { announced }) else { unreachable!() };
+                return Effects::one(SurfaceEffect::Live(live));
+            }
+            SurfaceEvent::TakeParked if matches!(self, Surface::Parked { .. }) => {
+                let Surface::Parked { backing, .. } = std::mem::replace(self, Surface::None { announced }) else { unreachable!() };
+                return Effects::one(SurfaceEffect::Parked(backing));
+            }
+            SurfaceEvent::TakeLive | SurfaceEvent::TakeParked => {}
+            SurfaceEvent::Announce => match self {
+                Surface::None { announced } | Surface::Parked { announced, .. } | Surface::Live { announced, .. } => *announced = true,
+            },
+            SurfaceEvent::Release => match std::mem::take(self) {
+                Surface::Live { live, .. } => return Effects::one(SurfaceEffect::Live(live)),
+                Surface::Parked { backing, .. } => return Effects::one(SurfaceEffect::Parked(backing)),
+                Surface::None { .. } => {}
+            },
+        }
+        Effects::none()
+    }
+
+    pub(super) fn live(&self) -> Option<&L> {
+        match self {
+            Surface::Live { live, .. } => Some(live),
+            _ => None,
+        }
+    }
+
+    pub(super) fn live_mut(&mut self) -> Option<&mut L> {
+        match self {
+            Surface::Live { live, .. } => Some(live),
+            _ => None,
+        }
+    }
+
+    pub(super) fn parked(&self) -> Option<&B> {
+        match self {
+            Surface::Parked { backing, .. } => Some(backing),
+            _ => None,
+        }
+    }
+
+    pub(super) fn announced(&self) -> bool {
+        match *self {
+            Surface::None { announced } | Surface::Parked { announced, .. } | Surface::Live { announced, .. } => announced,
+        }
+    }
+
+    pub(super) fn announce(&mut self) { self.step(SurfaceEvent::Announce); }
+
+    pub(super) fn made(&mut self, live: L) { self.step(SurfaceEvent::Made(live)); }
+
+    pub(super) fn park(&mut self, backing: B) { self.step(SurfaceEvent::Park(backing)); }
+
+    pub(super) fn take_live(&mut self) -> Option<L> {
+        match self.step(SurfaceEvent::TakeLive).into_iter().next() {
+            Some(SurfaceEffect::Live(live)) => Some(live),
+            _ => None,
+        }
+    }
+
+    pub(super) fn take_parked(&mut self) -> Option<B> {
+        match self.step(SurfaceEvent::TakeParked).into_iter().next() {
+            Some(SurfaceEffect::Parked(backing)) => Some(backing),
+            _ => None,
+        }
+    }
+
+    /// Everything it held: the next window made is announced again.
+    pub(super) fn release(&mut self) -> Option<SurfaceEffect<L, B>> {
+        self.step(SurfaceEvent::Release).into_iter().next()
+    }
+}
+
+impl Surface {
+    /// The native window's backing, with a surface or parked.
+    pub(super) fn backing(&self) -> Option<&Backing> {
+        match self {
+            Surface::Live { live, .. } => Some(&live.backing),
+            Surface::Parked { backing, .. } => Some(backing),
+            Surface::None { .. } => None,
+        }
+    }
+}
+
+impl OverlayCore {
     /// Creates the wgpu surface (and the GPU device, if this is the first surface).
-    pub(super) fn attach(&mut self, backing: Backing, scale: f32) -> Option<Live> {
+    #[allow(unsafe_code)]
+    pub(super) fn attach(&mut self, app: &mut dyn OverlayApp, backing: Backing, scale: f32) -> Option<Live> {
         // First, before the surface binds the view (macOS may observe it).
         let a11y = self.shared.wake.lock().unwrap().clone().and_then(|wake| match &backing {
             Backing::Window(window) => crate::a11y::Adapter::new(window, wake),
@@ -59,11 +203,17 @@ impl<T: 'static> Overlay<T> {
                 }
             }
         };
-        let features = self.compositor.as_ref().map_or(wgpu::Features::empty(), |c| c.features());
+        let features = app.compositor_features();
+        // A device that died while the overlay was hidden (a driver reset, a resume from
+        // Modern Standby) can configure nothing: the next surface gets a new one.
+        if self.gpu.as_ref().is_some_and(|gpu| gpu.is_lost()) {
+            self.gpu = None;
+            self.renderer = None;
+        }
         // The overlay's own device was already the best for its surface, translucent or not; a
         // device shared from another overlay must composite this one's translucent pixels.
         let pooled = self.gpu.clone().map(|gpu| (gpu, false)).or_else(|| self.gpu_pool.borrow().upgrade().filter(|gpu| {
-            gpu.device.features().contains(features & gpu.adapter.features())
+            !gpu.is_lost() && gpu.device.features().contains(features & gpu.adapter.features())
         }).map(|gpu| (gpu, true)));
         let reused = pooled.and_then(|(gpu, translucent)| make(&gpu.instance).filter(|s| crate::render::translucency::serves(&gpu, s, features, translucent)).map(|s| (gpu, s)));
         let mut prewarmed = None;
@@ -90,7 +240,8 @@ impl<T: 'static> Overlay<T> {
         };
         let gpu = self.gpu.clone()?;
         let (w, h) = ((self.at.size.0 * scale).round() as u32, (self.at.size.1 * scale).round() as u32);
-        let (mut config, translucent) = crate::window::surface_config(&surface, &gpu.adapter, (w, h), self.rt.srgb_blend())?;
+        let rt = app.rt_mut();
+        let (mut config, translucent) = crate::window::surface_config(&surface, &gpu.adapter, (w, h), rt.srgb_blend())?;
         match translucent {
             Some(mode) => config.alpha_mode = mode,
             // Windows composites an overlay's pixels only through DirectComposition; drawn
@@ -106,28 +257,28 @@ impl<T: 'static> Overlay<T> {
         *self.shared.surface.lock().unwrap() = Some(format!("{:?} on {} ({:?}), {:?}, {:?}", info.backend, info.name, info.device_type, config.alpha_mode, config.format));
         // A surface the driver refuses costs this overlay alone, never the app's other windows
         // (hex#979). The surface drops before its backing.
-        if let Err(error) = crate::window::configure(&surface, &gpu.device, &config) {
+        if let Err(error) = crate::window::configure(&surface, &gpu, &config) {
             self.fail(format!("could not configure its GPU surface on {:?} {}: {error}", info.backend, info.name));
             return None;
         }
         #[cfg(target_os = "macos")]
         crate::platform::macos::pin_contents_top_left(&surface);
-        let target_format = if self.rt.srgb_blend() { config.format.remove_srgb_suffix() } else { config.format };
+        let target_format = if rt.srgb_blend() { config.format.remove_srgb_suffix() } else { config.format };
         if let Some(renderer) = &mut self.renderer {
-            crate::window::rebuild_renderer(&gpu.device, renderer, target_format, &mut self.rt);
+            crate::window::rebuild_renderer_core(&gpu.device, renderer, target_format, rt);
         } else {
             let mut renderer = prewarmed.unwrap_or_else(|| Renderer::new(&gpu.device, target_format));
-            crate::window::rebuild_renderer(&gpu.device, &mut renderer, target_format, &mut self.rt);
+            crate::window::rebuild_renderer_core(&gpu.device, &mut renderer, target_format, rt);
             self.renderer = Some(renderer);
-            self.rt.text.atlas.invalidate();
-            self.rt.images.invalidate();
+            rt.text.atlas.invalidate();
+            rt.images.invalidate();
         }
         // Core Animation composites premultiplied pixels even in wgpu's PostMultiplied mode;
         // other straight-alpha surfaces get the conversion pass.
         let alpha = (config.alpha_mode == wgpu::CompositeAlphaMode::PostMultiplied && gpu.adapter.get_info().backend != wgpu::Backend::Metal)
             .then(|| crate::render::surface_alpha::AlphaSurface::new(&gpu.device, target_format, (config.width, config.height)));
-        self.rt.transparent = true;
-        self.rt.set_viewport(self.at.size, scale);
+        rt.transparent = true;
+        rt.set_viewport(self.at.size, scale);
         #[cfg(target_os = "macos")]
         let pacing = self.frame_wake.clone().and_then(|wake| {
             let Backing::Window(window) = &backing;
@@ -135,7 +286,7 @@ impl<T: 'static> Overlay<T> {
         });
         #[cfg(target_os = "macos")]
         let fn_key = match &backing {
-            Backing::Window(window) if self.rt.modifier_keys() => crate::input::fn_key::FnKey::new(window),
+            Backing::Window(window) if rt.modifier_keys() => crate::input::fn_key::FnKey::new(window),
             _ => None,
         };
         Some(Live {
@@ -147,12 +298,15 @@ impl<T: 'static> Overlay<T> {
             fn_key,
             #[cfg(target_os = "macos")]
             present: None,
+            // A new swap chain holds none of ours, and its waitable object is its own.
+            #[cfg(target_os = "windows")]
+            slot: Slot::default(),
             a11y, alpha, surface, config, backing, scale,
         })
     }
 
-    pub(super) fn rescale(&mut self, gpu: &Gpu, scale: f32) {
-        let Some(live) = self.live.as_mut() else { return };
+    pub(super) fn rescale(&mut self, app: &mut dyn OverlayApp, gpu: &Gpu, scale: f32) {
+        let Some(live) = self.surface.live_mut() else { return };
         if (live.scale - scale).abs() < f32::EPSILON {
             return;
         }
@@ -160,19 +314,23 @@ impl<T: 'static> Overlay<T> {
         live.config.width = (self.at.size.0 * scale).round().max(1.0) as u32;
         live.config.height = (self.at.size.1 * scale).round().max(1.0) as u32;
         live.settle();
-        if let Err(error) = crate::window::configure(&live.surface, &gpu.device, &live.config) {
-            self.surface_refused(format!("could not resize its GPU surface: {error}"));
+        // `configure` waits for the present queue to drain, so unregister any outstanding wait
+        // before reconfiguring the swap chain (and keep it cleared if `configure` fails).
+        #[cfg(target_os = "windows")]
+        live.slot.reset();
+        if let Err(error) = crate::window::configure(&live.surface, gpu, &live.config) {
+            self.surface_refused(app, format!("could not resize its GPU surface: {error}"));
             return;
         }
         if let Some(alpha) = &mut live.alpha {
             alpha.resize(&gpu.device, (live.config.width, live.config.height));
         }
-        self.rt.set_viewport(self.at.size, scale);
+        app.rt_mut().set_viewport(self.at.size, scale);
         self.dirty = true;
     }
 }
 
-impl<T: 'static> Drop for Overlay<T> {
+impl Drop for OverlayCore {
     fn drop(&mut self) {
         *self.shared.native.lock().unwrap() = Default::default();
         self.set_availability(Availability::Unavailable);
@@ -180,11 +338,11 @@ impl<T: 'static> Drop for Overlay<T> {
     }
 }
 
-impl<T: 'static> Overlay<T> {
+impl OverlayCore {
     /// Its surface refused a new configuration: the overlay hides and drops it, so wgpu never
     /// panics on its next drawable. The next show tries a new one.
-    pub(super) fn surface_refused(&mut self, reason: String) {
-        self.hide();
+    pub(super) fn surface_refused(&mut self, app: &mut dyn OverlayApp, reason: String) {
+        self.hide(app);
         self.release();
         self.fail(reason);
     }
@@ -193,16 +351,23 @@ impl<T: 'static> Overlay<T> {
     pub(super) fn release(&mut self) {
         // The surface must disappear before returning the adopted view or removing subclasses.
         // Keep winit's Window alive until after those native owners have unwound, too.
-        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-        let backing = self.live.take().map(|mut live| {
-            // The present worker joins, and the display link stops, before the surface goes.
-            #[cfg(target_os = "macos")]
-            { live.present.take(); live.pacing.take(); }
-            let Live { alpha, surface, backing, .. } = live;
-            drop(alpha);
-            drop(surface);
-            backing
-        }).or_else(|| self.parked.take());
+        let backing = match self.surface.release() {
+            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+            Some(SurfaceEffect::Live(mut live)) => {
+                // The present worker joins, and the display link stops, before the surface goes.
+                #[cfg(target_os = "macos")]
+                { live.present.take(); live.pacing.take(); }
+                // The wait for the swap chain's room is unregistered before the surface drops.
+                #[cfg(target_os = "windows")]
+                live.slot.reset();
+                let Live { alpha, surface, backing, .. } = live;
+                drop(alpha);
+                drop(surface);
+                Some(backing)
+            }
+            Some(SurfaceEffect::Parked(backing)) => Some(backing),
+            None => None,
+        };
         #[cfg(target_os = "macos")]
         self.panel.take();
         #[cfg(target_os = "windows")]
@@ -210,7 +375,6 @@ impl<T: 'static> Overlay<T> {
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
         self.x11.take();
         drop(backing);
-        self.announced = false;
         self.shared.native.lock().unwrap().0 = None;
     }
 }

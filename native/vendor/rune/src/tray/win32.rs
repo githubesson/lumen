@@ -1,6 +1,9 @@
 //! `Shell_NotifyIcon` on a message-only window that owns its thread and message loop. A left
 //! click activates; a right click opens a `TrackPopupMenu` menu. The icon comes back when
 //! Explorer restarts (`TaskbarCreated`).
+
+#![allow(unsafe_code)]
+
 use super::{Handler, TrayError, TrayEvent, TrayItem, TraySpec};
 use std::{ptr, sync::{Arc, Mutex, mpsc}, thread::JoinHandle};
 use windows_sys::Win32::{Foundation::*, System::LibraryLoader::GetModuleHandleW, UI::{Shell::*, WindowsAndMessaging::*}};
@@ -28,7 +31,7 @@ fn create_icon(spec: &TraySpec) -> HICON {
     unsafe { CreateIcon(ptr::null_mut(), spec.icon.width as i32, spec.icon.height as i32, 1, 32, mask.as_ptr(), bgra.as_ptr()) }
 }
 
-fn data(hwnd: HWND, flags: u32) -> NOTIFYICONDATAW {
+pub(super) fn data(hwnd: HWND, flags: u32) -> NOTIFYICONDATAW {
     // SAFETY: NOTIFYICONDATAW is plain data; zero is its documented empty value.
     let mut data: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
     data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
@@ -37,8 +40,8 @@ fn data(hwnd: HWND, flags: u32) -> NOTIFYICONDATAW {
     data.uFlags = flags;
     data
 }
-fn set_tip(data: &mut NOTIFYICONDATAW, tooltip: &str) {
-    let tip: Vec<u16> = tooltip.encode_utf16().take(data.szTip.len() - 1).collect();
+pub(super) fn set_tip(data: &mut NOTIFYICONDATAW, tooltip: &str) {
+    let tip = super::truncate_utf16(tooltip, data.szTip.len() - 1);
     data.szTip[..tip.len()].copy_from_slice(&tip);
     data.szTip[tip.len()] = 0;
 }
@@ -61,8 +64,9 @@ fn pick(hwnd: HWND, context: &Context) -> Option<String> {
         for (index, item) in menu.iter().enumerate() {
             match item {
                 TrayItem::Action { label, enabled, .. } => {
+                    let Ok(command) = u16::try_from(index + 1) else { break };
                     let flags = if *enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
-                    AppendMenuW(popup, flags, index + 1, wide(label).as_ptr());
+                    AppendMenuW(popup, flags, usize::from(command), wide(&super::win32_menu_label(label)).as_ptr());
                 }
                 TrayItem::Separator => { AppendMenuW(popup, MF_SEPARATOR, 0, ptr::null()); }
             }
@@ -71,7 +75,8 @@ fn pick(hwnd: HWND, context: &Context) -> Option<String> {
         GetCursorPos(&mut at);
         // Without the foreground, the menu doesn't close when the user clicks elsewhere.
         SetForegroundWindow(hwnd);
-        let picked = TrackPopupMenu(popup, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, at.x, at.y, 0, hwnd, ptr::null());
+        let flags = TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | crate::popup_menu::layout();
+        let picked = TrackPopupMenu(popup, flags, at.x, at.y, 0, hwnd, ptr::null());
         PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(popup);
         match menu.get((picked as usize).checked_sub(1)?) { Some(TrayItem::Action { id, .. }) => Some(id.clone()), _ => None }
@@ -97,7 +102,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, w: WPARAM, l: LPAR
                     _ => None,
                 };
                 if let Some(event) = event {
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (context.on_event)(event)));
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (context.on_event)(event))).ok();
                 }
                 0
             }
@@ -141,11 +146,11 @@ impl Native {
             let taskbar_created = unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) };
             let mut context = Box::new(Context { model: shared, on_event, icon, taskbar_created });
             match create(&mut context) {
-                Ok(hwnd) => { let _ = ready.send(Ok(hwnd as isize)); }
+                Ok(hwnd) => { ready.send(Ok(hwnd as isize)).ok(); }
                 Err(e) => {
                     // SAFETY: The icon was created above and nothing else holds it.
                     if !icon.is_null() { unsafe { DestroyIcon(icon) }; }
-                    let _ = ready.send(Err(e));
+                    ready.send(Err(e)).ok();
                     return;
                 }
             }
@@ -158,9 +163,12 @@ impl Native {
             drop(context);
         }).map_err(|e| TrayError::Backend(e.to_string()))?;
         match result.recv() {
-            Ok(Ok(window)) => Ok(Self { window, model, worker: Some(worker) }),
-            Ok(Err(e)) => { let _ = worker.join(); Err(e) }
-            Err(_) => { let _ = worker.join(); Err(TrayError::Backend("tray thread exited".into())) }
+            Ok(Ok(window)) => {
+                LIVE.lock().unwrap_or_else(|e| e.into_inner()).push(window);
+                Ok(Self { window, model, worker: Some(worker) })
+            }
+            Ok(Err(e)) => { worker.join().ok(); Err(e) }
+            Err(_) => { worker.join().ok(); Err(TrayError::Backend("tray thread exited".into())) }
         }
     }
     fn update(&self) {
@@ -171,10 +179,24 @@ impl Native {
     pub(super) fn set_tooltip(&self, tooltip: String) { self.model.lock().unwrap().tooltip = tooltip; self.update(); }
 }
 
+/// The windows of the trays alive now, so a fast exit can take their icons off the
+/// notification area (an icon a process leaves behind stays until the pointer passes over it).
+static LIVE: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+
+/// Removes every tray icon at once, from whatever thread (`NIM_DELETE` names the icon by its
+/// window and id); their threads and windows go with the process.
+pub(super) fn remove_all() {
+    for &window in LIVE.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        // SAFETY: `data` names an icon this process added; a removed one fails harmlessly.
+        unsafe { Shell_NotifyIconW(NIM_DELETE, &data(window as HWND, 0)) };
+    }
+}
+
 impl Drop for Native {
     fn drop(&mut self) {
+        LIVE.lock().unwrap_or_else(|e| e.into_inner()).retain(|&w| w != self.window);
         // SAFETY: WM_CLOSE destroys the window on its own thread, which then quits its loop.
         unsafe { PostMessageW(self.window as HWND, WM_CLOSE, 0, 0) };
-        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+        if let Some(worker) = self.worker.take() { worker.join().ok(); }
     }
 }

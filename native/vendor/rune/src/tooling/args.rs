@@ -68,6 +68,15 @@ pub struct Args {
     pub(crate) html_widths: Vec<f32>,
     /// `--html-template FILE`: the page `--html` fills at `<!-- rune:css -->` and `<!-- rune:body -->`.
     pub(crate) html_template: Option<PathBuf>,
+    /// `--realtime`: a headless run waits for the wall clock to reach each frame's time and
+    /// prints `rune-mark NAME T` as the script passes each mark, so a live server's replies and a
+    /// harness's actions keep pace with its script. It stands in for a window, so `App::on_ready`
+    /// runs after its first frame.
+    pub(crate) realtime: bool,
+    /// `--cpu-boot DIR`: also paint the `--snap` frame on the CPU (`render::cpu_boot`), on
+    /// `--cpu-boot-threads N` threads (6 by default).
+    pub(crate) cpu_boot: Option<PathBuf>,
+    pub(crate) cpu_boot_threads: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -93,7 +102,7 @@ impl Args {
     /// Parses `argv` (without the program name); unrecognised arguments become `extra_args`.
     pub fn parse_from(argv: Vec<String>) -> Args {
         let (args, extra) = Args::parse_split(argv);
-        let _ = EXTRA.set(extra);
+        EXTRA.set(extra).ok();
         args
     }
 
@@ -109,7 +118,7 @@ impl Args {
     fn parse_split(argv: Vec<String>) -> (Args, Vec<String>) {
         #[cfg(feature = "hot")]
         crate::hot::enable_from_env();
-        let mut a = Args { fps: 60.0, every: 1, cols: 10, ..Default::default() };
+        let mut a = Args { fps: 60.0, every: 1, cols: 10, cpu_boot_threads: 6, ..Default::default() };
         let mut extra = Vec::new();
         let mut i = 0;
         let val = |i: &mut usize| -> String {
@@ -174,6 +183,7 @@ impl Args {
                 }
                 "--trace" => a.trace = Some(val(&mut i).into()),
                 "--native" => a.native = true,
+                "--realtime" => a.realtime = true,
                 "--trace-all" => a.trace_all = true,
                 "--strip" => a.strip = Some(val(&mut i).into()),
                 "--crop" => {
@@ -191,6 +201,8 @@ impl Args {
                 "--window" => a.window = Some(val(&mut i)),
                 "--list-windows" => a.list_windows = true,
                 "--chrome" => a.chrome_overlay = true,
+                "--cpu-boot" => a.cpu_boot = Some(val(&mut i).into()),
+                "--cpu-boot-threads" => a.cpu_boot_threads = (num(&val(&mut i)) as usize).max(1),
                 "-h" | "--help" => {
                     eprintln!("{HELP}");
                     std::process::exit(0);
@@ -202,6 +214,7 @@ impl Args {
         if a.variant.is_some() && a.playground.is_none() { die("--variant needs --playground"); }
         if a.crop_key.is_some() && a.snap.is_none() { die("--crop KEY needs --snap"); }
         if a.whole_window && (a.playground.is_none() || a.snap.is_none()) { die("--whole-window needs --playground and --snap"); }
+        if a.cpu_boot.is_some() && a.snap.is_none() { die("--cpu-boot needs --snap"); }
         (a, extra)
     }
 
@@ -279,10 +292,16 @@ const HELP: &str = "usage: <app> [window]
                         sampled (tk) and why it was animating (quality.why)
   --trace-all           trace unkeyed elements too, by path
   --native             trace native submissions; --frames N stops after N frames
+  --realtime            headless: hold each frame until the wall clock reaches its time, and
+                        print \"rune-mark NAME T\" as the script passes each mark,
+                        and run on_ready after the first frame, as a window does
   --first-pixels        report when the first GPU-complete offscreen pixels are readable
   --window KEY         select a window for headless tools (run_windows, App::window)
   --list-windows       list window keys using a deterministic virtual display
   --chrome              draw where macOS puts the traffic lights; list elements overlapping them
+  --cpu-boot DIR        also paint the --snap frame on the CPU, as a window's first frame before
+                        its GPU: DIR gets draw.bin, cpu.png and gpu.png, and the run prints
+                        rune-cpu-boot {json} (stage times, drift); --cpu-boot-threads N (6)
   other arguments are passed to the app (rune::tooling::extra_args)";
 
 pub(crate) fn die(msg: &str) -> ! {

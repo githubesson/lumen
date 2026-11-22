@@ -24,12 +24,14 @@
 //! (`WM_GETDPISCALEDSIZE`, which Windows' `WM_DPICHANGED` rect then follows) and
 //! `request_inner_size` are corrected here to the frame's borders.
 
+#![allow(unsafe_code)]
+
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, InvalidateRect, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, ScreenToClient};
+use windows_sys::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, InvalidateRect, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, ScreenToClient};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent};
@@ -118,17 +120,71 @@ pub(crate) fn has_window_menu(window: &winit::window::Window) -> bool {
     super::hwnd(window).is_some_and(|hwnd| unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32 & WS_SYSMENU != 0)
 }
 
-/// Opens the window menu and carries out what the user picks: at the pointer, as a right-click
-/// on a native title bar does, or from the keyboard, as Alt+Space does. The keyboard's is
-/// posted, so its modal loop runs from the message loop rather than inside a key's message.
-pub(crate) fn window_menu(window: &winit::window::Window, menu: WindowMenu) {
+/// Opens the window menu and carries out what the user picks: at `at` (the click), as a right-click
+/// on a native title bar does, or from the keyboard, as Alt+Space does. Both are posted, so the
+/// menu's modal loop runs from the message loop rather than inside the event loop's handler,
+/// where neither a quit (`crate::quit`) nor the windows' timers could run until it closed.
+pub(crate) fn window_menu(window: &winit::window::Window, menu: WindowMenu, at: Option<(i32, i32)>) {
     let Some(hwnd) = super::hwnd(window) else { return };
     if menu == WindowMenu::Keyboard {
         // SAFETY: posts to a live window this thread owns.
         unsafe { PostMessageW(hwnd, WM_SYSCOMMAND, SC_KEYMENU as WPARAM, LPARAM::from(b' ')); }
         return;
     }
-    let Some((x, y)) = super::pointer_position() else { return };
+    // Where the click was, in desktop pixels; the pointer may have moved since.
+    let Some((x, y)) = at.or_else(super::pointer_position) else { return };
+    let id = NEXT_MENU.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Screen points fit 16 bits each, as in every mouse message's.
+    let point = ((y as u16 as u32) << 16 | x as u16 as u32) as usize;
+    // SAFETY: Win32 calls on a live window this thread owns; the subclass keeps no pointer.
+    unsafe {
+        if SetWindowSubclass(hwnd, Some(menu_procedure), id, point) == 0 { return; }
+        if PostMessageW(hwnd, menu_message(), id, 0) == 0 {
+            RemoveWindowSubclass(hwnd, Some(menu_procedure), id);
+        }
+    }
+}
+
+/// The top right corner of `hwnd`'s client area, in desktop pixels.
+fn client_top_right(hwnd: HWND) -> Option<(i32, i32)> {
+    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    // SAFETY: plain queries on a live window this thread owns.
+    unsafe {
+        if GetClientRect(hwnd, &mut r) == 0 { return None; }
+        let mut p = POINT { x: r.right, y: r.top };
+        (ClientToScreen(hwnd, &mut p) != 0).then_some((p.x, p.y))
+    }
+}
+
+/// Each posted window menu's subclass id, named in its message.
+static NEXT_MENU: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
+fn menu_message() -> u32 {
+    static MESSAGE: OnceLock<u32> = OnceLock::new();
+    // SAFETY: the name is NUL-terminated.
+    *MESSAGE.get_or_init(|| unsafe { RegisterWindowMessageW("Rune::WindowMenu\0".encode_utf16().collect::<Vec<u16>>().as_ptr()) })
+}
+
+unsafe extern "system" fn menu_procedure(hwnd: HWND, message: u32, w: WPARAM, l: LPARAM, id: usize, point: usize) -> LRESULT {
+    if (message == menu_message() && w == id) || message == WM_NCDESTROY {
+        // SAFETY: removes this subclass, on the window it was set on.
+        unsafe { RemoveWindowSubclass(hwnd, Some(menu_procedure), id) };
+        if message != WM_NCDESTROY {
+            let (x, y) = ((point & 0xffff) as u16 as i16 as i32, (point >> 16 & 0xffff) as u16 as i16 as i32);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| track_window_menu(hwnd, x, y))).ok();
+            return 0;
+        }
+    }
+    // SAFETY: passes every other message on.
+    unsafe { DefSubclassProc(hwnd, message, w, l) }
+}
+
+/// Shows the window menu at screen point (`x`, `y`) until it closes, and carries out the pick.
+fn track_window_menu(hwnd: HWND, x: i32, y: i32) {
+    let Some(_modal) = crate::popup_menu::enter_menu_loop() else { return };
+    // SAFETY: `IsWindow` safely validates whether `hwnd` still refers to a live window.
+    if unsafe { IsWindow(hwnd) == 0 } { return; }
+    let _turns = crate::popup_menu::turns(hwnd);
     // SAFETY: Win32 calls on a live window this thread owns and its own system menu.
     unsafe {
         let menu = GetSystemMenu(hwnd, 0);
@@ -143,8 +199,8 @@ pub(crate) fn window_menu(window: &winit::window::Window, menu: WindowMenu) {
         enable(SC_MAXIMIZE, !zoomed && style & WS_MAXIMIZEBOX != 0);
         enable(SC_CLOSE, true);
         SetMenuDefaultItem(menu, SC_CLOSE, 0);
-        let picked = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, 0, hwnd, std::ptr::null());
-        if picked != 0 { PostMessageW(hwnd, WM_SYSCOMMAND, picked as WPARAM, 0); }
+        let picked = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | crate::popup_menu::layout(), x, y, 0, hwnd, std::ptr::null());
+        if picked != 0 && IsWindow(hwnd) != 0 { PostMessageW(hwnd, WM_SYSCOMMAND, picked as WPARAM, 0); }
     }
 }
 
@@ -159,17 +215,26 @@ pub(super) fn installed(hwnd: HWND) -> bool {
 }
 
 unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, data: usize) -> LRESULT {
-    // SAFETY: `data` is the live `State` until WM_NCDESTROY.
-    let state = unsafe { &*(data as *const State) };
+    let ptr = data as *const State;
     if message == WM_NCDESTROY {
         FRAMED.with(|f| f.borrow_mut().retain(|&h| h != hwnd as usize));
-        // SAFETY: removes this subclass, then releases the reference `install` gave it.
+        // SAFETY: removes this subclass; if it was still installed, reclaims the ref `install` gave it.
         unsafe {
-            RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS);
-            drop(Rc::from_raw(data as *const State));
+            if RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS) != 0 {
+                drop(Rc::from_raw(ptr));
+            }
             return DefSubclassProc(hwnd, message, wparam, lparam);
         }
     }
+    // Hold our own strong reference for the duration of this callback so a re-entrant
+    // `WM_NCDESTROY` during `DefSubclassProc` or a modal menu loop cannot free `State` while
+    // this stack frame still uses it.
+    // SAFETY: `ptr` is the live `Rc<State>` owned by the subclass until `WM_NCDESTROY`.
+    let state: Rc<State> = unsafe {
+        Rc::increment_strong_count(ptr);
+        Rc::from_raw(ptr)
+    };
+    let state: &State = &state;
     if !framed(hwnd) {
         // Full screen: no frame to adjust.
         // SAFETY: forwards to the next window procedure.
@@ -240,6 +305,13 @@ unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lpa
             WM_CAPTURECHANGED | WM_CANCELMODE if matches!(state.caption.get(), CaptionState::Pressed { .. }) => {
                 state.set(hwnd, CaptionState::Idle);
                 if message == WM_CANCELMODE { ReleaseCapture(); }
+            }
+            // Alt+Space right to left: the window menu at the window's top right corner, laid
+            // out right to left, where a right-to-left window's opens; Windows' own keyboard
+            // menu would open left to right at the top left.
+            WM_SYSCOMMAND if wparam & 0xFFF0 == SC_KEYMENU as WPARAM && lparam == LPARAM::from(b' ') && crate::labels::rtl() => {
+                if let Some((x, y)) = client_top_right(hwnd) { track_window_menu(hwnd, x, y); }
+                return 0;
             }
             WM_NCRBUTTONDOWN | WM_NCRBUTTONUP | WM_NCRBUTTONDBLCLK if caption_button(wparam).is_some() => return 0,
             // The default would repaint a title bar this window doesn't have.
@@ -317,6 +389,7 @@ impl State {
             minimizable: style & WS_MINIMIZEBOX != 0,
             maximizable: style & WS_MAXIMIZEBOX != 0,
             hidden: !framed(hwnd),
+            mirrored: crate::labels::rtl(),
         }
     }
 }
@@ -408,6 +481,15 @@ fn windows_10() -> bool {
             get(&mut v) == 0 && v.major == 10 && v.build < 22000
         }
     })
+}
+
+/// What the window's frame adds around its client area while it is restored, at `dpi`, each
+/// edge as a positive width: a custom frame keeps the standard frame's sides and bottom, and at
+/// the top only Windows 10's non-client row.
+pub(super) fn restored_borders(hwnd: HWND, dpi: u32) -> RECT {
+    let b = borders(hwnd, dpi);
+    if !installed(hwnd) || !framed(hwnd) { return b; }
+    RECT { top: i32::from(windows_10()), ..b }
 }
 
 /// What a standard frame adds around the client area at `dpi`, each edge as a positive width.

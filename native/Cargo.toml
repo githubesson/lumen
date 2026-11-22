@@ -12,9 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 # Rune is pre-release: pin a rev of `dev` (never rewritten).
-# Disable `embedded-fonts` (Lumen supplies Geist) and `ogg-audio` (Lumen decodes audio itself).
-rune = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71", default-features = false, features = ["accessibility", "dbus", "metal-backend", "svg", "native-file-dialog"] }
-rune-motion = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71" }
+# Disable `embedded-fonts` (Lumen supplies Geist), `ogg-audio` (Lumen decodes audio itself),
+# `segmenter-dictionaries` (Windows uses `icu.dll`), and `keys-overlay`; keep `tooling` on
+# so release builds retain `--snap`/`--tree`/`--script` for CI and `tools/sweep.mjs`.
+rune = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa", default-features = false, features = ["accessibility", "dbus", "metal-backend", "svg", "native-file-dialog", "tooling"] }
+rune-motion = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["rustls", "json", "cookies", "gzip"] }
@@ -62,7 +64,7 @@ cpal = { version = "0.18", optional = true }
 windows = { version = "0.62", features = ["Foundation", "Media", "Media_Playback", "Storage_Streams"] }
 # Rune's version: the frameless window's hit-testing, mini player bounds,
 # single instance and Discord's named pipe (`src/desktop/win32.rs`).
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
@@ -86,7 +88,7 @@ embed-resource = "3"
 # booting the app and registering Geist) while omitting the 1.22 MB TTFs from
 # normal and release builds.
 [dev-dependencies]
-rune = { git = "https://github.com/anomalyco/rune", rev = "59f0326b8a12f360736e5ca29a09fad29ad73d71", default-features = false, features = ["embedded-fonts"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa", default-features = false, features = ["embedded-fonts"] }
 
 [profile.dev.package."*"]
 debug = false
@@ -104,7 +106,17 @@ strip = true
 incremental = false
 
 # Rune comes from `vendor/rune`: upstream at the rev above plus our patches
-# (`vendor/README.md`). Its sibling crates (`rune-motion`, …) still come from git
-# at the same rev, so ours and vendored Rune's unify.
+# (`vendor/README.md`). Its sibling crates (`rune-core`, `rune-motion`, …) still come from
+# git at the same rev, so ours and vendored Rune's unify.
 [patch."https://github.com/anomalyco/rune"]
 rune = { path = "vendor/rune" }
+
+# Upstream Rune patches these crates-io dependencies in its own workspace Cargo.toml
+# (`vendor/*.patch`); Cargo ignores `[patch]` in dependencies, so we carry them here.
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "4c72ab576426495e3bfa0696a5b745dd3abba0aa" }

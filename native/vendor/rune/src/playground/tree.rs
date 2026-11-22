@@ -16,7 +16,7 @@ impl<S: 'static> Playground<S> {
     }
 }
 
-impl<S: 'static> Live<S> {
+impl LiveCore {
     /// Story `i`'s groups, outermost first, each by its path prefix: `"Sidebar"`, then
     /// `"Sidebar/Filter buttons"`.
     pub(super) fn groups_of(&self, i: usize) -> Vec<&'static str> {
@@ -144,7 +144,7 @@ impl<S: 'static> Live<S> {
 
     /// After folds change: a selection whose row a fold hid moves to the header that hides it.
     pub(super) fn settle(&mut self) {
-        if !self.open { return; }
+        if !self.is_open() { return; }
         let hider = match self.header {
             Some(h) => {
                 let mut around: Vec<&'static str> = std::iter::successors(Self::parent(h), |g| Self::parent(g)).collect();

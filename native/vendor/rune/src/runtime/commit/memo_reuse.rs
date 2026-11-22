@@ -5,53 +5,56 @@ use super::*;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) struct InheritedFlatten {
-    pub(super) motion: Spring,
-    pub(super) in_row: RowLayout,
-    pub(super) parent_is_stack: bool,
-    pub(super) instant_changes: bool,
-    pub(super) inert: bool,
-    pub(super) trace_namespace: Option<(&'static str, &'static str)>,
-    pub(super) scale_bits: u32,
+    pub(in crate::runtime) motion: Spring,
+    pub(in crate::runtime) in_row: RowLayout,
+    pub(in crate::runtime) parent_is_stack: bool,
+    pub(in crate::runtime) instant_changes: bool,
+    pub(in crate::runtime) inert: bool,
+    /// The parent's flow (`El::dir`).
+    pub(in crate::runtime) flow: crate::el::Flow,
+    pub(in crate::runtime) directed: bool,
+    pub(in crate::runtime) trace_namespace: Option<(&'static str, &'static str)>,
+    pub(in crate::runtime) scale_bits: u32,
     /// The window's foreground (`Cx::foreground`), which a memo's uncoloured text took.
-    pub(super) foreground: Option<Color>,
+    pub(in crate::runtime) foreground: Option<Color>,
 }
 
 pub(crate) struct FlattenedMemo {
-    pub(super) start: usize,
-    pub(super) len: usize,
-    pub(super) root_id: NodeId,
-    pub(super) last_id: NodeId,
-    pub(super) inherited: InheritedFlatten,
-    pub(super) hover_within: Option<Rc<(Anim, Anim)>>,
+    pub(in crate::runtime) start: usize,
+    pub(in crate::runtime) len: usize,
+    pub(in crate::runtime) root_id: NodeId,
+    pub(in crate::runtime) last_id: NodeId,
+    pub(in crate::runtime) inherited: InheritedFlatten,
+    pub(in crate::runtime) hover_within: Option<Rc<(Anim, Anim)>>,
 }
 
 pub(crate) struct PendingFlat {
-    pub(super) built_id: u64,
-    pub(super) start: usize,
-    pub(super) len: usize,
-    pub(super) inherited: InheritedFlatten,
-    pub(super) hover_within: Option<Rc<(Anim, Anim)>>,
+    pub(in crate::runtime) built_id: u64,
+    pub(in crate::runtime) start: usize,
+    pub(in crate::runtime) len: usize,
+    pub(in crate::runtime) inherited: InheritedFlatten,
+    pub(in crate::runtime) hover_within: Option<Rc<(Anim, Anim)>>,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct ReusedSpan {
-    pub(super) new_start: usize,
-    pub(super) old_start: usize,
-    pub(super) len: usize,
-    pub(super) same_path: bool,
-    pub(super) moved: bool,
+    pub(in crate::runtime) new_start: usize,
+    pub(in crate::runtime) old_start: usize,
+    pub(in crate::runtime) len: usize,
+    pub(in crate::runtime) same_path: bool,
+    pub(in crate::runtime) moved: bool,
 }
 
 /// A contiguous sub-range of `nodes` (`new_start .. new_start + len`, from `old_start`) whose
 /// per-node `apply` diff is a guaranteed no-op.
 #[derive(Clone, Copy)]
 pub(crate) struct CleanApplySpan {
-    pub(super) new_start: usize,
-    pub(super) old_start: usize,
-    pub(super) len: usize,
+    pub(in crate::runtime) new_start: usize,
+    pub(in crate::runtime) old_start: usize,
+    pub(in crate::runtime) len: usize,
 }
 
-pub(super) fn is_in_clean_spans(spans: &[CleanApplySpan], i: usize) -> bool {
+pub(in crate::runtime) fn is_in_clean_spans(spans: &[CleanApplySpan], i: usize) -> bool {
     let idx = spans.partition_point(|s| s.new_start <= i);
     idx > 0 && {
         let s = &spans[idx - 1];
@@ -59,89 +62,57 @@ pub(super) fn is_in_clean_spans(spans: &[CleanApplySpan], i: usize) -> bool {
     }
 }
 
-impl<S: 'static> Runtime<S> {
-    fn node_clean_for_apply(&self, new_n: &Node, old_n: &Node, any_animating: bool) -> bool {
+impl CommitState {
+    fn node_clean_for_apply(tree: &types::TreeState, scene: &Scene, motion: &tracks::MotionState, new_n: &Node, old_n: &Node, any_animating: bool) -> bool {
         new_n.id == old_n.id
             && new_n.local == old_n.local
-            && (!any_animating || !self.scene.store().is_node_animating(new_n.id))
-            && self.scene.phase(new_n.id) == Some(PresencePhase::Present)
+            && (!any_animating || !scene.store().is_node_animating(new_n.id))
+            && scene.phase(new_n.id) == Some(PresencePhase::Present)
             && !old_n.group_fade
             && new_n.cold.get().is_none_or(|c| c.matched.is_none() && c.looping.is_none())
-            && (self.flying.is_empty() || !self.flying.iter().any(|f| f.0 == new_n.id))
-            && (self.aspect_snap.is_empty() || !self.aspect_snap.contains(&new_n.id))
-            && new_n.text.as_ref().is_none_or(|t| {
-                t.reveal < 0.0 || self.reveals.get(&new_n.id).is_some_and(|r| r.words.is_empty() && r.len == t.content.len())
-            })
+            && (motion.flying.is_empty() || !motion.flying.iter().any(|f| f.0 == new_n.id))
+            && (tree.aspect_snap.is_empty() || !tree.aspect_snap.contains(&new_n.id))
+            && new_n.text.as_ref().is_none_or(|t| t.reveal < 0.0 || motion.reveal_caught_up(new_n.id, t.content.len()))
     }
 
     /// Fills `out` with the reused memo slices that can skip `apply`'s per-node diff loop.
-    pub(super) fn clean_apply_spans(
-        &self,
-        nodes: &[Node],
-        reused: &[ReusedSpan],
-        can_skip: bool,
-        out: &mut Vec<CleanApplySpan>,
-    ) {
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::runtime) fn clean_apply_spans(&self, tree: &types::TreeState, scene: &Scene, motion: &tracks::MotionState, nodes: &[Node], reused: &[ReusedSpan], can_skip: bool, reorder_jump: impl Fn(usize) -> f32, out: &mut Vec<CleanApplySpan>) {
         out.clear();
-        if !can_skip || reused.is_empty() {
-            return;
-        }
+        if !can_skip || reused.is_empty() { return; }
         out.reserve(reused.len());
-        let any_animating = self.scene.store().active_len() > 0;
+        let any_animating = scene.store().active_len() > 0;
         for span in reused {
-            if !span.same_path || span.len == 0 || span.old_start + span.len > self.nodes.len() || span.new_start + span.len > nodes.len() {
-                continue;
-            }
-            let r_new = &nodes[span.new_start];
-            let r_old = &self.nodes[span.old_start];
-            if !self.scene.contains(r_new.id) || self.is_exiting(r_new.id) {
-                continue;
-            }
+            if !span.same_path || span.len == 0 || span.old_start + span.len > tree.nodes.len() || span.new_start + span.len > nodes.len() { continue; }
+            let (r_new, r_old) = (&nodes[span.new_start], &tree.nodes[span.old_start]);
+            if !scene.contains(r_new.id) || matches!(scene.phase(r_new.id), Some(PresencePhase::Exiting { .. })) { continue; }
             let mut scene_rect = r_new.local;
-            if !self.virtuals.is_empty()
-                && let Some(v) = r_new.parent.and_then(|p| self.virtuals.get(&nodes[p].path))
-            {
-                scene_rect.y -= v.before;
-            }
+            if !self.virtuals.is_empty() && let Some(v) = r_new.parent.and_then(|p| self.virtuals.get(&nodes[p].path)) { scene_rect.y -= v.before; }
             let parent_top_clean = r_new.in_row != RowLayout::Snaps
                 || r_new.parent.is_none_or(|p| {
                     nodes.get(p + 1).is_none_or(|first_sib| {
                         let mut sr = first_sib.local;
-                        if !self.virtuals.is_empty()
-                            && let Some(v) = self.virtuals.get(&nodes[p].path)
-                        {
-                            sr.y -= v.before;
-                        }
-                        self.scene.get(first_sib.id, prop::FRAME) == Some(sr)
+                        if !self.virtuals.is_empty() && let Some(v) = self.virtuals.get(&nodes[p].path) { sr.y -= v.before; }
+                        scene.get(first_sib.id, prop::FRAME) == Some(sr)
                     })
                 });
-            let root_clean = self.node_clean_for_apply(r_new, r_old, any_animating)
+            let root_clean = Self::node_clean_for_apply(tree, scene, motion, r_new, r_old, any_animating)
                 && parent_top_clean
-                && r_new.parent.map(|p| nodes[p].id) == r_old.parent.map(|p| self.nodes[p].id)
+                && r_new.parent.map(|p| nodes[p].id) == r_old.parent.map(|p| tree.nodes[p].id)
                 && (self.virtuals.is_empty() || !self.virtuals.contains_key(&r_new.path))
-                && self.scene.is_resting_at(r_new.id, scene_rect)
-                && (self.stacks.is_empty() || self.reorder_jump(nodes, span.new_start) == 0.0)
+                && scene.is_resting_at(r_new.id, scene_rect)
+                && (motion.stacks.is_empty() || reorder_jump(span.new_start) == 0.0)
                 && (self.virtuals.is_empty()
                     || !r_new.parent.and_then(|p| self.virtuals.get(&nodes[p].path)).is_some_and(crate::el::virtual_list::VirtualList::replaced_view));
-
-            if !root_clean && !self.flying.is_empty() {
-                continue;
-            }
+            if !root_clean && !motion.flying.is_empty() { continue; }
             let offset = if root_clean { 0 } else { 1 };
-            if offset >= span.len {
-                continue;
-            }
+            if offset >= span.len { continue; }
             let interior_clean = (offset..span.len).all(|k| {
-                self.node_clean_for_apply(&nodes[span.new_start + k], &self.nodes[span.old_start + k], any_animating)
+                Self::node_clean_for_apply(tree, scene, motion, &nodes[span.new_start + k], &tree.nodes[span.old_start + k], any_animating)
             });
             if interior_clean {
-                let new_start = span.new_start + offset;
-                let old_start = span.old_start + offset;
-                let len = span.len - offset;
-                if let Some(last) = out.last_mut()
-                    && last.new_start + last.len == new_start
-                    && last.old_start + last.len == old_start
-                {
+                let (new_start, old_start, len) = (span.new_start + offset, span.old_start + offset, span.len - offset);
+                if let Some(last) = out.last_mut() && last.new_start + last.len == new_start && last.old_start + last.len == old_start {
                     last.len += len;
                 } else {
                     out.push(CleanApplySpan { new_start, old_start, len });
@@ -151,20 +122,20 @@ impl<S: 'static> Runtime<S> {
     }
 }
 
-pub(super) struct MemoFlattenCtx<'a> {
-    pub(super) old_nodes: &'a mut [Node],
-    pub(super) old_present_len: usize,
-    pub(super) old_node_index: &'a HashMap<NodeId, usize>,
-    pub(super) old_cursor: usize,
-    pub(super) committing: bool,
-    pub(super) committed: &'a HashMap<u64, FlattenedMemo>,
-    pub(super) pending: Vec<PendingFlat>,
-    pub(super) reused: Vec<ReusedSpan>,
-    pub(super) taken_paths: Vec<(u32, u32)>,
-    pub(super) path_ids: &'a mut HashMap<String, NodeId>,
-    pub(super) next_id: &'a mut u64,
+pub(in crate::runtime) struct MemoFlattenCtx<'a> {
+    pub(in crate::runtime) old_nodes: &'a mut [Node],
+    pub(in crate::runtime) old_present_len: usize,
+    pub(in crate::runtime) old_node_index: &'a NodeIndex,
+    pub(in crate::runtime) old_cursor: usize,
+    pub(in crate::runtime) committing: bool,
+    pub(in crate::runtime) committed: &'a HashMap<u64, FlattenedMemo>,
+    pub(in crate::runtime) pending: Vec<PendingFlat>,
+    pub(in crate::runtime) reused: Vec<ReusedSpan>,
+    pub(in crate::runtime) taken_paths: Vec<(u32, u32)>,
+    pub(in crate::runtime) path_ids: &'a mut HashMap<String, NodeId>,
+    pub(in crate::runtime) next_id: &'a mut u64,
     /// What text, icons and text fields without their own colour draw in (`Cx::foreground`).
-    pub(super) foreground: Option<Color>,
+    pub(in crate::runtime) foreground: Option<Color>,
 }
 
 fn opt_rc_eq<T: ?Sized>(a: &Option<Rc<T>>, b: &Option<Rc<T>>) -> bool {
@@ -185,17 +156,18 @@ fn opt_box_eq<T: PartialEq>(a: &Option<Box<T>>, b: &Option<Box<T>>) -> bool {
 
 fn same_visual_cold(a: &crate::el::VisualCold, b: &crate::el::VisualCold) -> bool {
     let crate::el::VisualCold {
-        surface, surface_place, border_bottom, border_sides, border_dash, border_dash_phase, shadows, blur_motion,
-        clip, clip_radius, clip_corners, cutout, icon, icon_inked, gradient, radial, outline, shape,
-        pixels, pixels_fit, effect, backdrop_blur, hover_motion, hover_within,
+        surface, surface_place, border_bottom, border_sides, border_layout, border_dash, border_dash_phase, shadows, blur_motion,
+        clip, clip_radius, clip_corners, cutout, icon, icon_inked, icon_one_color, gradient, radial, outline, shape,
+        grid, pixels, pixels_fit, effect, backdrop_blur, hover_motion, hover_within,
         group_opacity, group_color, hover_alone, hover_share, icon_turn, cache_key, offset_motion, scale_motion,
         origin, rotate_motion, child_exit, enter_delay, motion_intent, instant_motion, clip_to_content, flight_crop,
+        hold_landing, row_face, press_color, paint_contain, motion_snaps, hairline, offset, paint_alpha, layer_opacity, blur, rotate, mark, mirror_rtl, paint_order,
     } = b;
     (match (&a.surface, surface) {
         (None, None) => true,
         (Some((sa, fa)), Some((sb, fb))) => sa.key() == sb.key() && fa == fb,
         _ => false,
-    }) && a.surface_place == *surface_place && a.border_bottom == *border_bottom && a.border_sides == *border_sides && a.border_dash == *border_dash
+    }) && a.surface_place == *surface_place && a.border_bottom == *border_bottom && a.border_sides == *border_sides && a.border_layout == *border_layout && a.border_dash == *border_dash
         && a.border_dash_phase == *border_dash_phase && a.shadows == *shadows
         && opt_box_eq(&a.blur_motion, blur_motion) && a.clip == *clip
         && a.clip_radius == *clip_radius && a.clip_corners == *clip_corners && a.cutout == *cutout
@@ -204,9 +176,15 @@ fn same_visual_cold(a: &crate::el::VisualCold, b: &crate::el::VisualCold) -> boo
             (Some((ia, ca)), Some((ib, cb))) => std::ptr::eq(*ia, *ib) && ca == cb,
             _ => false,
         }
-        && a.icon_inked == *icon_inked
+        && a.icon_inked == *icon_inked && a.icon_one_color == *icon_one_color
         && opt_box_eq(&a.gradient, gradient) && opt_box_eq(&a.radial, radial)
         && a.outline == *outline && opt_rc_eq(&a.shape, shape)
+        // A grid built again from the same rows is the same grid.
+        && match (&a.grid, grid) {
+            (None, None) => true,
+            (Some(x), Some(y)) => Rc::ptr_eq(x, y) || (x.cols == y.cols && x.cell == y.cell && x.caret == y.caret && x.rows.len() == y.rows.len() && x.rows.iter().zip(&y.rows).all(|(p, q)| Rc::ptr_eq(p, q))),
+            _ => false,
+        }
         && match (&a.pixels, pixels) {
             (None, None) => true,
             (Some(pa), Some(pb)) => Arc::ptr_eq(&pa.source, &pb.source),
@@ -222,22 +200,66 @@ fn same_visual_cold(a: &crate::el::VisualCold, b: &crate::el::VisualCold) -> boo
         && a.motion_intent == *motion_intent && a.instant_motion == *instant_motion
         && a.clip_to_content == *clip_to_content
         && a.flight_crop == *flight_crop
+        && a.row_face == *row_face && a.hold_landing == *hold_landing && a.press_color == *press_color && a.paint_contain == *paint_contain && a.motion_snaps == *motion_snaps && a.hairline == *hairline
+        && a.offset == *offset && a.paint_alpha == *paint_alpha && a.layer_opacity == *layer_opacity
+        && a.blur == *blur && a.rotate == *rotate && a.mark == *mark && a.mirror_rtl == *mirror_rtl && a.paint_order == *paint_order
 }
 
-pub(super) fn same_visual(a: &Visual, b: &Visual) -> bool {
-    let Visual {
-        fill, border, hover, press, radius, offset, border_width, opacity, paint_alpha, layer_opacity, blur,
-        rotate, mark, hit, continuous_corners, blend, hover_group, cache, raise,
-        no_pixel_snap, ride_trailing, cold,
-    } = b;
-    a.fill == *fill && a.border == *border && a.hover == *hover && a.press == *press
-        && a.radius == *radius && a.offset == *offset && a.border_width == *border_width
-        && a.opacity == *opacity && a.paint_alpha == *paint_alpha && a.layer_opacity == *layer_opacity && a.blur == *blur
-        && a.rotate == *rotate && a.mark == *mark && a.hit == *hit
-        && a.continuous_corners == *continuous_corners && a.blend == *blend
-        && a.hover_group == *hover_group && a.cache == *cache && a.raise == *raise
-        && a.no_pixel_snap == *no_pixel_snap && a.ride_trailing == *ride_trailing
+pub(in crate::runtime) fn same_visual(a: &Visual, b: &Visual) -> bool {
+    let Visual { fill, radius, opacity, box_paint, cold } = b;
+    a.fill == *fill && a.radius.to_bits() == radius.to_bits() && a.opacity == *opacity
+        && (crate::cold::Cold::ptr_eq(&a.box_paint, box_paint) || *a.box_paint == **box_paint)
         && (crate::cold::Cold::ptr_eq(&a.cold, cold) || same_visual_cold(&a.cold, cold))
+}
+
+fn same_el_cold(a: &crate::el::ElCold, b: &crate::el::ElCold) -> bool {
+    let crate::el::ElCold {
+        focus, looping, trace_name, trace_namespace, role, label, live, above, motion, opacity_motion, lead,
+        animated_changes, option_as_alt, transition, matched, scroll, scroll_axes, sticky, scroll_edges, growth, virtual_estimate, virtual_rows,
+        virtual_rows_version, glide, input, time_scale, help, help_cut, help_side, help_open, material, aspect_fit, list_disc, a11y, wheel_scrolls,
+        expanded_memo: _,
+        #[cfg(debug_assertions)]
+        scroll_source: _,
+        #[cfg(debug_assertions)]
+        virtual_source: _,
+    } = b;
+    crate::cold::Cold::ptr_eq(&a.focus, focus)
+        && opt_box_eq(&a.looping, looping)
+        && a.trace_name == *trace_name
+        && a.trace_namespace == *trace_namespace
+        && a.role == *role
+        && a.label == *label
+        && a.live.is_empty()
+        && live.is_empty()
+        && a.above == *above
+        && a.motion == *motion
+        && opt_box_eq(&a.opacity_motion, opacity_motion)
+        && a.lead == *lead
+        && a.animated_changes == *animated_changes
+        && a.option_as_alt == *option_as_alt
+        && opt_box_eq(&a.transition, transition)
+        && a.matched == *matched
+        && a.scroll == *scroll
+        && a.scroll_axes == *scroll_axes
+        && opt_box_eq(&a.sticky, sticky)
+        && a.scroll_edges == *scroll_edges
+        && opt_box_eq(&a.growth, growth)
+        && a.virtual_estimate == *virtual_estimate
+        && opt_rc_eq(&a.virtual_rows, virtual_rows)
+        && a.virtual_rows_version == *virtual_rows_version
+        && a.glide == *glide
+        && a.input.is_none()
+        && input.is_none()
+        && a.time_scale == *time_scale
+        && a.help == *help
+        && a.help_cut == *help_cut
+        && a.help_side == *help_side
+        && a.help_open == *help_open
+        && a.list_disc == *list_disc
+        && a.material == *material
+        && a.aspect_fit == *aspect_fit
+        && a.a11y == *a11y
+        && a.wheel_scrolls == *wheel_scrolls
 }
 
 fn same_gestures(
@@ -285,10 +307,13 @@ fn same_handlers(
     let crate::el::Handlers {
         on_paste,
         on_window_focus,
+        on_spellcheck,
+        on_spellcheck_languages,
         modal,
         on_press,
         on_double_press,
         on_secondary_press,
+        on_middle_press,
         on_hover,
         on_hover_change,
         hover_delay,
@@ -297,6 +322,8 @@ fn same_handlers(
         on_drag,
         drag_out,
         drag_threshold,
+        touch_at_once,
+        press_on_down,
         on_drag_start,
         on_drag_end,
         drop,
@@ -324,9 +351,16 @@ fn same_handlers(
             _ => false,
         }
         && opt_rc_eq(&a.on_window_focus, on_window_focus)
+        && match (&a.on_spellcheck, on_spellcheck) {
+            (None, None) => true,
+            (Some((on_a, fa)), Some((on_b, fb))) => on_a == on_b && Rc::ptr_eq(fa, fb),
+            _ => false,
+        }
+        && opt_rc_eq(&a.on_spellcheck_languages, on_spellcheck_languages)
         && opt_rc_eq(&a.on_press, on_press)
         && opt_rc_eq(&a.on_double_press, on_double_press)
         && opt_rc_eq(&a.on_secondary_press, on_secondary_press)
+        && opt_rc_eq(&a.on_middle_press, on_middle_press)
         && opt_rc_eq(&a.on_hover, on_hover)
         && opt_rc_eq(&a.on_hover_change, on_hover_change)
         && a.hover_delay == *hover_delay
@@ -335,13 +369,15 @@ fn same_handlers(
         && opt_rc_eq(&a.on_drag, on_drag)
         && opt_rc_eq(&a.drag_out, drag_out)
         && a.drag_threshold == *drag_threshold
+        && a.touch_at_once == *touch_at_once
+        && a.press_on_down == *press_on_down
         && opt_rc_eq(&a.on_drag_start, on_drag_start)
         && opt_rc_eq(&a.on_drag_end, on_drag_end)
         && same_drop(&a.drop, drop)
         && opt_rc_eq(&a.on_at_bottom, on_at_bottom)
         && match (&a.on_far_from_bottom, on_far_from_bottom) {
             (None, None) => true,
-            (Some((da, fa)), Some((db, fb))) => da == db && Rc::ptr_eq(fa, fb),
+            (Some((da, ua, fa)), Some((db, ub, fb))) => da == db && ua == ub && Rc::ptr_eq(fa, fb),
             _ => false,
         }
         && opt_rc_eq(&a.on_visible_rows, on_visible_rows)
@@ -363,122 +399,51 @@ fn same_handlers(
 
 /// Exhaustively checks that `el` has not been mutated by builders after `Built::placeholder`
 /// returned it (apart from `key` and `virtual_mount`, which flattening handles explicitly).
-pub(super) fn same_root_el(el: &El, built: &crate::memo::Built) -> bool {
+/// `expanded`: `el` is the placeholder after `El::expand_memo` copied the shared children in.
+pub(in crate::runtime) fn same_root_el(el: &El, built: &crate::memo::Built, expanded: bool) -> bool {
     let base = &built.root;
     let El {
-        focus,
-        handlers,
-        looping,
-        key: _,
-        trace_name,
-        trace_namespace,
-        #[cfg(debug_assertions)]
-        key_source: _,
-        #[cfg(debug_assertions)]
-        scroll_source: _,
-        #[cfg(debug_assertions)]
-        virtual_source: _,
-        role,
-        label,
         style,
         vis,
-        live,
-        text,
         children: _,
-        memo_children: _,
-        memo_built: _,
-        has_virtual: _,
-        above,
-        motion,
-        opacity_motion,
-        lead,
-        width_leads,
-        animate_layout,
-        instant_changes,
-        transition,
-        matched,
-        scroll,
-        scroll_axes,
-        sticky,
-        scroll_edges,
-        growth,
-        virtual_estimate,
-        virtual_rows,
-        virtual_rows_version,
-        virtual_mount: _,
-        streaming,
-        whole,
-        glide,
-        input,
-        window_drag,
-        ime_cursor,
+        key: _,
+        text,
+        handlers,
+        memo: _,
+        cold,
         scale,
-        time_scale,
-        help,
-        help_cut,
-        help_above,
-        material,
-        aspect_fit,
-        selection_group,
-        a11y,
-        inert,
+        flags,
+        role,
+        vis_flags,
+        #[cfg(debug_assertions)]
+        key_source: _,
     } = base;
+    // Flags flattening handles itself, or that only describe the children.
+    let ignored = crate::el::ElFlags::HAS_VIRTUAL | crate::el::ElFlags::MEMO_EXTENDED | crate::el::ElFlags::VIRTUAL_MOUNT;
+    let mut a = el.flags;
+    let mut b = *flags;
+    a.set(ignored, false);
+    b.set(ignored, false);
 
-    el.children.is_empty()
-        && el.memo_children.as_ref().is_some_and(|mc| Rc::ptr_eq(mc, &built.children))
+    (expanded || (el.children.is_empty() && el.memo_children().is_some_and(|mc| Rc::ptr_eq(mc, &built.children))))
         && el.role == *role
-        && el.label == *label
-        && el.trace_name == *trace_name
-        && el.trace_namespace == *trace_namespace
+        && a == b
+        && el.vis_flags == *vis_flags
         && el.style == *style
         && same_visual(&el.vis, vis)
-        && el.live.is_empty()
-        && live.is_empty()
         && match (&el.text, text) {
             (None, None) => true,
             (Some(ta), Some(tb)) => crate::cold::SharedBox::ptr_eq(ta, tb),
             _ => false,
         }
-        && crate::cold::Cold::ptr_eq(&el.focus, focus)
         && same_handlers(&el.handlers, handlers)
-        && opt_box_eq(&el.looping, looping)
-        && el.above == *above
-        && el.motion == *motion
-        && opt_box_eq(&el.opacity_motion, opacity_motion)
-        && el.lead == *lead
-        && el.width_leads == *width_leads
-        && el.animate_layout == *animate_layout
-        && el.instant_changes == *instant_changes
-        && opt_box_eq(&el.transition, transition)
-        && el.matched == *matched
-        && el.scroll == *scroll
-        && el.scroll_axes == *scroll_axes
-        && opt_box_eq(&el.sticky, sticky)
-        && el.scroll_edges == *scroll_edges
-        && opt_box_eq(&el.growth, growth)
-        && el.virtual_estimate == *virtual_estimate
-        && opt_rc_eq(&el.virtual_rows, virtual_rows)
-        && el.virtual_rows_version == *virtual_rows_version
-        && el.streaming == *streaming
-        && el.whole == *whole
-        && el.glide == *glide
-        && el.input.is_none()
-        && input.is_none()
-        && el.window_drag == *window_drag
-        && el.ime_cursor == *ime_cursor
         && el.scale == *scale
-        && el.time_scale == *time_scale
-        && el.help == *help
-        && el.help_cut == *help_cut
-        && el.help_above == *help_above
-        && el.material == *material
-        && el.aspect_fit == *aspect_fit
-        && el.selection_group == *selection_group
-        && el.a11y == *a11y
-        && el.inert == *inert
+        && cold.live.is_empty()
+        && cold.input.is_none()
+        && (crate::cold::Cold::ptr_eq(&el.cold, cold) || same_el_cold(&el.cold, cold))
 }
 
-pub(super) fn inherited_for(
+pub(in crate::runtime) fn inherited_for(
     parent: Option<usize>,
     nodes: &[Node],
     motion: Spring,
@@ -498,6 +463,8 @@ pub(super) fn inherited_for(
             parent_is_stack,
             instant_changes,
             inert,
+            flow: parent.map_or(crate::el::Flow::Ltr, |p| nodes[p].flow),
+            directed: parent.is_some_and(|p| nodes[p].directed),
             trace_namespace,
             scale_bits: scale.to_bits(),
             foreground,
@@ -522,7 +489,7 @@ fn path_matches(old_path: &str, parent_path: &str, key: Option<&str>, index: usi
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn try_reuse_memo(
+pub(in crate::runtime) fn try_reuse_memo(
     el: &El,
     parent: Option<usize>,
     parent_path: &str,
@@ -534,7 +501,7 @@ pub(super) fn try_reuse_memo(
     nodes: &mut Vec<Node>,
     ctx: &mut MemoFlattenCtx<'_>,
 ) -> Option<SlotId> {
-    let built = el.memo_built.as_ref()?;
+    let built = el.memo_built()?;
     if !built.reusable {
         return None;
     }
@@ -552,10 +519,15 @@ pub(super) fn try_reuse_memo(
     if flat.inherited != inherited || flat.hover_within.as_deref() != hover_within.as_deref() {
         return None;
     }
-    if el.key != old_slice[0].key || !same_root_el(el, built) {
+    if el.key != old_slice[0].key || !same_root_el(el, built, false) {
         return None;
     }
     if !old_slice.iter().all(|old| !old.is_moved_stub() && !old.path.is_empty() && taffy.can_reuse(old.id.0, old.taffy)) {
+        return None;
+    }
+    // A picture that takes a side from its image's ratio keeps its layout only while the image
+    // keeps that ratio: one still loading when it was flattened gets its size later.
+    if !old_slice.iter().all(|old| old.cold.get().and_then(|c| c.pixel_aspect).is_none_or(|r| old.vis.pixels.as_ref().is_some_and(|p| super::flatten::pixel_ratio(p) == r))) {
         return None;
     }
 
@@ -577,7 +549,7 @@ pub(super) fn try_reuse_memo(
             n.clear_run_layout();
             n.scale_track = false;
             n.group_fade = false;
-            n.virtual_mount = if k == 0 { el.virtual_mount } else { false };
+            n.virtual_mount = if k == 0 { el.flags.has(crate::el::ElFlags::VIRTUAL_MOUNT) } else { false };
             n.parent = if k == 0 { parent } else { n.parent.map(|p| new_start + (p - flat.start)) };
             n.target = [0.0; 4];
             n.local = MRect::ZERO;
@@ -594,7 +566,7 @@ pub(super) fn try_reuse_memo(
                 elided: None,
                 scale_track: false,
                 group_fade: false,
-                virtual_mount: if k == 0 { el.virtual_mount } else { false },
+                virtual_mount: if k == 0 { el.flags.has(crate::el::ElFlags::VIRTUAL_MOUNT) } else { false },
                 parent: if k == 0 { parent } else { old.parent.map(|p| new_start + (p - flat.start)) },
                 target: [0.0; 4],
                 local: MRect::ZERO,
@@ -650,7 +622,7 @@ pub(super) fn try_reuse_memo(
                 elided: None,
                 scale_track: false,
                 group_fade: false,
-                virtual_mount: if k == 0 { el.virtual_mount } else { false },
+                virtual_mount: if k == 0 { el.flags.has(crate::el::ElFlags::VIRTUAL_MOUNT) } else { false },
                 parent: if k == 0 { parent } else { old.parent.map(|p| new_start + (p - flat.start)) },
                 target: [0.0; 4],
                 local: MRect::ZERO,
@@ -684,7 +656,7 @@ pub(super) fn try_reuse_memo(
 
 /// Puts `moved` slices and individually taken paths back into `old_nodes` with their pre-pass
 /// geometry and flags before a virtual-window retry or a layout-read, focus or caret re-measure.
-pub(super) fn restore_moved_nodes(
+pub(in crate::runtime) fn restore_moved_nodes(
     old_nodes: &mut [Node],
     nodes: &mut [Node],
     reused: &[ReusedSpan],

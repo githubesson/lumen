@@ -12,7 +12,7 @@
 //! - Headless runs: the menu stays open in `--tree` (`popupMenu`) until a script's
 //!   `{"type": "menu-pick", "id": "dark"}` or `{"type": "menu-cancel"}` answers it.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -20,7 +20,9 @@ use serde_json::{Value, json};
 use winit::window::Window;
 
 use crate::runtime::Waker;
-use crate::{PointerPress, Runtime, Shortcut, Tx};
+#[cfg(test)]
+use crate::Runtime;
+use crate::{PointerPress, Shortcut, Tx};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -30,6 +32,8 @@ use macos as host;
 mod win32;
 #[cfg(target_os = "windows")]
 use win32 as host;
+#[cfg(target_os = "windows")]
+pub(crate) use win32::{enter_menu_loop, layout, turns};
 
 /// Platforms without native menus: nothing opens, so every request answers `None` at once.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -38,7 +42,7 @@ mod host {
     pub(super) const SUPPORTED: bool = false;
     pub(super) type Tracking = ();
     pub(super) fn show(_: &Arc<Window>, _: Show, _: Rc<Session>, _: Option<Waker>) -> bool { false }
-    pub(super) fn stop(session: &Session, _: bool) { session.tracking.take(); }
+    pub(super) fn stop(_: Tracking) {}
     pub(super) fn scheme(_: bool) {}
     pub(super) fn start(_: Waker) {}
 }
@@ -86,7 +90,8 @@ impl PopupItem {
 pub(crate) enum Entry {
     Item(PopupItem),
     Separator,
-    Submenu(String, PopupMenu),
+    /// A titled submenu, and whether it opens.
+    Submenu(String, PopupMenu, bool),
 }
 
 /// The items of a native pop-up or context menu. Ids must be unique across the menu and its
@@ -119,7 +124,12 @@ impl PopupMenu {
     }
     pub fn separator(mut self) -> Self { self.entries.push(Entry::Separator); self }
     pub fn submenu(mut self, title: impl Into<String>, menu: PopupMenu) -> Self {
-        self.entries.push(Entry::Submenu(title.into(), menu));
+        self.entries.push(Entry::Submenu(title.into(), menu, true));
+        self
+    }
+    /// A submenu shown greyed out and closed unless nabled.
+    pub fn submenu_enabled(mut self, title: impl Into<String>, menu: PopupMenu, enabled: bool) -> Self {
+        self.entries.push(Entry::Submenu(title.into(), menu, enabled));
         self
     }
     /// The top-level item that opens over an element anchor, like a pop-up button's current
@@ -131,7 +141,7 @@ impl PopupMenu {
     pub fn find(&self, id: &str) -> Option<&PopupItem> {
         self.entries.iter().find_map(|entry| match entry {
             Entry::Item(item) if item.id == id => Some(item),
-            Entry::Submenu(_, menu) => menu.find(id),
+            Entry::Submenu(_, menu, _) => menu.find(id),
             _ => None,
         })
     }
@@ -149,7 +159,7 @@ impl PopupMenu {
                     if item.id.is_empty() { return Err("an item has an empty id".into()); }
                     if !ids.insert(item.id.clone()) { return Err(format!("duplicate item id {:?}", item.id)); }
                 }
-                Entry::Submenu(_, menu) => menu.validate(ids)?,
+                Entry::Submenu(_, menu, _) => menu.validate(ids)?,
                 Entry::Separator => {}
             }
         }
@@ -165,7 +175,8 @@ impl PopupMenu {
                 v
             }
             Entry::Separator => json!({ "separator": true }),
-            Entry::Submenu(title, menu) => json!({ "submenu": title, "menu": menu.to_json() }),
+            Entry::Submenu(title, menu, true) => json!({ "submenu": title, "menu": menu.to_json() }),
+            Entry::Submenu(title, menu, false) => json!({ "submenu": title, "enabled": false, "menu": menu.to_json() }),
         }).collect();
         let mut v = json!({ "items": entries });
         if let Some(selected) = &self.selected { v["selected"] = selected.clone().into(); }
@@ -212,6 +223,8 @@ pub(crate) struct Request {
     pub menu: PopupMenu,
     pub anchor: PopupAnchor,
     pub on_pick: PickFn,
+    /// A text field's own menu, whose picks the runtime acts on.
+    pub field: Option<Box<crate::runtime::field_menu::FieldMenu>>,
 }
 
 impl Request {
@@ -257,7 +270,7 @@ impl Tx {
             // None once the playground has dropped the stage that asked.
             if let Some(s) = s.cast::<S>() { on_pick(s, picked, tx); }
         });
-        let request = Request { menu, anchor: anchor.into(), on_pick };
+        let request = Request { menu, anchor: anchor.into(), on_pick, field: None };
         self.popups.push(Call(Rc::new(RefCell::new(Some(request)))));
     }
 }
@@ -271,7 +284,7 @@ pub(crate) struct Show {
     pub at: (f32, f32),
     pub positioned: Option<String>,
     pub min_width: f32,
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
     pub element: Option<[f32; 4]>,
 }
 
@@ -297,12 +310,16 @@ impl Show {
 /// menu is `Opening` until the platform puts it up, `Open` while it tracks, and ends
 /// `Resolved` with its answer, or `Cancelled` when its window goes away first. A cancelled
 /// menu never opens (or stops tracking), and its answer is dropped.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Default)]
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub(crate) enum Phase {
     #[default]
     Opening,
-    Open,
-    Resolved(Option<String>),
+    /// Up. `tracking` is the platform's hold on the menu while its loop runs, to stop it.
+    Open { tracking: Option<host::Tracking> },
+    /// Closed with `picked`. `pointer`: where the pointer was over the window as it closed, in
+    /// window points, for a platform that sends no pointer move until the pointer moves again.
+    Resolved { picked: Option<String>, pointer: Option<(f32, f32)> },
     Cancelled,
 }
 
@@ -310,42 +327,50 @@ pub(crate) enum Phase {
 #[derive(Default)]
 pub(crate) struct Session {
     phase: RefCell<Phase>,
-    /// The platform's hold on the menu while it tracks, to stop it.
-    pub tracking: RefCell<host::Tracking>,
-    /// Where the pointer was over the window as the menu closed, in window points, for a
-    /// platform that sends no pointer move until the pointer moves again.
-    pub pointer: Cell<Option<(f32, f32)>>,
 }
 
+// Only macOS and Windows open menus; elsewhere every request answers `None` before a session.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 impl Session {
     /// `Opening` → `Open`, as the menu comes up. False when it was cancelled first.
     pub(crate) fn begin(&self) -> bool {
         let mut phase = self.phase.borrow_mut();
-        if *phase != Phase::Opening { return false; }
-        *phase = Phase::Open;
+        if !matches!(*phase, Phase::Opening) { return false; }
+        *phase = Phase::Open { tracking: None };
         true
     }
 
-    /// `Opening` or `Open` → `Resolved`: the menu closed with `picked`. False, and the answer
-    /// dropped, when it was cancelled first.
-    pub(crate) fn resolve(&self, picked: Option<String>) -> bool {
+    /// The menu's tracking loop starts (`Some`) or returns (`None`).
+    pub(crate) fn tracking(&self, menu: Option<host::Tracking>) {
+        if let Phase::Open { tracking } = &mut *self.phase.borrow_mut() { *tracking = menu; }
+    }
+
+    /// `Opening` or `Open` → `Resolved`: the menu closed with `picked`, the pointer at
+    /// `pointer`. False, and the answer dropped, when it was cancelled first.
+    pub(crate) fn resolve(&self, picked: Option<String>, pointer: Option<(f32, f32)>) -> bool {
         let mut phase = self.phase.borrow_mut();
-        if !matches!(*phase, Phase::Opening | Phase::Open) { return false; }
-        *phase = Phase::Resolved(picked);
+        if !matches!(*phase, Phase::Opening | Phase::Open { .. }) { return false; }
+        *phase = Phase::Resolved { picked, pointer };
         true
     }
 
-    /// Any phase → `Cancelled`. True when the menu was tracking and must be stopped.
-    pub(crate) fn cancel(&self) -> bool { self.phase.replace(Phase::Cancelled) == Phase::Open }
+    /// Any phase → `Cancelled`. The menu to stop, when its loop was tracking.
+    pub(crate) fn cancel(&self) -> Option<host::Tracking> {
+        match self.phase.replace(Phase::Cancelled) {
+            Phase::Open { tracking } => tracking,
+            _ => None,
+        }
+    }
 
     #[cfg(test)]
-    pub(crate) fn is_cancelled(&self) -> bool { *self.phase.borrow() == Phase::Cancelled }
+    pub(crate) fn is_cancelled(&self) -> bool { matches!(*self.phase.borrow(), Phase::Cancelled) }
 
-    /// The answer of a `Resolved` menu, once: the session is `Cancelled` after.
-    fn take_answer(&self) -> Option<Option<String>> {
+    /// The answer of a `Resolved` menu, and where the pointer was, once: the session is
+    /// `Cancelled` after.
+    fn take_answer(&self) -> Option<(Option<String>, Option<(f32, f32)>)> {
         let mut phase = self.phase.borrow_mut();
         match std::mem::replace(&mut *phase, Phase::Cancelled) {
-            Phase::Resolved(picked) => Some(picked),
+            Phase::Resolved { picked, pointer } => Some((picked, pointer)),
             other => {
                 *phase = other;
                 None
@@ -370,14 +395,22 @@ impl Presenter {
     /// Runs the callback of a menu that closed since the last event. True when one ran. The
     /// pointer the menu released is back where the menu left it, so a click that doesn't move
     /// it first still lands.
+    #[cfg(test)]
+    #[inline(always)]
     pub(crate) fn answer<S: 'static>(&mut self, rt: &mut Runtime<S>) -> bool {
-        let Some(picked) = self.session.as_ref().and_then(|s| s.take_answer()) else { return false };
-        let pointer = self.session.take().and_then(|s| s.pointer.get());
-        if let Err(error) = rt.resolve_popup(picked.as_deref()) {
+        let (core, mut app) = rt.split_mut();
+        self.answer_core(core, &mut app)
+    }
+
+    pub(crate) fn answer_core(&mut self, rt: &mut crate::runtime::RuntimeCore, app: &mut dyn crate::runtime::AppDriver) -> bool {
+        let Some((picked, pointer)) = self.session.as_ref().and_then(|s| s.take_answer()) else { return false };
+        self.session = None;
+        if let Err(error) = rt.resolve_popup(app, picked.as_deref()) {
             eprintln!("rune: {error}");
-            let _ = rt.resolve_popup(None);
+            rt.resolve_popup(app, None).ok();
         }
-        if let Some((x, y)) = pointer && rt.pointer().is_none() { rt.pointer_move(x, y); }
+        // In window points; the view's are over its zoom.
+        if let Some((x, y)) = pointer && rt.pointer().is_none() { rt.pointer_move(app, x / rt.zoom(), y / rt.zoom()); }
         true
     }
 
@@ -386,7 +419,14 @@ impl Presenter {
     /// the runtime has changes to commit, so the next frame places it from the new layout.
     /// True when the window should draw: a callback ran, the pointer was released, or a menu
     /// waits for that frame.
+    #[cfg(test)]
+    #[inline(always)]
     pub(crate) fn open<S: 'static>(&mut self, rt: &mut Runtime<S>, window: Option<&Arc<Window>>, paints: bool) -> bool {
+        let (core, mut app) = rt.split_mut();
+        self.open_core(core, &mut app, window, paints)
+    }
+
+    pub(crate) fn open_core(&mut self, rt: &mut crate::runtime::RuntimeCore, app: &mut dyn crate::runtime::AppDriver, window: Option<&Arc<Window>>, paints: bool) -> bool {
         let mut redraw = false;
         loop {
             if window.is_some() && paints && rt.popup_waits_for_layout() { return true; }
@@ -401,22 +441,28 @@ impl Presenter {
                     return true;
                 }
             }
-            let _ = rt.resolve_popup(None);
+            rt.resolve_popup(app, None).ok();
         }
     }
 
     /// The window is going away (hidden, closed or quitting): the open menu stops tracking and
     /// every request still waiting is answered `None`, while its state is alive. An answer the
     /// cancelled menu gives later is dropped.
+    #[cfg(test)]
+    #[inline(always)]
     pub(crate) fn cancel<S: 'static>(&mut self, rt: &mut Runtime<S>) {
+        let (core, mut app) = rt.split_mut();
+        self.cancel_core(core, &mut app);
+    }
+
+    pub(crate) fn cancel_core(&mut self, rt: &mut crate::runtime::RuntimeCore, app: &mut dyn crate::runtime::AppDriver) {
         self.stop();
-        rt.cancel_popups();
+        rt.cancel_popups(app);
     }
 
     fn stop(&mut self) {
         let Some(session) = self.session.take() else { return };
-        let tracking = session.cancel();
-        host::stop(&session, tracking);
+        if let Some(menu) = session.cancel() { host::stop(menu); }
     }
 }
 

@@ -5,20 +5,59 @@ use super::*;
 
 impl El {
     /// Keeps this text's height its lines' own, unrounded (22.4 points for a line at a 22.4
-    /// line height), as a browser lays out a paragraph, instead of rounding it up to whole
-    /// device pixels: a stack of such texts lands where a web page's does rather than gaining up
-    /// to a pixel per text.
+    /// line height, 24.375 device pixels for a 19.5 point line at 1.25x), as a browser lays out
+    /// a paragraph: a stack of texts lands where a web page's does rather than gaining up to a
+    /// pixel per text. Every text does this unless it asks for [`El::rounded_lines`].
     pub fn exact_lines(mut self) -> Self {
         if let Some(t) = &mut self.text {
             t.exact_lines = true;
         }
         self
     }
+    /// Rounds this text's height up to whole device pixels instead of keeping its lines' own
+    /// ([`El::exact_lines`]), as Rune laid out every text before: a box sized by one text keeps
+    /// its edges on the pixel grid at any scale.
+    pub fn rounded_lines(mut self) -> Self {
+        if let Some(t) = &mut self.text {
+            t.exact_lines = false;
+        }
+        self
+    }
+    #[inline]
     pub fn font(mut self, s: TextStyle) -> Self {
+        self.set_font(s);
+        self
+    }
+    /// Replaces the string of a [`text`] element, keeping its style, colour and every other
+    /// setting: a styled text cloned as a template takes each use's words. Spans and other byte
+    /// ranges of the old string are dropped. Does nothing to other elements or to a text input.
+    pub fn set_content(&mut self, content: impl Into<String>) -> &mut Self {
+        if self.cold.input.is_none()
+            && let Some(t) = &mut self.text
+        {
+            t.content = content.into();
+            t.spans.clear();
+            if let Some(cold) = t.cold.get_mut_if_some() {
+                cold.links.clear();
+                cold.uncopied.clear();
+                cold.strikes.clear();
+                cold.highlights.clear();
+                cold.pills.clear();
+                cold.rings.clear();
+                cold.blocks.clear();
+                cold.soft_breaks.clear();
+            }
+            t.source = None;
+        }
+        self
+    }
+    /// [`El::font`] in place.
+    #[inline]
+    pub fn set_font(&mut self, s: TextStyle) -> &mut Self {
         if let Some(t) = &mut self.text {
             t.style = s;
         }
-        if self.input.is_some() {
+        if self.cold.input.is_some() {
             self.sync_input_rich();
         }
         self
@@ -29,11 +68,11 @@ impl El {
     /// across any active IME preedit.
     pub fn spans(mut self, spans: impl Into<Vec<Span>>) -> Self {
         let spans = spans.into();
-        if let Some(inp) = &mut self.input {
+        if let Some(inp) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             inp.decorations = spans;
             self.sync_input_rich();
         } else if let Some(t) = &mut self.text {
-            t.spans = crate::el::pills::with_pill_colors(&spans, &t.pills);
+            t.spans = crate::el::pills::with_pill_colors(&spans, &t.cold.pills);
         }
         self
     }
@@ -51,7 +90,16 @@ impl El {
     /// on each line; selection is painted over the chip and below the glyphs.
     pub fn span_ring(mut self, start: usize, end: usize, color: Color, width: f32) -> Self {
         if let Some(t) = &mut self.text && start < end && width > 0.0 && width.is_finite() {
-            t.rings.push((start as u32, end as u32, color, width));
+            t.cold.rings.push((start as u32, end as u32, color, width));
+        }
+        self
+    }
+    /// The corner radius in points of this text's rounded [`Span::bg`] backgrounds (4 by
+    /// default), as a stylesheet's `border-radius` on one kind of span: a diff's changed words
+    /// at 3, say, while inline code keeps 4.
+    pub fn span_radius(mut self, radius: f32) -> Self {
+        if let Some(t) = &mut self.text && radius.is_finite() {
+            t.cold.span_radius = radius.max(0.0);
         }
         self
     }
@@ -66,7 +114,7 @@ impl El {
     /// colour). Wrapped lines each get their own segment.
     pub fn strike(mut self, start: usize, end: usize, color: Option<Color>) -> Self {
         if let Some(t) = &mut self.text && start < end {
-            t.strikes.push((start as u32, end as u32, color));
+            t.cold.strikes.push((start as u32, end as u32, color));
         }
         self
     }
@@ -83,7 +131,7 @@ impl El {
     /// clearing highlights never reshapes text or shifts line breaks.
     pub fn text_highlight(mut self, highlight: crate::text::TextHighlight) -> Self {
         if let Some(t) = &mut self.text && highlight.start < highlight.end {
-            t.highlights.push(highlight);
+            t.cold.highlights.push(highlight);
         }
         self
     }
@@ -97,11 +145,11 @@ impl El {
     /// Set the visual palette for rich inline marks (`code`, `link`) and paragraph blocks
     /// (`quote`, `code block`, list markers) on a [`text_input`].
     pub fn rich_style(mut self, style: crate::edit::RichStyle) -> Self {
-        if let Some(inp) = &mut self.input {
+        if let Some(inp) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             inp.rich_style = style;
             self.sync_input_rich();
         } else if let Some(t) = &mut self.text {
-            t.rich_style = style;
+            t.cold.rich_style = Some(style);
         }
         self
     }
@@ -110,9 +158,9 @@ impl El {
     /// colour at 20% opacity.
     pub fn pill_colors(mut self, bg: Color, fg: Option<Color>) -> Self {
         if let Some(t) = &mut self.text {
-            t.pill_colors = Some((bg, fg));
+            t.cold.pill_colors = Some((bg, fg));
         }
-        if self.input.is_some() {
+        if self.cold.input.is_some() {
             self.sync_input_rich();
         }
         self
@@ -127,7 +175,7 @@ impl El {
     /// The closure may capture state; it runs each time the field is built, so a pill follows
     /// whatever it captured. For colours too, see [`El::pill_style`].
     pub fn pill_icon(mut self, icon: impl Fn(&str) -> Option<&'static crate::Icon> + 'static) -> Self {
-        if let Some(inp) = &mut self.input {
+        if let Some(inp) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             inp.pill_icon = Some(Rc::new(icon));
             self.sync_input_pills();
             self.sync_input_rich();
@@ -147,20 +195,31 @@ impl El {
     /// })
     /// ```
     pub fn pill_style(mut self, style: impl Fn(&str) -> PillStyle + 'static) -> Self {
-        if let Some(inp) = &mut self.input {
+        if let Some(inp) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             inp.pill_style = Some(Rc::new(style));
             self.sync_input_pills();
             self.sync_input_rich();
         }
         self
     }
+
+    /// Secondary press (right-click or macOS control-click) on a [`Mark::Pill`](crate::Mark::Pill)
+    /// inside this [`text_input`](crate::text_input). Called with the pill's id and the press point
+    /// in window points; return `true` to handle it (opening a pill-specific menu) or `false` to
+    /// fall through to the field's standard context menu.
+    pub fn on_pill_secondary<S: 'static>(mut self, f: impl Fn(&mut S, &str, PointerPress, &mut Tx) -> bool + 'static) -> Self {
+        if let Some(inp) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
+            inp.on_pill_secondary = Some(Rc::new(move |s, id, press, tx| f(downcast::<S>(s), id, press, tx)));
+        }
+        self
+    }
     pub(super) fn sync_input_pills(&mut self) {
-        let (Some(inp), Some(t)) = (&self.input, &mut self.text) else { return };
+        let (Some(inp), Some(t)) = (&self.cold.input, &mut self.text) else { return };
         if inp.edit.is_plain() {
-            t.pills.clear();
+            t.cold.pills.clear();
             return;
         }
-        t.pills = inp
+        t.cold.pills = inp
             .edit
             .display_pills()
             .into_iter()
@@ -172,15 +231,15 @@ impl El {
             .collect();
     }
     pub(crate) fn sync_input_rich(&mut self) {
-        let (Some(inp), Some(t)) = (&self.input, &mut self.text) else { return };
-        t.rich_style = inp.rich_style;
+        let (Some(inp), Some(t)) = (&self.cold.input, &mut self.text) else { return };
+        t.cold.rich_style = Some(inp.rich_style);
         if inp.edit.is_plain() && inp.decorations.is_empty() {
             // A plain field lays out and draws exactly as before rich editing existed.
             t.spans.clear();
-            t.strikes.clear();
-            t.blocks.clear();
-            t.soft_breaks.clear();
-            t.pills.clear();
+            t.cold.strikes.clear();
+            t.cold.blocks.clear();
+            t.cold.soft_breaks.clear();
+            t.cold.pills.clear();
             return;
         }
         let (mut base_spans, strikes, rich_links, blocks) =
@@ -193,8 +252,8 @@ impl El {
                 base_spans.push(sp);
             }
         }
-        let pill_fg = t.pill_colors.and_then(|(_, fg)| fg);
-        base_spans.extend(t.pills.iter().filter_map(|p| {
+        let pill_fg = t.cold.pill_colors.and_then(|(_, fg)| fg);
+        base_spans.extend(t.cold.pills.iter().filter_map(|p| {
             Some(Span { start: p.start, end: p.end, color: Some(p.fg.or(pill_fg)?), ..Span::default() })
         }));
         let mut flat = crate::text::flatten_spans(&base_spans);
@@ -204,14 +263,21 @@ impl El {
             }
         }
         t.spans = flat;
-        t.strikes = strikes;
-        t.blocks = blocks;
-        t.soft_breaks = inp.edit.soft_breaks.clone();
+        t.cold.strikes = strikes;
+        t.cold.blocks = blocks;
+        t.cold.soft_breaks = inp.edit.soft_breaks().to_vec();
         // Replace links generated from `Mark::Link` while keeping any explicit `.link(...)` calls.
-        t.links = rich_links;
+        t.cold.links = rich_links;
     }
     /// Wrap text at the element's width.
+    #[inline]
     pub fn wrap(mut self) -> Self {
+        self.set_wrap();
+        self
+    }
+    /// [`El::wrap`] in place.
+    #[inline]
+    pub fn set_wrap(&mut self) -> &mut Self {
         if let Some(t) = &mut self.text {
             t.wrap = true;
         }
@@ -222,12 +288,21 @@ impl El {
     /// lowering the text's min-content width. Does not change flex shrinking; use
     /// [`El::shrink`] to allow a flex row to narrow the element.
     pub fn wrap_anywhere(mut self) -> Self {
-        if self.input.as_ref().is_some_and(|i| i.single_line) {
+        if self.cold.input.as_ref().is_some_and(|i| i.single_line) {
             return self;
         }
         if let Some(t) = &mut self.text {
             t.wrap = true;
             t.wrap_anywhere = true;
+        }
+        self
+    }
+    /// Break this text's lines greedily when the app wraps text prettily
+    /// ([`crate::text::set_pretty_wrap`]): text that grows while it's read, such as a reply
+    /// still streaming in, whose last lines would move as each word arrives.
+    pub fn wrap_greedy(mut self) -> Self {
+        if let Some(t) = &mut self.text {
+            t.greedy = true;
         }
         self
     }
@@ -238,31 +313,45 @@ impl El {
     }
     /// One line, cut with "…" when wider than the element; the element may shrink below its
     /// text's width. A [`text_input`] ignores it and the other truncations.
-    pub fn truncate(self) -> Self {
-        self.elide(Elide::End)
+    #[inline]
+    pub fn truncate(mut self) -> Self {
+        self.set_truncate();
+        self
+    }
+    /// [`El::truncate`] in place.
+    #[inline]
+    pub fn set_truncate(&mut self) -> &mut Self {
+        self.set_elide(Elide::End);
+        self
     }
     /// [`El::truncate`] keeping both ends: "…" replaces the middle, as AppKit's
     /// `NSLineBreakByTruncatingMiddle` does for paths and file names. Cuts fall between
     /// graphemes and refit when the element resizes; copying and the accessibility text keep
     /// the whole string.
-    pub fn truncate_middle(self) -> Self {
-        self.elide(Elide::Middle)
+    pub fn truncate_middle(mut self) -> Self {
+        self.set_elide(Elide::Middle);
+        self
     }
     /// [`El::truncate`] keeping the end: "…" replaces the start.
-    pub fn truncate_head(self) -> Self {
-        self.elide(Elide::Head)
+    pub fn truncate_head(mut self) -> Self {
+        self.set_elide(Elide::Head);
+        self
     }
-    fn elide(self, elide: Elide) -> Self {
+    fn set_elide(&mut self, elide: Elide) {
         // A field's caret and selection index its own text, which a cut would break.
-        if self.input.is_some() { return self; }
-        self.one_line(|t| {
+        if self.cold.input.is_some() { return; }
+        self.set_one_line(|t| {
             t.truncate = true;
             t.elide = elide;
             t.truncate_fade = false;
-        })
+        });
     }
     /// One unwrapped line that shrinks with its parent; `cut` sets how an overflow is cut.
     fn one_line(mut self, cut: impl FnOnce(&mut TextSpec)) -> Self {
+        self.set_one_line(cut);
+        self
+    }
+    fn set_one_line(&mut self, cut: impl FnOnce(&mut TextSpec)) {
         if let Some(t) = &mut self.text {
             t.wrap = false;
             t.wrap_anywhere = false;
@@ -271,7 +360,6 @@ impl El {
         }
         self.style.set_flex_shrink(1.0);
         self.style.set_min_width(length(0.0));
-        self
     }
     /// Wrapped text that stops after `lines` lines, "…" ending the last when more would follow,
     /// as CSS's `line-clamp`. The element measures at most `lines` lines tall. The cut falls
@@ -279,7 +367,7 @@ impl El {
     /// looks up to it, and copying and the accessibility text keep the whole string. 0 shows
     /// every line. A [`text_input`] ignores it; use [`auto_grow`] there.
     pub fn max_lines(mut self, lines: usize) -> Self {
-        if self.input.is_some() { return self; }
+        if self.cold.input.is_some() { return self; }
         if let Some(t) = &mut self.text {
             t.wrap = true;
             t.max_lines = lines;
@@ -310,13 +398,13 @@ impl El {
     /// Keep a text field to one line: long text scrolls sideways under the caret instead of
     /// wrapping. Fields are multi-line by default.
     pub fn single_line(mut self) -> Self {
-        if let Some(i) = &mut self.input {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             i.single_line = true;
             i.edit.set_single_line(true);
             if let Some(t) = &mut self.text {
                 t.wrap = false;
                 t.wrap_anywhere = false;
-                if i.edit.is_secure() && !i.edit.is_revealed() {
+                if i.edit.is_masked() {
                     t.replace_content(i.edit.display().0);
                 }
             }
@@ -328,8 +416,8 @@ impl El {
     /// transparent to input. Each link is a Tab stop that Enter or Space presses.
     pub fn link(mut self, link: Link) -> Self {
         if let Some(t) = &mut self.text {
-            t.links.push(link);
-            self.focus.enabled = true;
+            t.cold.links.push(link);
+            self.cold_mut().focus.enabled = true;
             if self.handlers.cursor.is_none() {
                 self.handlers.cursor = Some(Cursor::Pointer);
             }
@@ -337,10 +425,12 @@ impl El {
         self
     }
     /// Called with a [`Link`]'s id when it is clicked, or pressed with Enter or Space while
-    /// focused.
+    /// focused. A middle click on a link calls it too, as a browser opens a link in a new tab:
+    /// [`Tx::button`] is then [`PointerButton::Middle`](crate::PointerButton::Middle), for a
+    /// handler whose link only opens in place to ignore.
     pub fn on_link<S: 'static>(mut self, f: impl Fn(&mut S, &str, &mut Tx) + 'static) -> Self {
         if let Some(t) = &mut self.text {
-            t.on_link = Some(LinkFn(Rc::new(move |s, id, tx| f(downcast::<S>(s), id, tx))));
+            t.cold.on_link = Some(LinkFn(Rc::new(move |s, id, tx| f(downcast::<S>(s), id, tx))));
         }
         self
     }
@@ -350,20 +440,39 @@ impl El {
     /// it; elsewhere in the text they still do.
     pub fn on_link_secondary<S: 'static>(mut self, f: impl Fn(&mut S, &str, PointerPress, &mut Tx) + 'static) -> Self {
         if let Some(t) = &mut self.text {
-            t.on_link_secondary = Some(LinkSecondaryFn(Rc::new(move |s, id, p, tx| f(downcast::<S>(s), id, p, tx))));
+            t.cold.on_link_secondary = Some(LinkSecondaryFn(Rc::new(move |s, id, p, tx| f(downcast::<S>(s), id, p, tx))));
+        }
+        self
+    }
+    /// Mark this text field's misspelled words, as a browser's `spellcheck` does: the platform's
+    /// checker (Windows' spell checking API, AppKit's `NSSpellChecker`; none on Linux or the
+    /// web) puts a red marker under each word the caret has left, and the field's menu offers its
+    /// suggestions and Learn Spelling. Off by default; a secure field never checks.
+    pub fn spellcheck(mut self, on: bool) -> Self {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
+            i.spellcheck = on;
         }
         self
     }
     pub fn placeholder(mut self, s: impl Into<String>, c: Color) -> Self {
-        if let Some(i) = &mut self.input {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             i.placeholder = s.into();
             i.placeholder_color = c;
             i.placeholder_inked = true;
         }
         self
     }
+    /// Lay this field's placeholder out in `style` rather than the field's own, as CSS's
+    /// `::placeholder` can: a phone's field types at 16 pt (so iOS doesn't zoom to it) while its
+    /// hint keeps the design's size.
+    pub fn placeholder_font(mut self, style: TextStyle) -> Self {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
+            i.placeholder_style = Some(style);
+        }
+        self
+    }
     pub fn caret(mut self, caret: Color, selection: Color) -> Self {
-        if let Some(i) = &mut self.input {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             i.caret = caret;
             i.selection = selection;
             i.caret_inked = true;
@@ -381,11 +490,17 @@ impl El {
     /// hover and press paint reach it, and its `on_secondary_press` wins over Copy. A drag that
     /// selects text doesn't press. Inside a draggable (`on_drag`, `drag_out`) row, dragging
     /// drags the row, and double- and triple-clicks still select.
+    #[inline]
     pub fn selectable(mut self, on: bool) -> Self {
+        self.set_selectable(on);
+        self
+    }
+    /// [`El::selectable`] in place.
+    pub fn set_selectable(&mut self, on: bool) -> &mut Self {
         if let Some(t) = &mut self.text {
-            if self.input.is_some() || t.redacted { return self; }
+            if self.cold.input.is_some() || t.redacted { return self; }
             t.selectable = on;
-            if on && (self.handlers.cursor.is_none() || (!t.links.is_empty() && self.handlers.cursor == Some(Cursor::Pointer))) {
+            if on && (self.handlers.cursor.is_none() || (!t.cold.links.is_empty() && self.handlers.cursor == Some(Cursor::Pointer))) {
                 self.handlers.cursor = Some(Cursor::Text);
             }
         }
@@ -394,11 +509,11 @@ impl El {
     /// Makes the [`El::selectable`] texts inside this element one selection, in tree order, as
     /// the paragraphs of a web page are: a drag from one into another selects across them (the
     /// gaps between included), Shift-click extends into any of them, Cmd+A selects them all and
-    /// Cmd+C copies their text joined by a newline, or a tab between texts side by side (table
-    /// cells). Double- and triple-clicks still take a word or paragraph of one text. Text that
+    /// Cmd+C copies their text joined by a newline (or the blank line [`El::copy_breaks`] asks
+    /// for, after any [`El::copy_prefix`]), or a tab between texts side by side (table cells). Double- and triple-clicks still take a word or paragraph of one text. Text that
     /// isn't selectable (a list marker) is skipped. Outside a group each text is its own.
     pub fn selection_group(mut self, on: bool) -> Self {
-        self.selection_group = on;
+        self.flags.set(ElFlags::SELECTION_GROUP, on);
         self
     }
     /// What copying a text selection inside this element puts on the clipboard (Cmd+C and the
@@ -449,28 +564,57 @@ impl El {
     /// accessibility reports it inert. `on_layout` and `Cx::layout` still see its rects. For a
     /// document drawn under an editor that takes its presses itself.
     pub fn inert(mut self) -> Self {
-        self.inert = true;
+        self.flags.set(ElFlags::INERT, true);
         self
     }
     /// Bytes of [`El::selectable`] text that draw but aren't copied, such as the spacing
     /// characters Markdown pads inline code with. A double-click's word stops at them.
     pub fn uncopied(mut self, range: std::ops::Range<usize>) -> Self {
         if let Some(t) = &mut self.text && range.start < range.end {
-            let at = t.uncopied.partition_point(|r| (r.0 as usize) < range.start);
-            t.uncopied.insert(at, (range.start as u32, range.end as u32));
+            let at = t.cold.uncopied.partition_point(|r| (r.0 as usize) < range.start);
+            t.cold.uncopied.insert(at, (range.start as u32, range.end as u32));
         }
+        self
+    }
+    /// How many newlines copying puts between this [`El::selectable`] text and the text copied
+    /// before it, and the text after it, when a [`El::selection_group`] selection takes more than
+    /// one: the larger of the two texts' asks, one by default. Two leaves a blank line, as a web
+    /// page's paragraphs copy. Texts side by side still take a tab.
+    ///
+    /// ```ignore
+    /// text(para).selectable(true).copy_breaks(2, 2) // "first para\n\nsecond para"
+    /// ```
+    pub fn copy_breaks(mut self, before: u8, after: u8) -> Self {
+        if let Some(t) = &mut self.text { t.cold.copy_breaks = [before, after]; }
+        self
+    }
+    /// Text copying puts before this [`El::selectable`] text when a selection takes it from its
+    /// start along with other texts, without drawing it: a list item's `"- "` or `"1. "`, whose
+    /// drawn marker isn't selectable. A copy of this text alone leaves it out.
+    pub fn copy_prefix(mut self, prefix: impl Into<std::rc::Rc<str>>) -> Self {
+        if let Some(t) = &mut self.text { t.cold.copy_prefix = Some(prefix.into()); }
+        self
+    }
+    /// A selection as a browser paints `::selection`, in a text field or [`El::selectable`]
+    /// text: its highlight and the ink its selected glyphs take, one pair while the window is
+    /// active and another while it isn't ([`SelectionStyle::chromium`](crate::SelectionStyle::chromium)
+    /// is Chromium's default). It takes over [`El::caret`]'s and [`El::selection_color`]'s
+    /// highlight.
+    pub fn selection_style(mut self, style: crate::SelectionStyle) -> Self {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) { i.selection_style = Some(style); }
+        if let Some(t) = &mut self.text { t.cold.selection_style = Some(style); }
         self
     }
     /// The selection highlight of [`El::selectable`] text or a text field, drawn alike for both.
     pub fn selection_color(mut self, color: Color) -> Self {
-        if let Some(i) = &mut self.input { i.selection = color; }
-        if let Some(t) = &mut self.text { t.selection = color; }
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) { i.selection = color; }
+        if let Some(t) = &mut self.text { t.cold.selection = color; }
         self
     }
     /// Binds the field to a `TextEdit` in app state. `f` may capture (a row index, say); wrap
     /// a closure in [`edit_access`] so its returned borrow is tied to the state.
     pub fn on_edit<S: 'static>(mut self, f: impl for<'a> Fn(&'a mut S) -> &'a mut TextEdit + 'static) -> Self {
-        if let Some(i) = &mut self.input {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             i.access = Some(Rc::new(edit_fn(move |s| f(downcast::<S>(s)))));
         }
         self
@@ -480,14 +624,98 @@ impl El {
     /// or code block), while plain Return in a paragraph calls `on_submit` — or presses the
     /// [`El::default_button`] when the field has none.
     pub fn on_submit<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
-        if let Some(i) = &mut self.input {
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             i.submit = Some(Rc::new(move |s, tx| f(downcast::<S>(s), tx)));
         }
         self
     }
     /// Let dependent layout reflow when this input changes; the typed text remains immediate.
     pub fn animate_edit_layout(mut self) -> Self {
-        if let Some(i) = &mut self.input { i.animate_layout = true; }
+        if let Some(i) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) { i.animate_layout = true; }
         self
+    }
+}
+
+impl El {
+    /// Paint the latest text in this element's fixed layout box. `text("00:00")` reserves
+    /// that placeholder's size; explicit `.size(w, h)` also works. Updates never resize the
+    /// box or reflow siblings, and overflow is clipped. Plain single-line text only.
+    pub fn live_text(mut self, value: &crate::LiveText) -> Self {
+        assert!(self.cold.input.is_none(), "live_text cannot bind a text editor");
+        let spec = self.text.as_mut().expect("live_text requires a text element");
+        spec.cold.live = Some(value.clone());
+        self
+    }
+    #[inline]
+    pub fn color(mut self, c: Color) -> Self {
+        self.set_color(c);
+        self
+    }
+    /// [`El::color`] in place.
+    #[inline]
+    pub fn set_color(&mut self, c: Color) -> &mut Self {
+        if let Some(t) = &mut self.text {
+            t.color = c;
+            t.inked = true;
+        }
+        if let Some(cold) = self.vis.cold.get_mut_if_some() && let Some((_, ic)) = &mut cold.icon {
+            *ic = c;
+            cold.icon_inked = true;
+        }
+        if self.cold.input.is_some() {
+            self.sync_input_rich();
+        }
+        self
+    }
+    #[inline]
+    pub fn align(mut self, a: Align) -> Self {
+        self.set_align(a);
+        self
+    }
+    /// [`El::align`] in place.
+    #[inline]
+    pub fn set_align(&mut self, a: Align) -> &mut Self {
+        if let Some(t) = &mut self.text {
+            t.align = a;
+        }
+        self
+    }
+    /// Draw this text in capitals or lower case without changing its string, like SwiftUI's
+    /// `textCase`: `text("Text channels").text_case(TextCase::Uppercase)` draws "TEXT CHANNELS".
+    /// The dev tree, tools and link labels keep the authored text, and [`Span`] and [`Link`]
+    /// ranges stay byte ranges of it. Casing follows `str::to_uppercase`, so "ß" draws "SS".
+    /// Text fields draw what is typed and ignore it.
+    pub fn text_case(mut self, case: crate::TextCase) -> Self {
+        if let Some(t) = &mut self.text {
+            t.case = Some(case);
+        }
+        self
+    }
+    /// Spread each wrapped line but the last to fill the width; the last line and unwrapped text
+    /// keep [`El::align`].
+    pub fn justify(mut self) -> Self {
+        if let Some(t) = &mut self.text {
+            t.justify = true;
+        }
+        self
+    }
+    /// Measure this text as the grapheme at byte `at` of `run`, shaped as one line in the same
+    /// style, instead of on its own rounded up to a device pixel. Neighbouring cells of one run
+    /// then sit at its fractional, kerned advances and together take its width, and each draws
+    /// the run's own glyphs for its grapheme (contextual forms included).
+    pub fn advance_in(mut self, run: &crate::text::Run, at: usize) -> Self {
+        if let Some(t) = &mut self.text {
+            t.cold.advance_in = Some((run.clone(), at));
+        }
+        self
+    }
+    /// A filled disc in a list's outside marker column. The column's inline end is where the
+    /// item's text begins; its top is the top of the first line. Its width, and thus wrapping,
+    /// is up to the caller. The disc's diameter and inset resolve from the primary font's
+    /// metrics in whole device pixels during layout, also after a zoom or display change.
+    pub fn outside_list_disc(mut self, font: TextStyle) -> Self {
+        let (a, d) = crate::text::primary_extents(font).unwrap_or((0.8, 0.2));
+        self.cold_mut().list_disc = Some([a * font.size, d.abs() * font.size, font.line_px()]);
+        self.radius(999.0).a11y_hidden()
     }
 }

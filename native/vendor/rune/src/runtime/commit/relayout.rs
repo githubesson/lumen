@@ -11,25 +11,25 @@ use super::*;
 
 /// What tells a resize whether the last commit's tree still holds.
 #[derive(Default)]
-pub(super) struct Reuse {
+pub(in crate::runtime) struct Reuse {
     /// The scale the last commit built its view at.
-    pub(super) scale: f32,
+    pub(in crate::runtime) scale: f32,
     /// A layout read moved this frame, so the view runs to see it.
-    pub(super) read_moved: bool,
+    pub(in crate::runtime) read_moved: bool,
     /// The blend mode the last commit built its view in; theme colours resolve per mode.
-    pub(super) srgb: Option<bool>,
+    pub(in crate::runtime) srgb: Option<bool>,
 }
 
 impl Reuse {
     /// Records what the commit just applied was built with.
-    pub(super) fn built(&mut self, scale: f32, srgb: bool) {
+    pub(in crate::runtime) fn built(&mut self, scale: f32, srgb: bool) {
         self.scale = scale;
         self.srgb = Some(srgb);
     }
 }
 
 /// The root's size in a viewport; a window that fits its content takes its natural height.
-pub(super) fn root_size(viewport: (f32, f32), fit_height: bool) -> Size<Dimension> {
+pub(in crate::runtime) fn root_size(viewport: (f32, f32), fit_height: bool) -> Size<Dimension> {
     Size { width: length(viewport.0), height: if fit_height { auto() } else { length(viewport.1) } }
 }
 
@@ -37,74 +37,91 @@ pub(super) fn root_size(viewport: (f32, f32), fit_height: bool) -> Size<Dimensio
 /// `aspect_fit` elements and fitted anchored overlays, and pictures can change their aspect.
 /// Live bindings only own scene properties: moving the node retains their sources, sampled
 /// values and exact fill, while `apply` leaves their scene tracks alone.
-pub(super) fn reusable(n: &Node) -> bool {
+pub(in crate::runtime) fn reusable(n: &Node) -> bool {
     n.cold.get().is_none_or(|c| {
         c.aspect_fit.is_none() && c.above.as_ref().is_none_or(|a| !a.fit) && c.pixel_aspect.is_none()
     })
 }
 
-impl<S: 'static> Runtime<S> {
+/// How a commit measures, decided once before it starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::runtime) enum CommitKind {
+    /// Run the view and flatten what it returns.
+    Rebuild,
+    /// Only the window resized: lay the last commit's nodes out again at the new size.
+    Relayout,
+    /// Only virtual windows moved: keep mounted subtrees and build the rows that enter.
+    Remount,
+}
+
+impl RuntimeCore {
+    /// Which way this commit measures. Both shortcuts need everything the view reads to be as
+    /// the last commit built it, checked here once for both.
+    pub(in crate::runtime) fn commit_kind(&self, tx: &Tx) -> CommitKind {
+        let unchanged = self.commit.state_unchanged && !tx.commit.lands() && !self.commit.reuse.read_moved
+            && self.commit.reuse.scale == self.env.scale && self.commit.reuse.srgb == Some(self.paint.srgb_blend())
+            && !self.tree.has_playground && !self.patch_pending()
+            // Exiting nodes left the layout tree.
+            && self.commit.layout.live_count() == self.tree.nodes.len();
+        if !unchanged { return CommitKind::Rebuild; }
+        if self.commit.relayout {
+            // The nodes it built are all there, in the layout tree's order.
+            return if self.tree.nodes.iter().all(reusable) { CommitKind::Relayout } else { CommitKind::Rebuild };
+        }
+        if self.commit.virtual_only(&self.tree, self.frame.has_hot(), self.checking_live_only()) { CommitKind::Remount } else { CommitKind::Rebuild }
+    }
+
     /// Measures a commit: lays the last tree out again when only the viewport changed since it
     /// was built, remounts virtual rows alone when only their window moved, else runs the view.
-    pub(super) fn measure_commit(&mut self, tx: &Tx) -> Measured {
-        if self.resize_only(tx) {
+    pub(in crate::runtime) fn measure_commit(&mut self, app: &dyn ViewDriver, tx: &Tx) -> Measured {
+        let kind = self.commit_kind(tx);
+        if kind == CommitKind::Relayout {
             // The view keeps what it last read; `settle_layout_reads` and the caret check run it
             // when the new layout moves them.
-            let reads = self.layout_seen.reads.clone();
-            let caret_read = self.caret_watch;
+            let reads = self.commit.layout_seen.reads.clone();
+            let caret_read = self.edit.caret_watch;
             let selection = self.selection_by_path();
-            let mut m = self.measurement(true);
+            let (mut m, text) = self.measurement(app, true);
             m.layout_reads = reads;
             m.caret_read = caret_read;
-            return match m.relayout() {
+            return match m.relayout(text) {
                 Some(measured) => Measured { selection, ..measured },
                 None => {
                     self.refresh_layout_seen();
-                    self.measure(tx)
+                    self.measure(app, tx)
                 }
             };
         }
-        if self.virtual_only(tx) {
-            let _blend = crate::theme::scope(self.srgb_blend);
-            let _bars = crate::platform::scroll_bars::scope(self.scroll_bars.state, self.scroll_bars.runtime_id);
-            let reads = self.layout_seen.reads.clone();
-            let caret_read = self.caret_watch;
+        if kind == CommitKind::Remount {
+            let _blend = crate::theme::scope(self.paint.srgb_blend());
+            let _bars = crate::platform::scroll_bars::scope(self.host.scroll_bars.state, self.host.scroll_bars.runtime_id);
+            let reads = self.commit.layout_seen.reads.clone();
+            let caret_read = self.edit.caret_watch;
             let selection = self.selection_by_path();
-            let mut m = self.measurement(true);
+            let (mut m, text) = self.measurement(app, true);
             m.layout_reads = reads;
             m.caret_read = caret_read;
-            return match m.remount_virtuals() {
+            return match m.remount_virtuals(text) {
                 commit::remount::RemountOutcome::Measured(measured) => Measured { selection, ..measured },
                 commit::remount::RemountOutcome::Retry => {
                     self.refresh_layout_seen();
-                    self.measure_retry(tx)
+                    self.measure_retry(app, tx)
                 }
                 commit::remount::RemountOutcome::Fallback => {
                     self.refresh_layout_seen();
-                    self.measure(tx)
+                    self.measure(app, tx)
                 }
             };
         }
         self.refresh_layout_seen();
-        self.measure(tx)
-    }
-
-    /// Whether this commit only resized the window: nothing the view reads changed since the
-    /// last commit built it, and the nodes it built are all there, in the layout tree's order.
-    pub(super) fn resize_only(&self, tx: &Tx) -> bool {
-        self.relayout && self.state_unchanged && !tx.settle && !self.reuse.read_moved
-            && self.reuse.scale == self.env.scale && self.reuse.srgb == Some(self.srgb_blend)
-            && self.playground.is_none() && !self.patch_pending()
-            // Exiting nodes left the layout tree.
-            && self.layout.live_count() == self.nodes.len()
-            && self.nodes.iter().all(reusable)
+        self.measure(app, tx)
     }
 }
 
-impl<S: 'static> Measurement<'_, S> {
+impl Measurement<'_> {
     /// Lays the last commit's nodes out again at the viewport, in its layout tree. None when a
     /// virtual list's window has to move, which only the view can build.
-    fn relayout(mut self) -> Option<Measured> {
+    fn relayout(mut self, text: &mut TextSystem) -> Option<Measured> {
         self.anchor_virtuals();
         let len = self.nodes.len();
         let mut taffy = std::mem::replace(self.layout, LayoutEngine::with_capacity(0));
@@ -112,10 +129,11 @@ impl<S: 'static> Measurement<'_, S> {
         nodes.clear();
         nodes.reserve(len);
         for slot in self.nodes.iter_mut() {
-            if slot.input.is_some() || slot.is_secure() {
+            if slot.input.is_some() || slot.is_secure() || slot.text.as_ref().is_some_and(|t| t.by_paragraph(false)) {
                 // The new nodes lay their text out again; the cache then holds the only reference.
-                slot.text_layout = None;
-                let mut copy = Node { elided: None, virtual_mount: false, ..slot.clone() };
+                // A by-paragraph field's goes with it, to re-break its paragraphs from.
+                let kept = slot.text_layout.take().filter(|l| matches!(l, TextLayout::Paragraphs(_)));
+                let mut copy = Node { elided: None, virtual_mount: false, text_layout: kept, epoch: crate::runtime::paint_keep::next_epoch(), ..slot.clone() };
                 copy.clear_run_layout();
                 nodes.push(copy);
             } else {
@@ -144,7 +162,7 @@ impl<S: 'static> Measurement<'_, S> {
                 std::iter::successors(n.parent, |&p| nodes[p].parent).map(|p| nodes[p].taffy),
             );
         }
-        let (layout, mut nodes) = self.solve(taffy, root, nodes);
+        let (layout, mut nodes) = self.solve(text, taffy, root, nodes);
         if self.measure_virtuals(&nodes, false) || self.windows_move() {
             memo_reuse::restore_moved_nodes(self.nodes, &mut nodes, &reused, &[]);
             reused.clear();
@@ -161,7 +179,8 @@ impl<S: 'static> Measurement<'_, S> {
             nodes,
             reduced_motion: self.reduced_motion,
             time_scale: self.time_scale,
-            defaults: self.defaults,
+            zoom: self.zoom,
+            defaults: self.defaults.clone(),
             titlebar: self.titlebar,
             caret_read: self.caret_read,
             layout_reads: self.layout_reads,
@@ -178,9 +197,9 @@ impl<S: 'static> Measurement<'_, S> {
         for v in self.virtuals.values_mut() {
             let scroll = self.path_ids.get(&v.scroll_path).and_then(|id| self.scrolls.get(id));
             let sticky = || self.nodes.iter().find(|n| n.path == v.scroll_path).and_then(|n| n.scroll).is_some_and(|s| s.stick_bottom);
-            let pinned = scroll.map_or_else(sticky, |s| s.pinned);
-            let offset = (scroll.map_or(0.0, |s| s.offset as f32) - v.top).max(0.0);
-            v.anchor = if pinned { None } else { v.first_visible(offset.min(v.max_offset()), |_| true) };
+            let held = scroll.map_or_else(sticky, |s| s.pinned());
+            let (offset, pinned) = v.locate(scroll.map_or(0.0, |s| s.offset as f32), held);
+            v.anchor = if pinned || v.passed() { None } else { v.first_visible(offset.min(v.max_offset()), |_| true) };
         }
     }
 
@@ -202,14 +221,14 @@ impl<S: 'static> Measurement<'_, S> {
     fn windows_move(&self) -> bool {
         self.virtuals.values().any(|v| {
             self.path_ids.get(&v.scroll_path).and_then(|id| self.scrolls.get(id)).is_some_and(|s| {
-                let offset = (s.offset as f32 - v.top).max(0.0);
-                v.needs_window(offset, s.pinned) || v.spare(offset, s.pinned) > v.viewport
+                let (offset, pinned) = v.at(s.offset as f32, s.pinned());
+                v.needs_window(offset, pinned) || v.spare(offset, pinned) > v.viewport
             })
         })
     }
 
     /// Lays `nodes` out from `root_id` at the viewport, places them, and lays out their text.
-    pub(super) fn solve(&mut self, mut taffy: LayoutEngine, root_id: SlotId, mut nodes: Vec<Node>) -> (LayoutEngine, Vec<Node>) {
+    pub(in crate::runtime) fn solve(&mut self, text: &mut TextSystem, mut taffy: LayoutEngine, root_id: SlotId, mut nodes: Vec<Node>) -> (LayoutEngine, Vec<Node>) {
         let scale = self.env.scale;
         let room = Size {
             width: AvailableSpace::Definite(self.viewport.0),
@@ -217,7 +236,7 @@ impl<S: 'static> Measurement<'_, S> {
         };
         {
             let _layout_time = crate::frame::profile::Scope::new(crate::frame::profile::Phase::Layout);
-            compute_layout(&mut taffy, root_id, room, &nodes, &mut self.text, scale);
+            compute_layout(&mut taffy, root_id, room, &nodes, text, scale);
             // `aspect_fit` elements laid out filling their room; fix each at the largest box
             // at its ratio inside it and lay out again, so siblings and alignment follow.
             let mut refit = false;
@@ -232,7 +251,7 @@ impl<S: 'static> Measurement<'_, S> {
                     refit = true;
                 }
             }
-            if refit { compute_layout(&mut taffy, root_id, room, &nodes, &mut self.text, scale); }
+            if refit { compute_layout(&mut taffy, root_id, room, &nodes, text, scale); }
         }
         self.stats.layout_nodes = nodes.len();
         #[cfg(debug_assertions)]
@@ -240,12 +259,12 @@ impl<S: 'static> Measurement<'_, S> {
 
         self.place(&taffy, &mut nodes);
         if self.fit_anchored(&mut taffy, &nodes) {
-            compute_layout(&mut taffy, root_id, room, &nodes, &mut self.text, scale);
+            compute_layout(&mut taffy, root_id, room, &nodes, text, scale);
             self.place(&taffy, &mut nodes);
         }
         for n in nodes.iter_mut().filter(|n| n.text.is_some()) {
             let w = (taffy.box_layout(n.taffy).w - n.inset[0] - n.inset[2]).max(0.0);
-            lay_out_text(&mut self.text, n, w, scale);
+            lay_out_text(text, n, w, scale);
         }
 
         (taffy, nodes)
@@ -260,7 +279,7 @@ fn build_relayout_spans(
     nodes: &[Node],
     virtuals: &HashMap<String, crate::el::virtual_list::VirtualList>,
     path_ids: &HashMap<String, NodeId>,
-    node_index: &HashMap<NodeId, usize>,
+    node_index: &NodeIndex,
     split: &mut Vec<bool>,
     out: &mut Vec<memo_reuse::ReusedSpan>,
 ) {
@@ -322,23 +341,33 @@ fn build_relayout_spans(
 }
 
 /// Lays `n`'s text out again at the width it was laid out at.
-pub(super) fn lay_out_text_in_place(text: &mut TextSystem, n: &mut Node, scale: f32) {
+pub(in crate::runtime) fn lay_out_text_in_place(text: &mut TextSystem, n: &mut Node, scale: f32) {
     let w = (n.local.w - n.inset[0] - n.inset[2]).max(0.0);
     lay_out_text(text, n, w, scale);
 }
 
 /// Lays `n`'s text out at its content width `w`.
-pub(super) fn lay_out_text(text: &mut TextSystem, n: &mut Node, w: f32, scale: f32) {
+pub(in crate::runtime) fn lay_out_text(text: &mut TextSystem, n: &mut Node, w: f32, scale: f32) {
     let Some(spec) = &n.text else { return };
     // A cell of a run draws from the run's layout (and keeps it cached) instead of its own.
-    let run = spec.advance_in.as_ref().map(|(run, at)| (text.run_layout(run, spec.style, scale), *at));
+    let run = spec.cold.advance_in.as_ref().map(|(run, at)| (text.run_layout(run, spec.style, scale), *at));
     if let Some((r, _)) = run.filter(|(r, at)| r.x(*at).is_some()) {
-        n.text_layout = Some(r.layout.clone());
+        n.text_layout = Some(TextLayout::Single(r.layout.clone()));
         n.cold_mut().run_layout = Some(r);
         return;
     }
-    let wrap = spec.wrap.then_some(w * scale);
-    let mut layout = text.layout_for_spec(spec, scale, wrap, line_alignment(spec));
+    let wrap = spec.wrap.then_some(w * scale + super::text_layout::FIT_SLACK);
+    // A by-paragraph field keeps what its last layout (still on it) shares with this one.
+    let is_input = n.input.is_some();
+    let mut layout = match text.layout_text(&spec.as_text_input(scale, is_input), is_input, scale, wrap, line_alignment(spec), n.text_layout.as_ref()) {
+        TextLayout::Single(l) => l,
+        TextLayout::Paragraphs(mut p) => {
+            text.prepare_highlights(&mut p, &spec.cold.highlights);
+            n.text_layout = Some(TextLayout::Paragraphs(p));
+            n.elided = None;
+            return;
+        }
+    };
     let mut elided = None;
     if spec.truncate && layout.full_width() > w * scale + 0.5 {
         let (cut, e) = truncated(text, spec, scale, w * scale);
@@ -346,6 +375,6 @@ pub(super) fn lay_out_text(text: &mut TextSystem, n: &mut Node, w: f32, scale: f
     } else if let Some((cut, e)) = clamped(text, spec, scale, w * scale, &layout) {
         (layout, elided) = (cut, Some(e));
     }
-    n.text_layout = Some(layout);
+    n.text_layout = Some(TextLayout::Single(layout));
     n.elided = elided;
 }

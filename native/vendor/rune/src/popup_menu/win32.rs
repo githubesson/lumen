@@ -11,18 +11,21 @@
 //! minimum width, so `Show::positioned` and `Show::min_width` don't apply. Keyboard navigation
 //! (arrows, Enter, Esc, first letters, submenus), screen-edge flipping and dismissal by a click
 //! outside are the system's. Menus are light or dark as the window's content is (`scheme`).
-use std::{cell::RefCell, rc::Rc, sync::{Arc, OnceLock, atomic::{AtomicUsize, Ordering}}};
+
+#![allow(unsafe_code)]
+
+use std::{cell::{Cell, RefCell}, rc::Rc, sync::{Arc, OnceLock, atomic::{AtomicUsize, Ordering}}};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, EndMenu, GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow,
-    GetWindowLongPtrW, HMENU, IsWindowVisible, KillTimer, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING,
-    PostMessageW, RegisterWindowMessageW, SetForegroundWindow, SetTimer, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, TPM_TOPALIGN, TPM_VERTICAL, TPMPARAMS, TrackPopupMenuEx, WM_NCDESTROY, WM_NULL, WS_EX_NOACTIVATE,
-    WindowFromPoint,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, EndMenu, GetClientRect, GetCursorPos, GetForegroundWindow, HMENU,
+    IsWindow, IsWindowVisible, KillTimer, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW,
+    RegisterWindowMessageW, SetForegroundWindow, SetTimer, TPM_LAYOUTRTL, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
+    TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TPM_TOPALIGN, TPM_VERTICAL, TPMPARAMS, TRACK_POPUP_MENU_FLAGS, TrackPopupMenuEx,
+    WM_NCDESTROY, WM_NULL, WindowFromPoint,
 };
 use winit::window::Window;
 
@@ -33,18 +36,58 @@ pub(super) const SUPPORTED: bool = true;
 
 /// The menu's owner while `TrackPopupMenuEx` runs, so `EndMenu` (which ends whatever menu this
 /// thread tracks) only ends this one.
-pub(super) type Tracking = Option<HWND>;
+pub(super) type Tracking = HWND;
 
 /// The next menu's subclass id. `GetWindowSubclass` would find an earlier one by a fixed id,
 /// but the comctl32 an app without a v6 manifest loads exports it by ordinal only.
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 
 /// The timer asking for the event loop's idle turn while a menu tracks, about once a frame.
-const TURN_TIMER: usize = 0x5255_4e50;
+/// Each active `Turns` gets its own timer id so nested modal loops never cancel each other's timer.
+static NEXT_TIMER: AtomicUsize = AtomicUsize::new(0x5255_4e50);
 const TURN_MS: u32 = 16;
+
+/// Whether this thread is currently inside a Win32 modal menu loop or turn timer trampoline.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ModalPhase {
+    #[default]
+    Idle,
+    Active,
+}
 
 thread_local! {
     static TURN: RefCell<Option<Waker>> = const { RefCell::new(None) };
+    static IN_TURN: Cell<ModalPhase> = const { Cell::new(ModalPhase::Idle) };
+    static IN_MENU: Cell<ModalPhase> = const { Cell::new(ModalPhase::Idle) };
+}
+
+/// Guard preventing re-entrant Win32 modal menu loops (`TrackPopupMenu` / `TrackPopupMenuEx`) on
+/// the same thread.
+pub(crate) struct MenuLoopGuard;
+
+impl Drop for MenuLoopGuard {
+    fn drop(&mut self) {
+        IN_MENU.with(|phase| phase.set(ModalPhase::Idle));
+    }
+}
+
+/// Enters a Win32 modal menu loop on this thread, returning `None` if one is already active.
+pub(crate) fn enter_menu_loop() -> Option<MenuLoopGuard> {
+    IN_MENU.with(|phase| {
+        if phase.get() != ModalPhase::Idle {
+            return None;
+        }
+        phase.set(ModalPhase::Active);
+        Some(MenuLoopGuard)
+    })
+}
+
+struct TurnGuard;
+
+impl Drop for TurnGuard {
+    fn drop(&mut self) {
+        IN_TURN.with(|phase| phase.set(ModalPhase::Idle));
+    }
 }
 
 /// A menu handed over and waiting for its posted message.
@@ -88,9 +131,9 @@ pub(super) fn show(window: &Arc<Window>, show: Show, session: Rc<Session>, wake:
 
 /// Stops the menu tracking on this thread. Its `TrackPopupMenuEx` returns once the handler that
 /// asked returns.
-pub(super) fn stop(session: &Session, tracking: bool) {
+pub(super) fn stop(_: Tracking) {
     // SAFETY: ends this thread's active menu, which is this session's.
-    if tracking && session.tracking.borrow().is_some() { unsafe { EndMenu() }; }
+    unsafe { EndMenu() };
 }
 
 /// Menus from now on are dark or light, whatever the system's appearance.
@@ -118,12 +161,13 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, w: WPARAM, l: LPAR
             Box::from_raw(data as *mut Pending)
         };
         let opens = message != WM_NCDESTROY;
-        let picked = if opens { std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| track(hwnd, &pending))) } else { Ok(None) };
+        let mut pointer = None;
+        let picked = if opens { std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| track(hwnd, &pending, &mut pointer))) } else { Ok(None) };
         let picked = picked.unwrap_or_else(|_| {
             eprintln!("rune: pop-up menu panicked");
             None
         });
-        if pending.session.resolve(picked) && let Some(wake) = &pending.wake { wake(); }
+        if pending.session.resolve(picked, pointer) && let Some(wake) = &pending.wake { wake(); }
         if opens { return 0; }
     }
     // SAFETY: passes every other message on to winit's window procedure.
@@ -131,44 +175,93 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, w: WPARAM, l: LPAR
 }
 
 unsafe extern "system" fn turn(_: HWND, _: u32, _: usize, _: u32) {
-    TURN.with(|t| if let Some(turn) = &*t.borrow() { turn() });
+    let entered = IN_TURN.with(|phase| {
+        if phase.get() != ModalPhase::Idle {
+            return false;
+        }
+        phase.set(ModalPhase::Active);
+        true
+    });
+    if !entered {
+        return;
+    }
+    let _guard = TurnGuard;
+    // Clone before invoking so the `RefCell` borrow is released before user code runs.
+    let waker = TURN.with(|t| t.borrow().clone());
+    if let Some(waker) = waker {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| waker())).ok();
+    }
+}
+
+/// Asks for the event loop's idle turn about once a frame while a modal loop over `hwnd` runs
+/// (a menu's), until it drops.
+pub(crate) struct Turns {
+    hwnd: HWND,
+    id: usize,
+    armed: bool,
+}
+
+pub(crate) fn turns(hwnd: HWND) -> Turns {
+    let id = NEXT_TIMER.fetch_add(1, Ordering::Relaxed);
+    // SAFETY: a timer on this thread's live window, killed when the guard drops.
+    let armed = unsafe { IsWindow(hwnd) != 0 && SetTimer(hwnd, id, TURN_MS, Some(turn)) != 0 };
+    Turns { hwnd, id, armed }
+}
+
+impl Drop for Turns {
+    fn drop(&mut self) {
+        // SAFETY: `IsWindow` safely validates `self.hwnd` on this thread before killing the timer.
+        if self.armed && unsafe { IsWindow(self.hwnd) != 0 } {
+            // SAFETY: `self.hwnd` was just confirmed live and `self.id` is the timer `turns` armed on it.
+            unsafe { KillTimer(self.hwnd, self.id) };
+        }
+    }
 }
 
 /// Shows the menu over `hwnd` until it closes. The picked item's id, or `None` when it was
-/// dismissed, cancelled or couldn't open. Leaves where the pointer is in the session.
-fn track(hwnd: HWND, pending: &Pending) -> Option<String> {
+/// dismissed, cancelled or couldn't open. Leaves where the pointer is in `pointer`.
+fn track(hwnd: HWND, pending: &Pending, pointer: &mut Option<(f32, f32)>) -> Option<String> {
+    let _modal = enter_menu_loop()?;
     if !pending.session.begin() { return None; }
     // SAFETY: Win32 calls on this thread's live window. The menu is built, tracked and
     // destroyed here.
     unsafe {
         // A close or hide in the same turn as the request, after the host handed it over.
-        if IsWindowVisible(hwnd) == 0 { return None; }
+        if IsWindow(hwnd) == 0 || IsWindowVisible(hwnd) == 0 { return None; }
         let mut ids = Vec::new();
         let menu = build(&pending.show.menu, &mut ids)?;
         let (x, y, params) = placement(hwnd, &pending.show);
         // A menu closes on a click elsewhere, and gets the keyboard, only while its owner is
-        // the foreground window. A window that never activates (an overlay) takes the
-        // foreground for its menu, and hands it back after.
+        // the foreground window. An overlay takes the foreground for its menu, and hands it back
+        // after (`hands_back`).
         let previous = GetForegroundWindow();
         if previous != hwnd { SetForegroundWindow(hwnd); }
-        let flags = TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN
+        let flags = TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_TOPALIGN | layout()
             | if params.is_some() { TPM_VERTICAL } else { 0 };
         let params_ptr = params.as_ref().map_or(std::ptr::null(), |p| p as *const TPMPARAMS);
-        let timer = SetTimer(hwnd, TURN_TIMER, TURN_MS, Some(turn));
-        *pending.session.tracking.borrow_mut() = Some(hwnd);
+        let turns = turns(hwnd);
+        pending.session.tracking(Some(hwnd));
         let command = TrackPopupMenuEx(menu.0, flags, x, y, hwnd, params_ptr);
-        pending.session.tracking.borrow_mut().take();
-        if timer != 0 { KillTimer(hwnd, TURN_TIMER); }
-        // The menu's loop lets go of the foreground state once the owner gets a message.
-        PostMessageW(hwnd, WM_NULL, 0, 0);
-        let overlay = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_NOACTIVATE != 0;
-        if overlay && !previous.is_null() && previous != hwnd && GetForegroundWindow() == hwnd {
-            SetForegroundWindow(previous);
+        pending.session.tracking(None);
+        drop(turns);
+        if IsWindow(hwnd) != 0 {
+            // The menu's loop lets go of the foreground state once the owner gets a message.
+            PostMessageW(hwnd, WM_NULL, 0, 0);
+            if hands_back(crate::platform::win32::is_overlay(hwnd), previous, hwnd, GetForegroundWindow()) {
+                SetForegroundWindow(previous);
+            }
+            // winit sends no pointer move until the pointer leaves the pixel it's on.
+            *pointer = client_pointer(hwnd);
         }
-        // winit sends no pointer move until the pointer leaves the pixel it's on.
-        pending.session.pointer.set(client_pointer(hwnd));
         usize::try_from(command).ok()?.checked_sub(1).and_then(|i| ids.get(i)).cloned()
     }
+}
+
+/// Whether the menu's `owner` gives the foreground back to `previous` once the menu closes: an
+/// overlay, whatever its `KeyPolicy`, that took the foreground only for the menu and still has
+/// it. One that had the foreground before (an `OnDemand` overlay the user clicked) keeps it.
+fn hands_back(overlay: bool, previous: HWND, owner: HWND, foreground: HWND) -> bool {
+    overlay && !previous.is_null() && previous != owner && foreground == owner
 }
 
 /// Where the pointer is over `hwnd`'s content, in points, unless another window covers it.
@@ -185,8 +278,16 @@ fn client_pointer(hwnd: HWND) -> Option<(f32, f32)> {
     }
 }
 
-/// Where the menu opens, in screen pixels: below an element anchor, keeping clear of it when it
-/// has to flip up, or with its top-left corner at a point.
+/// How a menu lays out in the app's language ([`crate::labels::set_direction`]): from its left
+/// edge, or right to left from its right edge, mirrored, as a right-to-left Windows lays out its
+/// menus.
+pub(crate) fn layout() -> TRACK_POPUP_MENU_FLAGS {
+    if crate::labels::rtl() { TPM_LAYOUTRTL | TPM_RIGHTALIGN } else { TPM_LEFTALIGN }
+}
+
+/// Where the menu opens, in screen pixels: below an element anchor (from its left edge, or its
+/// right right to left), keeping clear of it when it has to flip up, or with its top-left corner
+/// (top-right right to left) at a point.
 fn placement(hwnd: HWND, show: &Show) -> (i32, i32, Option<TPMPARAMS>) {
     let scale = scale(hwnd);
     let mut origin = POINT { x: 0, y: 0 };
@@ -196,7 +297,7 @@ fn placement(hwnd: HWND, show: &Show) -> (i32, i32, Option<TPMPARAMS>) {
     let Some([x, y, w, h]) = show.element else { return (px(show.at.0, origin.x), px(show.at.1, origin.y), None) };
     let element = RECT { left: px(x, origin.x), top: px(y, origin.y), right: px(x + w, origin.x), bottom: px(y + h, origin.y) };
     let params = TPMPARAMS { cbSize: size_of::<TPMPARAMS>() as u32, rcExclude: element };
-    (element.left, element.bottom, Some(params))
+    (if crate::labels::rtl() { element.right } else { element.left }, element.bottom, Some(params))
 }
 
 /// Physical pixels per point on `hwnd`'s monitor.
@@ -225,9 +326,10 @@ unsafe fn build(menu: &PopupMenu, ids: &mut Vec<String>) -> Option<OwnedMenu> {
                     }
                 }
                 Entry::Separator => { AppendMenuW(hmenu.0, MF_SEPARATOR, 0, std::ptr::null()); }
-                Entry::Submenu(title, menu) => {
+                Entry::Submenu(title, menu, enabled) => {
                     let Some(submenu) = build(menu, ids) else { continue };
-                    if AppendMenuW(hmenu.0, MF_STRING | MF_POPUP, submenu.0 as usize, wide(&escape(title)).as_ptr()) != 0 {
+                    let flags = MF_STRING | MF_POPUP | if *enabled { 0 } else { MF_GRAYED };
+                    if AppendMenuW(hmenu.0, flags, submenu.0 as usize, wide(&escape(title)).as_ptr()) != 0 {
                         std::mem::forget(submenu);
                     }
                 }
@@ -251,3 +353,7 @@ fn label(item: &PopupItem) -> String {
 fn escape(title: &str) -> String { title.replace('&', "&&").replace('\t', " ") }
 
 fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(Some(0)).collect() }
+
+#[cfg(test)]
+#[path = "win32_tests.rs"]
+mod tests;

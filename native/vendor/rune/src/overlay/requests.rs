@@ -1,13 +1,24 @@
 //! What other threads ask of an overlay, applied on its next event-loop turn, and the
 //! requests that change a live window's native options.
 
+use std::time::Duration;
+
 use crate::el::Tx;
 
-use super::Overlay;
+use super::OverlayCore;
 
 pub(super) type Update<T> = Box<dyn FnOnce(&mut T, &mut Tx) -> bool + Send>;
 
-pub(super) struct Requests<T> {
+/// A show or a hide, fading the window's alpha over its duration (zero: at once; see
+/// `OverlayHandle::fade_in` and `fade_out` for where windows fade).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Visibility {
+    Show(Duration),
+    Hide(Duration),
+}
+
+#[derive(Default)]
+pub(super) struct Requests {
     pub input: Option<crate::OverlayInput>,
     pub follow_pointer: Option<bool>,
     pub placement: Option<Option<crate::OverlayPlacement>>,
@@ -15,31 +26,26 @@ pub(super) struct Requests<T> {
     pub request_keys: bool,
     /// Move to the display under the pointer now (`OverlayHandle::refollow_pointer`).
     pub refollow: bool,
-    pub visible: Option<bool>,
+    /// The latest show or hide wins.
+    pub visibility: Option<Visibility>,
     pub edge: Option<super::ScreenEdge>,
     pub margin: Option<f32>,
     pub align: Option<(crate::Align, f32)>,
     pub size: Option<(f32, f32)>,
-    /// How long the `visible` change fades the window's alpha (macOS).
-    pub fade: Option<std::time::Duration>,
     pub macos_level: Option<isize>,
     pub exclude_from_capture: Option<bool>,
     pub xwayland_input: Option<bool>,
     /// The `setup` waker fired.
     pub woken: bool,
-    pub updates: Vec<Update<T>>,
 }
 
-impl<T> Default for Requests<T> {
-    fn default() -> Self {
-        Requests {
-            input: None, follow_pointer: None, placement: None, display: None, request_keys: false, refollow: false, visible: None, edge: None,
-            margin: None, align: None, size: None, fade: None, macos_level: None, exclude_from_capture: None, xwayland_input: None, woken: false, updates: Vec::new(),
-        }
-    }
+#[cfg(test)]
+impl Requests {
+    /// Whether the latest request shows (`Some(true)`) or hides the overlay.
+    pub fn visible(&self) -> Option<bool> { self.visibility.map(|v| matches!(v, Visibility::Show(_))) }
 }
 
-impl<T: 'static> Overlay<T> {
+impl OverlayCore {
     /// Keeps the window out of screen recordings, or lets recorders see it again. A window
     /// made later (Wayland recreates on hide) starts from the same option.
     pub(super) fn set_capture_exclusion(&mut self, exclude: bool) {

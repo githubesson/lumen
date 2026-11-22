@@ -25,20 +25,20 @@ impl El {
 
     /// [`El::pill`] for several ranges.
     pub fn pills(mut self, pills: impl IntoIterator<Item = (Range<usize>, PillStyle)>) -> Self {
-        if self.input.is_some() {
+        if self.cold.input.is_some() {
             return self;
         }
         let Some(t) = &mut self.text else { return self };
         for (r, st) in pills {
             let ok = r.start < r.end && t.content.is_char_boundary(r.start) && t.content.is_char_boundary(r.end) && r.end <= t.content.len();
             let (start, end) = (r.start as u32, r.end as u32);
-            if !ok || t.pills.iter().any(|p| p.start < end && start < p.end) {
+            if !ok || t.cold.pills.iter().any(|p| p.start < end && start < p.end) {
                 continue;
             }
-            let at = t.pills.partition_point(|p| p.start < start);
-            t.pills.insert(at, PillChip { start, end, icon: st.icon, bg: st.bg, fg: st.fg, bare: None });
+            let at = t.cold.pills.partition_point(|p| p.start < start);
+            t.cold.pills.insert(at, PillChip { start, end, icon: st.icon, bg: st.bg, fg: st.fg, bare: None });
         }
-        t.spans = with_pill_colors(&t.spans, &t.pills);
+        t.spans = with_pill_colors(&t.spans, &t.cold.pills);
         self
     }
 }
@@ -55,7 +55,7 @@ impl El {
     /// rich("see the docs", spans).inline_icon(8, InlineIcon::glyph(&GLOBE).size(14.0).gap(4.0))
     /// ```
     pub fn inline_icon(mut self, at: usize, icon: InlineIcon) -> Self {
-        if self.input.is_some() {
+        if self.cold.input.is_some() {
             return self;
         }
         let Some(t) = &mut self.text else { return self };
@@ -64,13 +64,13 @@ impl El {
         }
         let word = t.content[at..].find(char::is_whitespace).unwrap_or(t.content.len() - at);
         let (start, end) = (at as u32, (at + word) as u32);
-        if word == 0 || t.pills.iter().any(|p| p.start < end && start < p.end) {
+        if word == 0 || t.cold.pills.iter().any(|p| p.start < end && start < p.end) {
             return self;
         }
-        let at = t.pills.partition_point(|p| p.start < start);
+        let at = t.cold.pills.partition_point(|p| p.start < start);
         let InlineIcon { icon, image, size, gap, radius, color } = icon;
         let bare = Some(Box::new(BareIcon { size, gap, radius, image }));
-        t.pills.insert(at, PillChip { start, end, icon, bg: None, fg: color, bare });
+        t.cold.pills.insert(at, PillChip { start, end, icon, bg: None, fg: color, bare });
         self
     }
 }
