@@ -207,6 +207,31 @@
   min-width: 0;
 }
 
+/* API keys (ApiKeysSetting.tsx). On a phone the name takes its own line
+   rather than squeezing beside the expiry and Create. */
+.api-key-form {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.api-key-form .input {
+  flex: 1 1 14rem;
+}
+/* A key just made, to copy, under the form. */
+.api-key-created {
+  display: grid;
+  gap: 6px;
+}
+/* .input sets its own font, so the utility class alone doesn't reach it. */
+.api-key-created .input {
+  font-family: var(--font-mono);
+}
+.api-key-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 /* Discord card options (DiscordSettings.tsx). The preview keeps Discord's
    own dark colours in both themes, so it reads as Discord's card. */
 .discord-lines {

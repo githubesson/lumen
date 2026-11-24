@@ -21,7 +21,9 @@ import { trapTab } from "../lib/focusTrap";
 import { openExternal } from "../lib/platform";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useTransitionMount } from "../lib/useTransitionMount";
+import ApiKeysSetting from "./ApiKeysSetting";
 import { Button } from "./Button";
+import { isDialogShellOpen } from "./DialogShell";
 import {
   NowPlayingApiSetting,
   ServerSetting,
@@ -159,6 +161,8 @@ export default function SettingsDialog({ open, onClose }: Props) {
     // Capture phase, so Escape and Tab are settled here before anything behind
     // the scrim sees them. Other page shortcuts are off via useModalKeyScope.
     const onKeyDown = (event: KeyboardEvent) => {
+      // A dialog opened from a section (a confirm) holds the keys until it closes.
+      if (isDialogShellOpen()) return;
       // An open Select's Tab carries on from its trigger, so it's trapped too.
       if (event.key === "Tab") {
         trapTab(event, panel);
@@ -389,6 +393,11 @@ export default function SettingsDialog({ open, onClose }: Props) {
               },
             ]
           : []),
+        {
+          id: "api-keys",
+          keywords: "api keys key token bearer scripts programs automation developer revoke",
+          render: () => <ApiKeysSetting />,
+        },
       ],
     },
     {

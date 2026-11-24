@@ -3,6 +3,7 @@
 import type {
   AdminUser,
   Album,
+  ApiKey,
   APITrackerPin,
   Artist,
   ArtistGridPin,
@@ -563,6 +564,12 @@ export const invites: Invite[] = [
   { id: "inv-1", token: "lmn_7QxV2pKc9RfT4wZb", target_role: "user", max_uses: 5, uses: 2, expires_at: "2099-11-01T00:00:00Z", created_at: "2026-10-01T12:00:00Z" },
   { id: "inv-2", token: "lmn_Hd83LwQe1NvY6sAa", target_role: "admin", max_uses: 1, uses: 0, expires_at: "2026-10-18T00:00:00Z", created_at: "2026-10-09T08:30:00Z" },
   { id: "inv-3", token: "lmn_Zp4mKt7BcXr2Ue9J", target_role: "user", max_uses: 10, uses: 10, expires_at: null, created_at: "2026-05-20T17:45:00Z" },
+];
+
+export const apiKeys: ApiKey[] = [
+  { id: "key-1", name: "Home Assistant", prefix: "lumen_q7XvB2", created_at: "2026-10-02T09:14:00Z", last_used_at: "2026-10-11T07:40:00Z", expires_at: null },
+  { id: "key-2", name: "Nightly playlist backup to the NAS", prefix: "lumen_Kd93Lw", created_at: "2026-09-12T18:02:00Z", last_used_at: null, expires_at: "2099-03-12T18:02:00Z" },
+  { id: "key-3", name: "Old stats script", prefix: "lumen_Zp4mKt", created_at: "2025-06-01T10:00:00Z", last_used_at: "2025-08-30T21:15:00Z", expires_at: "2025-09-01T10:00:00Z" },
 ];
 
 export const musicRoots: MusicRoot[] = [
