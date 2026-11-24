@@ -20,6 +20,9 @@ use crate::ui::{Btn, css_border_bottom, font, ico, icons as i, line, mono, snug_
 
 const KEYWORDS: &str = "api keys key token bearer scripts programs automation developer revoke";
 
+/// `MAX_NAME`: the server's limit on a key's name, in characters.
+const MAX_NAME: usize = 100;
+
 /// `EXPIRY`: days, and the select's label.
 const EXPIRY: [(u32, &str); 4] =
     [(0, "Never expires"), (30, "Expires in 30 days"), (90, "Expires in 90 days"), (365, "Expires in a year")];
@@ -180,7 +183,14 @@ fn form_row(app: &App, t: &Theme, last: bool) -> El {
     // `.input.settings-input`, read-only while the key is made.
     let mut field = text_field(t, "settings-api-key-name", &s.name, font(12.0, 400.0), "Name it after what uses it").label("Key name").min_w(0.0);
     if !s.creating {
-        field = field.on_edit(|app: &mut App| &mut app.overlays.settings.api_keys.name);
+        field = field.on_edit(|app: &mut App| &mut app.overlays.settings.api_keys.name).on_input_change(|app: &mut App, _| {
+            // `maxLength={MAX_NAME}`: the server refuses a longer name.
+            let name = &mut app.overlays.settings.api_keys.name;
+            if name.text.chars().count() > MAX_NAME {
+                let cut: String = name.text.chars().take(MAX_NAME).collect();
+                name.replace_text(cut);
+            }
+        });
     }
     field = field.on_submit(|app: &mut App, _| create(app));
     let name = input_box(t, "settings-api-key-name", s.name.focused, field).min_w(0.0);

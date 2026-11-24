@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ApiKey } from "../src/api";
+import type { ApiKey, CreatedApiKey } from "../src/api";
 import ApiKeysSetting from "../src/components/ApiKeysSetting";
 import { ConfirmProvider } from "../src/context/Confirm";
 import { clearResourceCache } from "../src/lib/resourceCache";
@@ -47,10 +48,18 @@ const expired: ApiKey = {
   expires_at: "2025-02-01T10:00:00Z",
 };
 
+// Holds the key just made the way SettingsDialog does; `shown` false is
+// another section, which unmounts the setting.
+function Harness({ shown = true }: { shown?: boolean }) {
+  const [created, setCreated] = useState<CreatedApiKey | null>(null);
+  return shown ? <ApiKeysSetting created={created} setCreated={setCreated} /> : null;
+}
+
 async function renderSetting(keys: ApiKey[]) {
   mock.listApiKeys.mockResolvedValue(keys);
-  render(<ApiKeysSetting />, { wrapper: ConfirmProvider });
+  const view = render(<Harness />, { wrapper: ConfirmProvider });
   await act(async () => {});
+  return view;
 }
 
 it("lists keys by name and prefix, marking only the expired one", async () => {
@@ -108,7 +117,7 @@ it("revokes a key after the confirm", async () => {
 
 it("loads the whole list when a key is made before it arrived", async () => {
   mock.listApiKeys.mockRejectedValueOnce(new Error("offline"));
-  render(<ApiKeysSetting />, { wrapper: ConfirmProvider });
+  render(<Harness />, { wrapper: ConfirmProvider });
   await act(async () => {});
   expect(screen.getByText("Couldn't load your API keys.")).toBeTruthy();
 
@@ -123,4 +132,44 @@ it("loads the whole list when a key is made before it arrived", async () => {
   expect(mock.listApiKeys).toHaveBeenCalledTimes(2);
   expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(3);
   expect(screen.getByText("lumen_AbCdEf…")).toBeTruthy();
+});
+
+it("keeps the whole list when a key is made while the list is still loading", async () => {
+  let resolveFirst!: (keys: ApiKey[]) => void;
+  mock.listApiKeys.mockReturnValueOnce(
+    new Promise<ApiKey[]>((resolve) => {
+      resolveFirst = resolve;
+    }),
+  );
+  render(<Harness />, { wrapper: ConfirmProvider });
+  await act(async () => {});
+
+  const made: ApiKey = { ...used, id: "k3", name: "Home Assistant", prefix: "lumen_Secret", last_used_at: null };
+  mock.createApiKey.mockResolvedValue({ ...made, key: "lumen_SecretRestOfTheKey" });
+  mock.listApiKeys.mockResolvedValue([made, used, expired]);
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Home Assistant" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await act(async () => {});
+  // The first load, from before the key, lands late: it mustn't win.
+  await act(async () => resolveFirst([used]));
+
+  expect(mock.listApiKeys).toHaveBeenCalledTimes(2);
+  expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(3);
+});
+
+it("still shows a new key after another section and back", async () => {
+  const view = await renderSetting([used]);
+  mock.createApiKey.mockResolvedValue({ ...used, id: "k3", name: "Home Assistant", key: "lumen_SecretRestOfTheKey" });
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Home Assistant" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await act(async () => {});
+  expect(document.activeElement).toBe(screen.getByLabelText("New key “Home Assistant”"));
+
+  view.rerender(<Harness shown={false} />);
+  view.rerender(<Harness />);
+  await act(async () => {});
+  const shown = screen.getByLabelText("New key “Home Assistant”") as HTMLInputElement;
+  expect(shown.value).toBe("lumen_SecretRestOfTheKey");
+  // Coming back doesn't pull focus into the section.
+  expect(document.activeElement).not.toBe(shown);
 });

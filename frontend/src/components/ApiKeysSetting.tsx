@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
   Check as CheckIcon,
   Clipboard as ClipboardIcon,
@@ -43,12 +43,21 @@ function keyDates(key: ApiKey): string {
   return parts.join(" · ");
 }
 
+interface Props {
+  /**
+   * The key just made, held by SettingsDialog until it closes: switching
+   * sections or searching unmounts this, and the key can't be fetched again.
+   */
+  created: CreatedApiKey | null;
+  setCreated: Dispatch<SetStateAction<CreatedApiKey | null>>;
+}
+
 /**
  * The signed-in user's API keys: make one (shown once, to copy), see when
  * each was last used, revoke them. The key itself never comes back after
  * it's made, so the list tells keys apart by name and first characters.
  */
-export default function ApiKeysSetting() {
+export default function ApiKeysSetting({ created, setCreated }: Props) {
   const { me } = useAuth();
   const {
     data: keys,
@@ -65,9 +74,10 @@ export default function ApiKeysSetting() {
   const [expiry, setExpiry] = useState("0");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
-  const [created, setCreated] = useState<CreatedApiKey | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
+  // Set by a create, so coming back to the section doesn't refocus the key.
+  const focusKey = useRef(false);
   const revokeRefs = useRef(new Map<string, HTMLButtonElement>());
   const { copied, flash, reset } = useCopiedFlag(2000);
   const desktopServer = useDesktopConfig()?.backendUrl;
@@ -77,7 +87,9 @@ export default function ApiKeysSetting() {
   // Create disables itself as the request goes out; focus goes on to the new
   // key, selected for copying.
   useEffect(() => {
-    if (created) keyRef.current?.focus();
+    if (!created || !focusKey.current) return;
+    focusKey.current = false;
+    keyRef.current?.focus();
   }, [created]);
 
   const create = async (e: FormEvent) => {
@@ -95,6 +107,7 @@ export default function ApiKeysSetting() {
       // new key in it: adding to nothing would show the new key alone.
       if (keys) update((list) => list && [listed, ...list.filter((k) => k.id !== listed.id)]);
       else void reload();
+      focusKey.current = true;
       setCreated(made);
       setName("");
       reset();
