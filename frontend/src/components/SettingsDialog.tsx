@@ -21,8 +21,7 @@ import { trapTab } from "../lib/focusTrap";
 import { openExternal } from "../lib/platform";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useTransitionMount } from "../lib/useTransitionMount";
-import type { CreatedApiKey } from "../api";
-import ApiKeysSetting from "./ApiKeysSetting";
+import ApiKeysSetting, { useApiKeySession } from "./ApiKeysSetting";
 import { Button } from "./Button";
 import { isDialogShellOpen } from "./DialogShell";
 import {
@@ -101,8 +100,6 @@ export default function SettingsDialog({ open, onClose }: Props) {
   const searchRef = useRef<HTMLInputElement>(null);
   const [active, setActive] = useState<SectionId>("appearance");
   const [query, setQuery] = useState("");
-  // A key just made, shown until Settings closes, whichever section is open.
-  const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
 
   const {
     theme,
@@ -137,6 +134,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
   // released (e.g. to the palette after a Mod-K handoff, or a quick reopen).
   const interactive = open && mounted;
   const updates = useDesktopUpdates(interactive);
+  const apiKeySession = useApiKeySession(open, mounted);
   const desktop = useDesktopSettings(interactive);
 
   // The side column can open while a section claims it and the window has
@@ -218,13 +216,6 @@ export default function SettingsDialog({ open, onClose }: Props) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuery("");
   }, [open]);
-
-  // Forget the key once Settings has faded out: it's shown only once.
-  useEffect(() => {
-    if (mounted) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCreatedKey(null);
-  }, [mounted]);
 
   const lastFMState = lastFMConnectionState(lastFM, lastFMError);
 
@@ -406,7 +397,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
         {
           id: "api-keys",
           keywords: "api keys key token bearer scripts programs automation developer revoke",
-          render: () => <ApiKeysSetting created={createdKey} setCreated={setCreatedKey} />,
+          render: () => <ApiKeysSetting session={apiKeySession} />,
         },
       ],
     },
