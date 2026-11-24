@@ -54,6 +54,7 @@ export default function ApiKeysSetting() {
     data: keys,
     error: loadError,
     update,
+    reload,
   } = useApiResource<ApiKey[]>(
     (signal) => api.listApiKeys({ signal }),
     "Couldn't load your API keys.",
@@ -90,7 +91,10 @@ export default function ApiKeysSetting() {
       const made = await api.createApiKey({ name: trimmed, expires_in_days: Number(expiry) });
       // The list (and its cache) never holds the key itself.
       const { key: _key, ...listed } = made;
-      update((list) => [listed, ...(list ?? []).filter((k) => k.id !== listed.id)]);
+      // A list that hasn't loaded yet, or failed to, loads afresh with the
+      // new key in it: adding to nothing would show the new key alone.
+      if (keys) update((list) => list && [listed, ...list.filter((k) => k.id !== listed.id)]);
+      else void reload();
       setCreated(made);
       setName("");
       reset();

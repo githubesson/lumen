@@ -92,19 +92,23 @@ fn create(app: &mut App) {
             s.creating = false;
             match result {
                 Ok(made) => {
-                    // The list never holds the key itself.
+                    // The list never holds the key itself. A list that hasn't
+                    // loaded yet, or failed to, loads afresh with the new key
+                    // in it: adding to nothing would show the new key alone.
                     let listed = made.listed.clone();
-                    if s.keys.data.is_some() {
+                    let loaded = s.keys.data.is_some();
+                    if loaded {
                         s.keys.update(|list| {
                             list.retain(|k| k.id != listed.id);
                             list.insert(0, listed);
                         });
-                    } else {
-                        s.keys.set(vec![listed]);
                     }
                     s.created = Some(made);
                     s.name = TextEdit::new("");
                     s.copied.clear();
+                    if !loaded {
+                        on_open(app);
+                    }
                 }
                 Err(e) => {
                     s.error = Some(crate::api::error_message(&e, "Couldn't make the key."));
