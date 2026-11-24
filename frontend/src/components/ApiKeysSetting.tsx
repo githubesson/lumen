@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 import {
   Check as CheckIcon,
   Clipboard as ClipboardIcon,
@@ -44,11 +44,54 @@ function keyDates(key: ApiKey): string {
 }
 
 /**
+ * What outlives the section while Settings is open: switching sections or
+ * searching unmounts ApiKeysSetting, but the key just made can't be fetched
+ * again, and a create still out must keep the form locked.
+ */
+export interface ApiKeySession {
+  /** The key just made, shown until Settings closes. */
+  created: CreatedApiKey | null;
+  setCreated: (update: (created: CreatedApiKey | null) => CreatedApiKey | null) => void;
+  /** A create is out: no second one until it settles. */
+  creating: boolean;
+  setCreating: (creating: boolean) => void;
+  /** Bumped as Settings closes, so a create that lands later is dropped. */
+  generation: RefObject<number>;
+}
+
+/** SettingsDialog's hold on the API keys section, forgotten on close. */
+export function useApiKeySession(open: boolean, mounted: boolean): ApiKeySession {
+  const [created, setCreated] = useState<CreatedApiKey | null>(null);
+  const [creating, setCreating] = useState(false);
+  const generation = useRef(0);
+  // Closing drops whatever create is still out, and unlocks the form.
+  useEffect(() => {
+    if (open) return;
+    generation.current += 1;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCreating(false);
+  }, [open]);
+  // The key stays on screen through the exit fade, then goes. Opening
+  // (a reopen mid-fade too) starts without one.
+  useEffect(() => {
+    if (!open && mounted) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCreated(null);
+  }, [open, mounted]);
+  return useMemo(() => ({ created, setCreated, creating, setCreating, generation }), [created, creating]);
+}
+
+interface Props {
+  session: ApiKeySession;
+}
+
+/**
  * The signed-in user's API keys: make one (shown once, to copy), see when
  * each was last used, revoke them. The key itself never comes back after
  * it's made, so the list tells keys apart by name and first characters.
  */
-export default function ApiKeysSetting() {
+export default function ApiKeysSetting({ session }: Props) {
+  const { created, setCreated, creating, setCreating, generation } = session;
   const { me } = useAuth();
   const {
     data: keys,
@@ -63,11 +106,11 @@ export default function ApiKeysSetting() {
   const confirm = useConfirm();
   const [name, setName] = useState("");
   const [expiry, setExpiry] = useState("0");
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
-  const [created, setCreated] = useState<CreatedApiKey | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
+  // Set by a create, so coming back to the section doesn't refocus the key.
+  const focusKey = useRef(false);
   const revokeRefs = useRef(new Map<string, HTMLButtonElement>());
   const { copied, flash, reset } = useCopiedFlag(2000);
   const desktopServer = useDesktopConfig()?.backendUrl;
@@ -77,32 +120,49 @@ export default function ApiKeysSetting() {
   // Create disables itself as the request goes out; focus goes on to the new
   // key, selected for copying.
   useEffect(() => {
-    if (created) keyRef.current?.focus();
+    if (!created || !focusKey.current) return;
+    focusKey.current = false;
+    keyRef.current?.focus();
   }, [created]);
+
+  // The key just made belongs in the list, whichever mount of this section
+  // made it. The list (and its cache) never holds the key itself. A list
+  // that hasn't loaded yet, or failed to, loads afresh with the new key in
+  // it: adding to nothing would show the new key alone. A list that lands
+  // later without it (fetched before it was made) gets it added.
+  const unknownList = !keys;
+  useEffect(() => {
+    if (created && unknownList) void reload();
+  }, [created, unknownList, reload]);
+  useEffect(() => {
+    if (!created || !keys || keys.some((k) => k.id === created.id)) return;
+    const { key: _key, ...listed } = created;
+    update((current) => current && [listed, ...current.filter((k) => k.id !== listed.id)]);
+  }, [created, keys, update]);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = name.trim();
     // A second submit while one is out would make a second key.
     if (creating || !trimmed) return;
+    // Settings closing in the meantime drops the reply: the key it made is
+    // listed next time, never shown.
+    const at = generation.current;
     setCreating(true);
     setError("");
     try {
       const made = await api.createApiKey({ name: trimmed, expires_in_days: Number(expiry) });
-      // The list (and its cache) never holds the key itself.
-      const { key: _key, ...listed } = made;
-      // A list that hasn't loaded yet, or failed to, loads afresh with the
-      // new key in it: adding to nothing would show the new key alone.
-      if (keys) update((list) => list && [listed, ...list.filter((k) => k.id !== listed.id)]);
-      else void reload();
-      setCreated(made);
+      if (generation.current !== at) return;
+      focusKey.current = true;
+      setCreated(() => made);
       setName("");
       reset();
     } catch (err) {
+      if (generation.current !== at) return;
       setError(errorMessage(err, "Couldn't make the key."));
       nameRef.current?.focus();
     } finally {
-      setCreating(false);
+      if (generation.current === at) setCreating(false);
     }
   };
 

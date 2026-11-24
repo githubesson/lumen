@@ -21,7 +21,7 @@ import { trapTab } from "../lib/focusTrap";
 import { openExternal } from "../lib/platform";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useTransitionMount } from "../lib/useTransitionMount";
-import ApiKeysSetting from "./ApiKeysSetting";
+import ApiKeysSetting, { useApiKeySession } from "./ApiKeysSetting";
 import { Button } from "./Button";
 import { isDialogShellOpen } from "./DialogShell";
 import {
@@ -134,6 +134,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
   // released (e.g. to the palette after a Mod-K handoff, or a quick reopen).
   const interactive = open && mounted;
   const updates = useDesktopUpdates(interactive);
+  const apiKeySession = useApiKeySession(open, mounted);
   const desktop = useDesktopSettings(interactive);
 
   // The side column can open while a section claims it and the window has
@@ -396,7 +397,7 @@ export default function SettingsDialog({ open, onClose }: Props) {
         {
           id: "api-keys",
           keywords: "api keys key token bearer scripts programs automation developer revoke",
-          render: () => <ApiKeysSetting />,
+          render: () => <ApiKeysSetting session={apiKeySession} />,
         },
       ],
     },

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ApiKey } from "../src/api";
-import ApiKeysSetting from "../src/components/ApiKeysSetting";
+import type { ApiKey, CreatedApiKey } from "../src/api";
+import ApiKeysSetting, { useApiKeySession } from "../src/components/ApiKeysSetting";
 import { ConfirmProvider } from "../src/context/Confirm";
 import { clearResourceCache } from "../src/lib/resourceCache";
 
@@ -47,10 +47,25 @@ const expired: ApiKey = {
   expires_at: "2025-02-01T10:00:00Z",
 };
 
+// Holds the section's session the way SettingsDialog does. `shown` false is
+// another section, which unmounts the setting; `open` false is Settings
+// closed (and faded out).
+function Harness({ shown = true, open = true }: { shown?: boolean; open?: boolean }) {
+  const session = useApiKeySession(open, open);
+  return shown && open ? <ApiKeysSetting session={session} /> : null;
+}
+
+function pendingCreate() {
+  let resolve!: (made: CreatedApiKey) => void;
+  mock.createApiKey.mockReturnValueOnce(new Promise<CreatedApiKey>((r) => (resolve = r)));
+  return (made: CreatedApiKey) => act(async () => resolve(made));
+}
+
 async function renderSetting(keys: ApiKey[]) {
   mock.listApiKeys.mockResolvedValue(keys);
-  render(<ApiKeysSetting />, { wrapper: ConfirmProvider });
+  const view = render(<Harness />, { wrapper: ConfirmProvider });
   await act(async () => {});
+  return view;
 }
 
 it("lists keys by name and prefix, marking only the expired one", async () => {
@@ -108,7 +123,7 @@ it("revokes a key after the confirm", async () => {
 
 it("loads the whole list when a key is made before it arrived", async () => {
   mock.listApiKeys.mockRejectedValueOnce(new Error("offline"));
-  render(<ApiKeysSetting />, { wrapper: ConfirmProvider });
+  render(<Harness />, { wrapper: ConfirmProvider });
   await act(async () => {});
   expect(screen.getByText("Couldn't load your API keys.")).toBeTruthy();
 
@@ -132,7 +147,7 @@ it("keeps the whole list when a key is made while the list is still loading", as
       resolveFirst = resolve;
     }),
   );
-  render(<ApiKeysSetting />, { wrapper: ConfirmProvider });
+  render(<Harness />, { wrapper: ConfirmProvider });
   await act(async () => {});
 
   const made: ApiKey = { ...used, id: "k3", name: "Home Assistant", prefix: "lumen_Secret", last_used_at: null };
@@ -146,4 +161,56 @@ it("keeps the whole list when a key is made while the list is still loading", as
 
   expect(mock.listApiKeys).toHaveBeenCalledTimes(2);
   expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(3);
+});
+
+it("still shows a new key after another section and back", async () => {
+  const view = await renderSetting([used]);
+  mock.createApiKey.mockResolvedValue({ ...used, id: "k3", name: "Home Assistant", key: "lumen_SecretRestOfTheKey" });
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Home Assistant" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await act(async () => {});
+  expect(document.activeElement).toBe(screen.getByLabelText("New key “Home Assistant”"));
+
+  view.rerender(<Harness shown={false} />);
+  view.rerender(<Harness />);
+  await act(async () => {});
+  const shown = screen.getByLabelText("New key “Home Assistant”") as HTMLInputElement;
+  expect(shown.value).toBe("lumen_SecretRestOfTheKey");
+  // Coming back doesn't pull focus into the section.
+  expect(document.activeElement).not.toBe(shown);
+});
+
+it("keeps Create locked across sections while a key is being made", async () => {
+  const view = await renderSetting([used]);
+  const finish = pendingCreate();
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Home Assistant" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  view.rerender(<Harness shown={false} />);
+  view.rerender(<Harness />);
+  await act(async () => {});
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Second" } });
+  expect((screen.getByRole("button", { name: "Creating…" }) as HTMLButtonElement).disabled).toBe(true);
+
+  await finish({ ...used, id: "k3", name: "Home Assistant", key: "lumen_SecretRestOfTheKey" });
+  expect(mock.createApiKey).toHaveBeenCalledTimes(1);
+  expect((screen.getByLabelText("New key “Home Assistant”") as HTMLInputElement).value).toBe("lumen_SecretRestOfTheKey");
+  // The mount that's showing lists it, though another one made it.
+  expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(2);
+});
+
+it("drops a key that lands after Settings closed", async () => {
+  const view = await renderSetting([used]);
+  const finish = pendingCreate();
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Home Assistant" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  view.rerender(<Harness open={false} />);
+  await finish({ ...used, id: "k3", name: "Home Assistant", key: "lumen_SecretRestOfTheKey" });
+  view.rerender(<Harness />);
+  await act(async () => {});
+  expect(screen.queryByLabelText("New key “Home Assistant”")).toBeNull();
+  // Not locked by the create that was dropped.
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Second" } });
+  expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
 });

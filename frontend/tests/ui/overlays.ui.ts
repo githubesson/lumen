@@ -147,6 +147,30 @@ test("settings API keys section", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+// The key is shown only once: it survives other sections and searches while
+// Settings is open, and goes when Settings closes.
+test("settings keeps a new key until it closes", async ({ page }) => {
+  let dialog = await openSettings(page);
+  await dialog.getByRole("button", { name: "Connections" }).click();
+  await dialog.getByLabel("Key name").fill("Stats script");
+  await dialog.getByRole("button", { name: "Create" }).click();
+  const key = dialog.getByLabel("New key “Stats script”");
+  await expect(key).toBeVisible();
+  await dialog.getByRole("button", { name: "Appearance" }).click();
+  await expect(key).toBeHidden();
+  await dialog.getByRole("button", { name: "Connections" }).click();
+  await expect(key).toHaveValue(/^lumen_/);
+  await dialog.getByRole("searchbox").fill("bearer");
+  await expect(key).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  dialog = await openSettings(page);
+  await dialog.getByRole("button", { name: "Connections" }).click();
+  await expect(dialog.getByText("Home Assistant", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("New key “Stats script”")).toHaveCount(0);
+});
+
 // A confirm opened from Settings takes Escape and Tab; Settings stays open
 // behind it, on the same section.
 test("settings confirm keys", async ({ page }) => {
