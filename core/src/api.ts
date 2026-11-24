@@ -11,6 +11,8 @@ import type { PageParams, RequestOptions, SearchOffsets } from "./api-transport"
 import type { LyricsResult, ReplayBucket, ReplayData } from "./api-media";
 import type {
   AdminUser,
+  ApiKey,
+  CreatedApiKey,
   Invite,
   InviteCheck,
   LastFMConnectResponse,
@@ -120,6 +122,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ current_password, new_password }),
     }, { notifyUnauthorized: (body) => body !== "invalid credentials" }),
+
+  // The server refuses these to API keys; only a signed-in app manages them.
+  listApiKeys: (options: RequestOptions = {}) =>
+    request<ApiKey[]>("/api/auth/api-keys", options),
+  /** `expires_in_days` 0 or absent: the key lasts until it's revoked. */
+  createApiKey: (input: { name: string; expires_in_days?: number }) =>
+    request<CreatedApiKey>("/api/auth/api-keys", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  deleteApiKey: (id: string) =>
+    requestVoid(`/api/auth/api-keys/${pathID(id)}`, { method: "DELETE" }),
 
   listAdminUsers: (options: RequestOptions = {}) =>
     request<AdminUser[]>("/api/admin/users", options),
