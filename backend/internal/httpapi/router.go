@@ -35,6 +35,7 @@ type Deps struct {
 	Users          *users.Store
 	Invites        *invites.Store
 	Sessions       *auth.SessionStore
+	APIKeys        *auth.APIKeyStore
 	Ingest         *ingest.Service
 	Library        *library.Store
 	Playlists      *playlists.Store
@@ -82,6 +83,11 @@ func NewRouter(d Deps) http.Handler {
 	// same-origin, and the mobile app sends no browser headers, so none of
 	// them trip it.
 	r.Use(http.NewCrossOriginProtection().Handler)
+	// API keys (`Authorization: Bearer lumen_…`) act as the user who made
+	// them, admin included; RequireSession keeps a few routes to the app.
+	if d.APIKeys != nil {
+		r.Use(appmw.AuthenticateAPIKey(d.APIKeys))
+	}
 	r.Use(appmw.Authenticate(d.Sessions))
 
 	authH := &handlers.Auth{
@@ -94,6 +100,7 @@ func NewRouter(d Deps) http.Handler {
 		DeviceKey: auth.DeriveKey(d.CoverSignKey, "known-device"),
 	}
 	invH := &handlers.Invites{Store: d.Invites}
+	apiKeysH := &handlers.APIKeys{Store: d.APIKeys}
 	libH := &handlers.Library{
 		Ingest:     d.Ingest,
 		Library:    d.Library,
@@ -249,20 +256,26 @@ func NewRouter(d Deps) http.Handler {
 			// coverRequestsPerMinute. The timeout ends a wait for either.
 			covers := r.With(appmw.Timeout(imageRequestTimeout),
 				appmw.RateLimitByIP(coverRequestsPerMinute, time.Minute))
+			// Only a signed-in app, not an API key: a leaked key can't make
+			// more keys, change the password or hold the playback socket.
+			session := ordinary.With(appmw.RequireSession)
 			ordinary.Get("/auth/me", authH.Me)
-			ordinary.Post("/auth/logout", authH.Logout)
+			session.Post("/auth/logout", authH.Logout)
+			session.Get("/auth/api-keys", apiKeysH.List)
+			session.With(appmw.RateLimitByIP(10, time.Minute)).Post("/auth/api-keys", apiKeysH.Create)
+			session.Delete("/auth/api-keys/{id}", apiKeysH.Delete)
 			ordinary.Get("/integrations/lastfm", lastFMH.Status)
 			ordinary.Post("/integrations/lastfm/connect", lastFMH.Connect)
 			ordinary.Post("/integrations/lastfm/complete", lastFMH.Complete)
 			ordinary.Delete("/integrations/lastfm", lastFMH.Disconnect)
-			ordinary.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/reset-password", authH.ResetPassword)
+			session.With(appmw.RateLimitByIP(5, 10*time.Minute)).Post("/auth/reset-password", authH.ResetPassword)
 
 			ordinary.Put("/activity", activityH.Upsert)
 			ordinary.Get("/activity/current", activityH.Current)
 			ordinary.Delete("/activity/{device_id}", activityH.Delete)
 			// Long-lived connection: deliberately bypass the ordinary request
 			// timeout. Authentication still runs before the WebSocket upgrade.
-			r.Get("/activity/ws", activityH.Socket)
+			r.With(appmw.RequireSession).Get("/activity/ws", activityH.Socket)
 
 			ordinary.Get("/tracks", tracksH.List)
 			ordinary.Get("/search", searchH.Search)

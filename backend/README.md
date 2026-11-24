@@ -9,7 +9,9 @@ Go HTTP API for Lumen, the self-hosted, invite-only music library.
   the password is empty a random one is written, mode 0600, to
   `ADMIN_PASSWORD_FILE` (default `$MUSIC_PATH/.initial-admin-password`, or
   `<user config dir>/lumen/initial-admin-password` if that isn't writable), and
-  the seeded admin must reset it on first login).
+  the seeded admin must reset it on first login), and per-user API keys that
+  let scripts call the API as their owner (see
+  [docs/api-keys.md](docs/api-keys.md)).
 - **Invite-only registration** — admins mint invite tokens (role, max uses,
   expiry); users register via `/register?token=…`.
 - **Library** — admin-managed music roots, filesystem scanning and ingest with
