@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::client::{ApiResult, Behavior, Body, Client, Notify, query};
+use super::client::{ApiResult, Behavior, Body, Client, Notify, query, seg};
 use super::de::string_or_number;
 use super::types::{Me, Role};
 
@@ -59,6 +59,36 @@ pub struct InviteCheck {
     pub target_role: Option<Role>,
 }
 
+/// A key scripts send as `Authorization: Bearer <key>` to call the API as
+/// its owner (`ApiKey`). The key itself only comes back once, from
+/// [`create_api_key`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct ApiKey {
+    #[serde(default, deserialize_with = "string_or_number")]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// The key's first characters, to tell keys apart.
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+    /// None: lasts until it's revoked.
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+/// A key just made (`CreatedApiKey`), the only time the key itself is sent.
+#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
+pub struct CreatedApiKey {
+    #[serde(flatten)]
+    pub listed: ApiKey,
+    #[serde(default)]
+    pub key: String,
+}
+
 /// `api.login`. Call [`Client::advance_auth_generation`] once it lands.
 pub fn login(c: &Client, username: &str, password: &str) -> ApiResult<Me> {
     let body = Body::Json(json!({ "username": username, "password": password }));
@@ -86,6 +116,23 @@ pub fn check_invite(c: &Client, token: &str) -> ApiResult<InviteCheck> {
     c.get(&format!("/api/auth/invite{}", query(&[("token", Some(token.to_string()))])))
 }
 
+// The server refuses these to API keys; only a signed-in app manages them.
+
+/// `api.listApiKeys`: the user's keys, newest first.
+pub fn list_api_keys(c: &Client) -> ApiResult<Vec<ApiKey>> {
+    c.get_list("/api/auth/api-keys")
+}
+
+/// `api.createApiKey`. `expires_in_days` 0: the key lasts until it's revoked.
+pub fn create_api_key(c: &Client, name: &str, expires_in_days: u32) -> ApiResult<CreatedApiKey> {
+    c.post("/api/auth/api-keys", json!({ "name": name, "expires_in_days": expires_in_days }))
+}
+
+/// `api.deleteApiKey`.
+pub fn delete_api_key(c: &Client, id: &str) -> ApiResult<()> {
+    c.delete_void(&format!("/api/auth/api-keys/{}", seg(id)))
+}
+
 fn session_gone(body: &str) -> bool {
     body != "invalid credentials"
 }
@@ -106,6 +153,17 @@ mod tests {
         assert!(!session_gone("invalid credentials"));
         assert!(session_gone("unauthorized"));
         assert!(session_gone(""));
+    }
+
+    #[test]
+    fn a_created_key_carries_the_key_beside_the_listed_fields() {
+        let made: CreatedApiKey = serde_json::from_str(
+            r#"{"id":"k1","name":"Stats","prefix":"lumen_AbCdEf","created_at":"2026-11-24T10:00:00Z","last_used_at":null,"expires_at":null,"key":"lumen_AbCdEfRest"}"#,
+        )
+        .unwrap();
+        assert_eq!(made.key, "lumen_AbCdEfRest");
+        assert_eq!(made.listed.prefix, "lumen_AbCdEf");
+        assert_eq!(made.listed.expires_at, None);
     }
 
     #[test]

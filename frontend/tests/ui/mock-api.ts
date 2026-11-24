@@ -157,6 +157,20 @@ export function apiRoutes(signedIn: boolean): [string, RegExp, Handler][] {
     ["GET", /^\/api\/auth\/me$/, () => (signedIn ? { json: data.me } : { status: 401, text: "unauthorized" })],
     ["GET", /^\/api\/auth\/invite$/, () => ({ json: { valid: true, target_role: "user" } })],
     ["POST", /^\/api\/auth\/logout$/, () => noContent],
+    ["GET", /^\/api\/auth\/api-keys$/, () => ({ json: data.apiKeys })],
+    ["POST", /^\/api\/auth\/api-keys$/, (_m, _url, route) => {
+      const { name, expires_in_days: days } = route.request().postDataJSON() as { name: string; expires_in_days?: number };
+      const key = "lumen_Wm3hT8rQ0yJ5nCkVb1sXe7uPa4dLg2fZoK9iR6wHq";
+      return {
+        status: 201,
+        json: {
+          id: "key-new", name, prefix: key.slice(0, 12), key,
+          created_at: "2026-10-11T08:00:00Z", last_used_at: null,
+          expires_at: days ? new Date(Date.parse("2026-10-11T08:00:00Z") + days * 86_400_000).toISOString() : null,
+        },
+      };
+    }],
+    ["DELETE", new RegExp(`^/api/auth/api-keys/${id}$`), () => noContent],
 
     // Library
     ["GET", /^\/api\/tracks$/, (_m, url) => {

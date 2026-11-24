@@ -298,6 +298,7 @@ pub fn connections<'a>(app: &'a App, t: &'a Theme, d: &DesktopConfig) -> Vec<Set
     vec![
         one("last.fm lastfm scrobbling scrobble connect account", move |last| lastfm_row(app, t, last)),
         one("now playing api obs overlay stream widget local http server cover", move |last| now_playing_row(app, t, &d, last)),
+        super::api_keys::settings(app, t),
     ]
 }
 

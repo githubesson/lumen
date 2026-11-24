@@ -3,6 +3,7 @@
 //! rows on the right, plus a side column a section can claim (the Discord
 //! card preview). Rows live in [`rows`] (`DesktopSettings.tsx`,
 //! `DesktopUpdates.tsx`, Last.fm) and [`discord`] (`DiscordSettings.tsx`).
+pub mod api_keys;
 pub mod desktop_bridge;
 pub mod discord;
 pub mod discord_card;
@@ -47,6 +48,7 @@ pub struct State {
     pub desktop: rows::DesktopUi,
     pub updates: rows::UpdatesUi,
     pub discord: discord::CardUi,
+    pub api_keys: api_keys::State,
     /// Bumped as the dialog closes, so late results of its work are dropped.
     pub session: u64,
 }
@@ -66,6 +68,7 @@ pub fn open(app: &mut App) {
     s.query = TextEdit::new("");
     rows::on_open(app);
     discord::on_open(app);
+    api_keys::on_open(app);
 }
 
 pub fn close(app: &mut App) {
@@ -81,6 +84,7 @@ pub fn close(app: &mut App) {
     let s = &mut app.overlays.settings;
     s.session += 1;
     rows::on_close(app);
+    api_keys::on_close(app);
 }
 
 pub fn toggle(app: &mut App) {

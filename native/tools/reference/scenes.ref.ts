@@ -633,6 +633,35 @@ const SCENES: Scene[] = [
     act: async (p) => {
       await openSettings(p, "Connections");
       await p.getByText("Scrobbling as", { exact: false }).waitFor();
+      await p.getByText("Home Assistant", { exact: true }).waitFor();
+    },
+  },
+  {
+    name: "settings-api-key-created",
+    wait: rows,
+    act: async (p) => {
+      await openSettings(p, "Connections");
+      await p.getByText("Home Assistant", { exact: true }).waitFor();
+      const dialog = p.getByRole("dialog");
+      await dialog.getByLabel("Key name").fill("Stats script");
+      await dialog.getByRole("button", { name: "Create" }).click();
+      // The web focuses and selects the new key to copy; the port shows it
+      // unfocused, as its other read-only fields.
+      await dialog.getByLabel("New key “Stats script”").evaluate((el: HTMLInputElement) => {
+        el.setSelectionRange(0, 0);
+        el.scrollLeft = 0;
+        el.blur();
+      });
+    },
+  },
+  {
+    name: "settings-api-key-revoke",
+    wait: rows,
+    act: async (p) => {
+      await openSettings(p, "Connections");
+      await p.getByText("Home Assistant", { exact: true }).waitFor();
+      await p.getByRole("dialog").getByRole("button", { name: "Revoke" }).first().click();
+      await p.getByRole("alertdialog", { name: "Revoke this API key?" }).waitFor();
     },
   },
   {

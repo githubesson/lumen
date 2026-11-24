@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { DialogShell } from "../src/components/DialogShell";
+import { DialogShell, isDialogShellOpen } from "../src/components/DialogShell";
 import { Select } from "../src/components/Select";
 
 // jsdom lays nothing out, so every element reports no client rects and the
@@ -124,4 +124,15 @@ it("keeps Tab inside when it leaves an open Select that is the last control", as
   await waitFor(() => expect(document.activeElement).toBe(again));
   fireEvent.keyDown(again, { key: "Tab", shiftKey: true });
   expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "Pick" }));
+});
+
+// SettingsDialog has its own scaffold and steps aside while one is open.
+it("reports whether a dialog is open", async () => {
+  render(<Harness />);
+  expect(isDialogShellOpen()).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Open" }));
+  await screen.findByRole("dialog");
+  await waitFor(() => expect(isDialogShellOpen()).toBe(true));
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(isDialogShellOpen()).toBe(false));
 });

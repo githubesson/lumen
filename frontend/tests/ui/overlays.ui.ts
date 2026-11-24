@@ -137,6 +137,44 @@ test("settings playback section", async ({ page }, testInfo) => {
   await checkUI(page, testInfo);
 });
 
+test("settings API keys section", async ({ page }, testInfo) => {
+  const dialog = await openSettings(page);
+  await dialog.getByRole("button", { name: "Connections" }).click();
+  await ready(page, dialog.getByText("Home Assistant", { exact: true }));
+  await dialog.getByLabel("Key name").fill("Stats script");
+  await dialog.getByRole("button", { name: "Create" }).click();
+  await ready(page, dialog.getByLabel("New key “Stats script”"));
+  await checkUI(page, testInfo);
+});
+
+// A confirm opened from Settings takes Escape and Tab; Settings stays open
+// behind it, on the same section.
+test("settings confirm keys", async ({ page }) => {
+  const dialog = await openSettings(page);
+  await dialog.getByRole("button", { name: "Connections" }).click();
+  await dialog.getByRole("button", { name: "Revoke" }).first().click();
+  const confirm = page.getByRole("alertdialog", { name: "Revoke this API key?" });
+  const cancel = confirm.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(confirm.getByRole("button", { name: "Revoke" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('[role="alertdialog"]'))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(confirm).toBeHidden();
+  await expect(dialog.getByText("Home Assistant", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Revoke" }).first()).toBeFocused();
+  // Revoking moves focus to the next key's button, the opener being gone.
+  await dialog.getByRole("button", { name: "Revoke" }).first().click();
+  await confirm.getByRole("button", { name: "Revoke" }).click();
+  await expect(confirm).toBeHidden();
+  await expect(dialog.getByText("Home Assistant", { exact: true })).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Revoke" }).first()).toBeFocused();
+  // Settings answers Escape again once the confirm is gone.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
 test("playback error details", async ({ page }, testInfo) => {
   // A library file the server no longer has.
   await page.route(`**/api/tracks/${menuTrack.id}/stream`, (route) =>

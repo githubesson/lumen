@@ -81,6 +81,14 @@ pub const SCENES: &[(&str, fn(&mut App))] = &[
     ("settings-equalizer", |a| settings(a, SectionId::Equalizer)),
     ("settings-playback", |a| settings(a, SectionId::Playback)),
     ("settings-connections", |a| settings(a, SectionId::Connections)),
+    ("settings-api-key-created", |a| {
+        settings(a, SectionId::Connections);
+        crate::overlays::settings::api_keys::scene_created(a);
+    }),
+    ("settings-api-key-revoke", |a| {
+        settings(a, SectionId::Connections);
+        crate::overlays::settings::api_keys::scene_revoke(a);
+    }),
     ("settings-search", |a| {
         // The reference bridge's server is the page's own origin.
         a.config.backend_url = Some("http://localhost:4792".into());
