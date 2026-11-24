@@ -155,8 +155,9 @@ func Authenticate(ss sessionAuthenticator) func(http.Handler) http.Handler {
 
 // RequireSession refuses requests an API key authenticated, for what only a
 // signed-in app may do: manage API keys, change the password, sign out, hold
-// the playback socket. A leaked key can't make more keys or lock its owner
-// out. Mount it after RequireUser.
+// the playback socket. A leaked key can't make more keys or change its
+// owner's password (an admin's key can still do what an admin can; see
+// docs/api-keys.md). Mount it after RequireUser.
 func RequireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := SessionTokenFromContext(r.Context()); !ok {

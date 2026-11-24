@@ -306,44 +306,100 @@ func TestAPIKeys(t *testing.T) {
 		}
 	})
 
-	// A create whose request outlasts a password change in flight waits for
-	// it on the user row, then finds its session gone.
-	t.Run("a create waiting on a password change makes no key", func(t *testing.T) {
-		user := redteamUser(t, ctx, pool)
-		hash := signIn(user)
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
+	// A create racing a password change or a disable on the user row, in
+	// both orders, through the real users.Store functions: whichever goes
+	// second, no working key is left. A lock the test holds on the row
+	// queues them in a known order.
+	waitingOnLocks := func(t *testing.T, n int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var got int
+			if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_stat_activity
+				WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got >= n {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%d sessions waiting on locks, want %d", got, n)
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		defer tx.Rollback(ctx)
-		// ChangePassword's order: the user row, then the sessions.
-		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = 'new', updated_at = NOW() WHERE id = $1`, user); err != nil {
-			t.Fatal(err)
+	}
+	revokers := []struct {
+		name string
+		run  func(user uuid.UUID) error
+	}{
+		{"password change", func(user uuid.UUID) error { return usersStore.ChangePassword(ctx, user, "test", "new-hash") }},
+		{"disable", func(user uuid.UUID) error {
+			return dbutil.WithTx(ctx, pool, func(tx pgx.Tx) error { return usersStore.DisableTx(ctx, tx, user) })
+		}},
+	}
+	for _, rv := range revokers {
+		for _, createFirst := range []bool{false, true} {
+			name := rv.name + " then create"
+			if createFirst {
+				name = "create then " + rv.name
+			}
+			t.Run("race: "+name, func(t *testing.T) {
+				user := redteamUser(t, ctx, pool)
+				hash := signIn(user)
+				hold, err := pool.Begin(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer hold.Rollback(ctx)
+				if _, err := hold.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, user); err != nil {
+					t.Fatal(err)
+				}
+				var plain string
+				created := make(chan error, 1)
+				revoked := make(chan error, 1)
+				startCreate := func() {
+					go func() {
+						p, _, err := keys.Create(ctx, user, hash, "racing", nil)
+						plain = p
+						created <- err
+					}()
+				}
+				startRevoke := func() { go func() { revoked <- rv.run(user) }() }
+				if createFirst {
+					startCreate()
+					waitingOnLocks(t, 1)
+					startRevoke()
+				} else {
+					startRevoke()
+					waitingOnLocks(t, 1)
+					startCreate()
+				}
+				waitingOnLocks(t, 2)
+				if err := hold.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if err := <-revoked; err != nil {
+					t.Fatalf("%s: %v", rv.name, err)
+				}
+				err = <-created
+				switch {
+				case createFirst && err != nil:
+					t.Fatalf("create ahead of the %s: %v", rv.name, err)
+				case !createFirst && !errors.Is(err, auth.ErrSignedOut):
+					t.Fatalf("create behind the %s: %v", rv.name, err)
+				}
+				var n int
+				if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE user_id = $1`, user).Scan(&n); err != nil || n != 0 {
+					t.Fatalf("keys left: %d (%v)", n, err)
+				}
+				if plain != "" {
+					if code, _ := me(creds{bearer: plain}); code != http.StatusUnauthorized {
+						t.Fatalf("the raced key still works: %d", code)
+					}
+				}
+			})
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, user); err != nil {
-			t.Fatal(err)
-		}
-		done := make(chan error, 1)
-		go func() {
-			_, _, err := keys.Create(ctx, user, hash, "late", nil)
-			done <- err
-		}()
-		select {
-		case err := <-done:
-			t.Fatalf("create didn't wait for the password change: %v", err)
-		case <-time.After(300 * time.Millisecond):
-		}
-		if err := tx.Commit(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if err := <-done; !errors.Is(err, auth.ErrSignedOut) {
-			t.Fatalf("create after the password change committed: %v", err)
-		}
-		var n int
-		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE user_id = $1`, user).Scan(&n); err != nil || n != 0 {
-			t.Fatalf("keys left: %d (%v)", n, err)
-		}
-	})
+	}
 
 	t.Run("password change and disable revoke keys", func(t *testing.T) {
 		changer := redteamUser(t, ctx, pool)
