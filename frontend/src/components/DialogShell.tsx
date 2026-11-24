@@ -10,6 +10,14 @@ import { useTransitionMount } from "../lib/useTransitionMount";
 const openDialogs: object[] = [];
 
 /**
+ * Whether a DialogShell is open, for SettingsDialog, which has its own scaffold:
+ * a dialog opened over it (a confirm) answers Escape and Tab first.
+ */
+export function isDialogShellOpen(): boolean {
+  return openDialogs.length > 0;
+}
+
+/**
  * Shared modal scaffold: scrim + mount/exit transition + header with close
  * button + Escape-to-close. Promoted out of EditDialog so UploadDialog and the
  * playlist dialogs (which hand-rolled their own scaffold and dropped

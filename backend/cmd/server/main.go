@@ -234,6 +234,7 @@ func main() {
 		Users:            usersStore,
 		Invites:          invitesStore,
 		Sessions:         sessions,
+		APIKeys:          auth.NewAPIKeyStore(pool),
 		Ingest:           ingestSvc,
 		Library:          libraryStore,
 		Playlists:        playlistsStore,

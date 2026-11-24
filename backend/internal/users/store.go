@@ -100,9 +100,9 @@ func (s *Store) Enable(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// DisableTx disables a user and revokes their sessions inside tx, the one
-// the caller checks there is another admin in. It returns ErrNotFound when
-// there is no such user.
+// DisableTx disables a user and revokes their sessions and API keys inside
+// tx, the one the caller checks there is another admin in. It returns
+// ErrNotFound when there is no such user.
 func (s *Store) DisableTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 	tag, err := tx.Exec(ctx, `UPDATE users SET disabled = TRUE, updated_at = NOW() WHERE id = $1`, id)
 	if err != nil {
@@ -111,11 +111,22 @@ func (s *Store) DisableTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id)
+	return revokeSignIns(ctx, tx, id)
+}
+
+// revokeSignIns deletes everything that signs in as the user: sessions and
+// API keys. A key made from a stolen session must not outlive the password
+// change that ends it.
+func revokeSignIns(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM api_keys WHERE user_id = $1`, id)
 	return err
 }
 
-// ChangePassword atomically replaces the verified password and revokes sessions.
+// ChangePassword atomically replaces the verified password and revokes
+// sessions and API keys.
 // The old hash condition prevents a concurrent reset using a stale verification.
 func (s *Store) ChangePassword(ctx context.Context, id uuid.UUID, oldHash, newHash string) error {
 	return dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
@@ -128,8 +139,7 @@ func (s *Store) ChangePassword(ctx context.Context, id uuid.UUID, oldHash, newHa
 		if tag.RowsAffected() != 1 {
 			return ErrNotFound
 		}
-		_, err = tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id)
-		return err
+		return revokeSignIns(ctx, tx, id)
 	})
 }
 

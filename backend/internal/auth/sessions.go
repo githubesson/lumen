@@ -78,19 +78,10 @@ func (s *SessionStore) LookupUser(ctx context.Context, plain string) (SessionInf
 			WHERE id = (SELECT id FROM valid_session)
 			  AND last_seen_at < NOW() - INTERVAL '5 minutes'
 		)
-		SELECT
-			s.id, s.user_id, s.expires_at,
-			u.id, u.username, u.password_hash, u.role, u.disabled,
-			u.must_reset_password, u.invite_id, u.last_login_at,
-			u.created_at, u.updated_at
+		SELECT s.id, s.user_id, s.expires_at, `+userColumns+`
 		FROM valid_session s
 		JOIN users u ON u.id = s.user_id`, hash,
-	).Scan(
-		&info.ID, &info.UserID, &info.ExpiresAt,
-		&u.ID, &u.Username, &u.PasswordHash, &role, &u.Disabled,
-		&u.MustResetPassword, &u.InviteID, &u.LastLoginAt,
-		&u.CreatedAt, &u.UpdatedAt,
-	)
+	).Scan(append([]any{&info.ID, &info.UserID, &info.ExpiresAt}, userScanTargets(&u, &role)...)...)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SessionInfo{}, nil, ErrSessionNotFound
@@ -99,6 +90,19 @@ func (s *SessionStore) LookupUser(ctx context.Context, plain string) (SessionInf
 	}
 	u.Role = models.Role(role)
 	return info, &u, nil
+}
+
+// userColumns and userScanTargets read a users row joined as u, for the
+// lookups that authenticate a request (sessions, API keys) in one query.
+// The role scans into a string; the caller converts it.
+const userColumns = `u.id, u.username, u.password_hash, u.role, u.disabled,
+	u.must_reset_password, u.invite_id, u.last_login_at, u.created_at, u.updated_at`
+
+func userScanTargets(u *models.User, role *string) []any {
+	return []any{
+		&u.ID, &u.Username, &u.PasswordHash, role, &u.Disabled,
+		&u.MustResetPassword, &u.InviteID, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+	}
 }
 
 // DeleteExpired removes session rows that can never authenticate again.
