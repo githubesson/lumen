@@ -124,3 +124,26 @@ it("loads the whole list when a key is made before it arrived", async () => {
   expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(3);
   expect(screen.getByText("lumen_AbCdEf…")).toBeTruthy();
 });
+
+it("keeps the whole list when a key is made while the list is still loading", async () => {
+  let resolveFirst!: (keys: ApiKey[]) => void;
+  mock.listApiKeys.mockReturnValueOnce(
+    new Promise<ApiKey[]>((resolve) => {
+      resolveFirst = resolve;
+    }),
+  );
+  render(<ApiKeysSetting />, { wrapper: ConfirmProvider });
+  await act(async () => {});
+
+  const made: ApiKey = { ...used, id: "k3", name: "Home Assistant", prefix: "lumen_Secret", last_used_at: null };
+  mock.createApiKey.mockResolvedValue({ ...made, key: "lumen_SecretRestOfTheKey" });
+  mock.listApiKeys.mockResolvedValue([made, used, expired]);
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Home Assistant" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await act(async () => {});
+  // The first load, from before the key, lands late: it mustn't win.
+  await act(async () => resolveFirst([used]));
+
+  expect(mock.listApiKeys).toHaveBeenCalledTimes(2);
+  expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(3);
+});

@@ -330,10 +330,12 @@ func TestAPIKeys(t *testing.T) {
 	}
 	revokers := []struct {
 		name string
-		run  func(user uuid.UUID) error
+		run  func(ctx context.Context, user uuid.UUID) error
 	}{
-		{"password change", func(user uuid.UUID) error { return usersStore.ChangePassword(ctx, user, "test", "new-hash") }},
-		{"disable", func(user uuid.UUID) error {
+		{"password change", func(ctx context.Context, user uuid.UUID) error {
+			return usersStore.ChangePassword(ctx, user, "test", "new-hash")
+		}},
+		{"disable", func(ctx context.Context, user uuid.UUID) error {
 			return dbutil.WithTx(ctx, pool, func(tx pgx.Tx) error { return usersStore.DisableTx(ctx, tx, user) })
 		}},
 	}
@@ -344,6 +346,10 @@ func TestAPIKeys(t *testing.T) {
 				name = "create then " + rv.name
 			}
 			t.Run("race: "+name, func(t *testing.T) {
+				// A hang (a lock that's never released, a pool out of
+				// connections) fails the two operations rather than the run.
+				raceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
 				user := redteamUser(t, ctx, pool)
 				hash := signIn(user)
 				hold, err := pool.Begin(ctx)
@@ -359,12 +365,12 @@ func TestAPIKeys(t *testing.T) {
 				revoked := make(chan error, 1)
 				startCreate := func() {
 					go func() {
-						p, _, err := keys.Create(ctx, user, hash, "racing", nil)
+						p, _, err := keys.Create(raceCtx, user, hash, "racing", nil)
 						plain = p
 						created <- err
 					}()
 				}
-				startRevoke := func() { go func() { revoked <- rv.run(user) }() }
+				startRevoke := func() { go func() { revoked <- rv.run(raceCtx, user) }() }
 				if createFirst {
 					startCreate()
 					waitingOnLocks(t, 1)
