@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiKey } from "../src/api";
 import ApiKeysSetting from "../src/components/ApiKeysSetting";
 import { ConfirmProvider } from "../src/context/Confirm";
+import { clearResourceCache } from "../src/lib/resourceCache";
 
 const mock = vi.hoisted(() => ({
   listApiKeys: vi.fn(),
@@ -20,6 +21,8 @@ vi.mock("../src/context/Auth", () => ({
 beforeEach(() => {
   // jsdom has no layout; the Select scrolls its active option into view.
   Element.prototype.scrollIntoView = vi.fn();
+  // Each test starts from no list, not the last test's cached one.
+  clearResourceCache();
 });
 
 afterEach(() => {
@@ -101,4 +104,23 @@ it("revokes a key after the confirm", async () => {
   // The closing dialog still names it; the list doesn't.
   expect(screen.queryByText("lumen_AbCdEf…")).toBeNull();
   expect(screen.getByText("lumen_ZyXwVu…")).toBeTruthy();
+});
+
+it("loads the whole list when a key is made before it arrived", async () => {
+  mock.listApiKeys.mockRejectedValueOnce(new Error("offline"));
+  render(<ApiKeysSetting />, { wrapper: ConfirmProvider });
+  await act(async () => {});
+  expect(screen.getByText("Couldn't load your API keys.")).toBeTruthy();
+
+  const made: ApiKey = { ...used, id: "k3", name: "Home Assistant", prefix: "lumen_Secret", last_used_at: null };
+  mock.createApiKey.mockResolvedValue({ ...made, key: "lumen_SecretRestOfTheKey" });
+  mock.listApiKeys.mockResolvedValue([made, used, expired]);
+  fireEvent.change(screen.getByLabelText("Key name"), { target: { value: "Home Assistant" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await act(async () => {});
+
+  // Not the new key alone: every key, from a fresh load.
+  expect(mock.listApiKeys).toHaveBeenCalledTimes(2);
+  expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(3);
+  expect(screen.getByText("lumen_AbCdEf…")).toBeTruthy();
 });

@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/githubesson/lumen/internal/auth"
+	"github.com/githubesson/lumen/internal/httpapi/middleware"
 )
 
 // APIKeys lets a signed-in user make, list and revoke the keys scripts use
@@ -57,6 +58,11 @@ func (h *APIKeys) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	session, ok := middleware.SessionTokenFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req createAPIKeyReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -75,7 +81,12 @@ func (h *APIKeys) Create(w http.ResponseWriter, r *http.Request) {
 		t := time.Now().AddDate(0, 0, req.ExpiresInDays)
 		expiresAt = &t
 	}
-	plain, key, err := h.Store.Create(r.Context(), u.ID, name, expiresAt)
+	plain, key, err := h.Store.Create(r.Context(), u.ID, auth.HashToken(session), name, expiresAt)
+	if errors.Is(err, auth.ErrSignedOut) {
+		// Signed out (or disabled) while the request was on its way.
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	if errors.Is(err, auth.ErrTooManyAPIKeys) {
 		http.Error(w, fmt.Sprintf("you have %d API keys, the most allowed; delete one first", auth.MaxAPIKeysPerUser), http.StatusConflict)
 		return
@@ -107,15 +118,31 @@ func (h *APIKeys) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// normalizeAPIKeyName trims a key's name and refuses an empty, overlong or
-// control-character one.
+// normalizeAPIKeyName trims a key's name and refuses an empty or overlong
+// one, control characters, text-direction overrides (they reorder how the
+// list and the confirm card show it), and a name with nothing visible in it
+// (only zero-width characters). Joiners inside emoji stay allowed.
 func normalizeAPIKeyName(raw string) (string, bool) {
 	name := strings.TrimSpace(raw)
 	if name == "" || utf8.RuneCountInString(name) > maxAPIKeyNameRunes {
 		return "", false
 	}
-	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+	visible := false
+	for _, r := range name {
+		if unicode.IsControl(r) || isBidiControl(r) {
+			return "", false
+		}
+		if !unicode.IsSpace(r) && !unicode.Is(unicode.Cf, r) {
+			visible = true
+		}
+	}
+	if !visible {
 		return "", false
 	}
 	return name, true
+}
+
+// isBidiControl reports the embedding, override and isolate characters.
+func isBidiControl(r rune) bool {
+	return (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
 }

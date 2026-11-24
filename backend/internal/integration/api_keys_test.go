@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +44,16 @@ func TestAPIKeys(t *testing.T) {
 	memberSession, _, err := sessions.Create(ctx, member, httptest.NewRequest(http.MethodGet, "/", nil))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// signIn starts a session for user and returns its hash, which a key's
+	// creation checks is still there.
+	signIn := func(user uuid.UUID) []byte {
+		t.Helper()
+		plain, _, err := sessions.Create(ctx, user, httptest.NewRequest(http.MethodGet, "/", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return auth.HashToken(plain)
 	}
 	type creds struct{ cookie, bearer string }
 	do := func(c creds, method, path, body string) *httptest.ResponseRecorder {
@@ -137,7 +148,7 @@ func TestAPIKeys(t *testing.T) {
 	})
 
 	t.Run("admin key reaches admin routes", func(t *testing.T) {
-		plain, _, err := keys.Create(ctx, admin, "admin script", nil)
+		plain, _, err := keys.Create(ctx, admin, signIn(admin), "admin script", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,6 +169,11 @@ func TestAPIKeys(t *testing.T) {
 			if rec := do(key, route.method, route.path, route.body); rec.Code != http.StatusForbidden {
 				t.Errorf("%s %s with key: %d %s", route.method, route.path, rec.Code, rec.Body)
 			}
+			// The key decides even beside its own user's good cookie.
+			both := creds{cookie: memberSession, bearer: made.Key}
+			if rec := do(both, route.method, route.path, route.body); rec.Code != http.StatusForbidden {
+				t.Errorf("%s %s with key and cookie: %d %s", route.method, route.path, rec.Code, rec.Body)
+			}
 		}
 		if ks := list(); len(ks) != 1 {
 			t.Fatalf("a refused route changed the keys: %+v", ks)
@@ -174,7 +190,7 @@ func TestAPIKeys(t *testing.T) {
 			t.Fatalf("foreign bearer token with cookie: %d %s", code, id)
 		}
 		past := time.Now().Add(-time.Minute)
-		expired, _, err := keys.Create(ctx, member, "expired", &past)
+		expired, _, err := keys.Create(ctx, member, signIn(member), "expired", &past)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -189,6 +205,8 @@ func TestAPIKeys(t *testing.T) {
 			`{"name":"   "}`,
 			`{"name":"` + strings.Repeat("x", 101) + `"}`,
 			`{"name":"tab\tname"}`,
+			`{"name":"\u200b\u200b"}`,
+			`{"name":"evil\u202egnp"}`,
 			`{"name":"ok","expires_in_days":-1}`,
 			`{"name":"ok","expires_in_days":3651}`,
 		} {
@@ -203,7 +221,7 @@ func TestAPIKeys(t *testing.T) {
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		other, otherKey, err := keys.Create(ctx, admin, "not yours", nil)
+		other, otherKey, err := keys.Create(ctx, admin, signIn(admin), "not yours", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -223,19 +241,113 @@ func TestAPIKeys(t *testing.T) {
 
 	t.Run("cap", func(t *testing.T) {
 		user := redteamUser(t, ctx, pool)
+		hash := signIn(user)
 		for i := 0; i < auth.MaxAPIKeysPerUser; i++ {
-			if _, _, err := keys.Create(ctx, user, "k", nil); err != nil {
+			if _, _, err := keys.Create(ctx, user, hash, "k", nil); err != nil {
 				t.Fatalf("key %d: %v", i, err)
 			}
 		}
-		if _, _, err := keys.Create(ctx, user, "one too many", nil); err != auth.ErrTooManyAPIKeys {
+		if _, _, err := keys.Create(ctx, user, hash, "one too many", nil); err != auth.ErrTooManyAPIKeys {
 			t.Fatalf("key past the cap: %v", err)
+		}
+	})
+
+	t.Run("cap holds under concurrent creates", func(t *testing.T) {
+		user := redteamUser(t, ctx, pool)
+		hash := signIn(user)
+		const tries = auth.MaxAPIKeysPerUser + 15
+		errs := make(chan error, tries)
+		for i := 0; i < tries; i++ {
+			go func() {
+				_, _, err := keys.Create(ctx, user, hash, "k", nil)
+				errs <- err
+			}()
+		}
+		created, refused := 0, 0
+		for i := 0; i < tries; i++ {
+			switch err := <-errs; {
+			case err == nil:
+				created++
+			case errors.Is(err, auth.ErrTooManyAPIKeys):
+				refused++
+			default:
+				t.Fatalf("create: %v", err)
+			}
+		}
+		var stored int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE user_id = $1`, user).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if created != auth.MaxAPIKeysPerUser || stored != auth.MaxAPIKeysPerUser || refused != tries-auth.MaxAPIKeysPerUser {
+			t.Fatalf("created %d, refused %d, stored %d; want %d created and stored", created, refused, stored, auth.MaxAPIKeysPerUser)
+		}
+	})
+
+	t.Run("no key for a session that's gone or an account that's off", func(t *testing.T) {
+		user := redteamUser(t, ctx, pool)
+		hash := signIn(user)
+		if err := usersStore.ChangePassword(ctx, user, "test", "new-hash"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := keys.Create(ctx, user, hash, "late", nil); !errors.Is(err, auth.ErrSignedOut) {
+			t.Fatalf("create after the password change: %v", err)
+		}
+
+		off := redteamUser(t, ctx, pool)
+		hash = signIn(off)
+		if _, err := pool.Exec(ctx, `UPDATE users SET disabled = TRUE WHERE id = $1`, off); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := keys.Create(ctx, off, hash, "late", nil); !errors.Is(err, auth.ErrSignedOut) {
+			t.Fatalf("create for a disabled account: %v", err)
+		}
+		if _, _, err := keys.Create(ctx, uuid.New(), hash, "nobody", nil); !errors.Is(err, auth.ErrSignedOut) {
+			t.Fatalf("create for a missing user: %v", err)
+		}
+	})
+
+	// A create whose request outlasts a password change in flight waits for
+	// it on the user row, then finds its session gone.
+	t.Run("a create waiting on a password change makes no key", func(t *testing.T) {
+		user := redteamUser(t, ctx, pool)
+		hash := signIn(user)
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		// ChangePassword's order: the user row, then the sessions.
+		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = 'new', updated_at = NOW() WHERE id = $1`, user); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, user); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, _, err := keys.Create(ctx, user, hash, "late", nil)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			t.Fatalf("create didn't wait for the password change: %v", err)
+		case <-time.After(300 * time.Millisecond):
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; !errors.Is(err, auth.ErrSignedOut) {
+			t.Fatalf("create after the password change committed: %v", err)
+		}
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE user_id = $1`, user).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("keys left: %d (%v)", n, err)
 		}
 	})
 
 	t.Run("password change and disable revoke keys", func(t *testing.T) {
 		changer := redteamUser(t, ctx, pool)
-		plain, _, err := keys.Create(ctx, changer, "k", nil)
+		plain, _, err := keys.Create(ctx, changer, signIn(changer), "k", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +359,7 @@ func TestAPIKeys(t *testing.T) {
 		}
 
 		disabled := redteamUser(t, ctx, pool)
-		plain, _, err = keys.Create(ctx, disabled, "k", nil)
+		plain, _, err = keys.Create(ctx, disabled, signIn(disabled), "k", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

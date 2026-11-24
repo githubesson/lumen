@@ -31,6 +31,9 @@ const maxAPIKeyLen = 128
 var (
 	ErrAPIKeyNotFound = errors.New("api key not found")
 	ErrTooManyAPIKeys = errors.New("too many api keys")
+	// ErrSignedOut: the session asking for a key is gone, or the account is
+	// disabled or deleted.
+	ErrSignedOut = errors.New("signed out")
 )
 
 // APIKey is a key as its owner sees it: never the key itself, which is
@@ -53,8 +56,11 @@ func NewAPIKeyStore(db *pgxpool.Pool) *APIKeyStore {
 }
 
 // Create makes a key for userID and returns it in full, the only time it's
-// available. expiresAt nil makes a key that lasts until it's deleted.
-func (s *APIKeyStore) Create(ctx context.Context, userID uuid.UUID, name string, expiresAt *time.Time) (plain string, key APIKey, err error) {
+// available. sessionHash is the HashToken of the session asking: the key is
+// made only while that session and the account are still good, so a
+// request that outlasts a password change or a disable can't leave a key
+// behind. expiresAt nil makes a key that lasts until it's deleted.
+func (s *APIKeyStore) Create(ctx context.Context, userID uuid.UUID, sessionHash []byte, name string, expiresAt *time.Time) (plain string, key APIKey, err error) {
 	secret, _, err := RandomToken(32)
 	if err != nil {
 		return "", APIKey{}, err
@@ -66,16 +72,35 @@ func (s *APIKeyStore) Create(ctx context.Context, userID uuid.UUID, name string,
 		ExpiresAt: expiresAt,
 	}
 	err = dbutil.WithTx(ctx, s.db, func(tx pgx.Tx) error {
-		// Serializes one user's creates, so two at once can't both pass the
-		// cap. A user deleted meanwhile has no row to lock.
-		var count int
-		err := tx.QueryRow(ctx, `
-			SELECT (SELECT COUNT(*) FROM api_keys WHERE user_id = u.id)
-			FROM users u WHERE u.id = $1
-			FOR NO KEY UPDATE OF u`, userID,
-		).Scan(&count)
+		// The user row is the lock. A password change or a disable updates
+		// it before deleting sessions and keys, so it either commits before
+		// this returns (and the checks below find the session gone or the
+		// account disabled) or waits for this transaction and then deletes
+		// the new key with the rest. It also queues one user's creates, so
+		// two at once can't both pass the cap.
+		var disabled bool
+		err := tx.QueryRow(ctx, `SELECT disabled FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID).Scan(&disabled)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && disabled) {
+			return ErrSignedOut
+		}
 		if err != nil {
 			return err
+		}
+		// A statement of its own, so it reads what committed while the lock
+		// was awaited (a locking statement keeps its earlier snapshot for
+		// everything but the locked row).
+		var signedIn bool
+		var count int
+		err = tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM sessions WHERE token_hash = $2 AND user_id = $1 AND expires_at > NOW()),
+			       (SELECT COUNT(*) FROM api_keys WHERE user_id = $1)`,
+			userID, sessionHash,
+		).Scan(&signedIn, &count)
+		if err != nil {
+			return err
+		}
+		if !signedIn {
+			return ErrSignedOut
 		}
 		if count >= MaxAPIKeysPerUser {
 			return ErrTooManyAPIKeys

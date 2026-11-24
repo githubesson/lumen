@@ -47,13 +47,19 @@ script or a server.
 ### What a key can't do
 
 These need a signed-in app and answer `403` to a key, so a leaked key can't
-make more keys or lock its owner out:
+make more keys or change its owner's password:
 
 - `GET|POST /api/auth/api-keys`, `DELETE /api/auth/api-keys/{id}`
 - `POST /api/auth/reset-password`
 - `POST /api/auth/logout`
 - `GET /api/activity/ws` (the playback socket; see
   [playback-websocket.md](playback-websocket.md))
+
+An admin's key can do everything else an admin can, including inviting new
+admins and disabling or deleting accounts. Someone holding a leaked admin key
+can make an admin account of their own that outlives the key, so treat an
+admin key like the admin password: revoke it, and check the users list, if it
+may have leaked.
 
 ## Managing keys over the API
 
